@@ -18,6 +18,7 @@ async function runV19Selftest(ctx) {
     waitForUrl,
     rendererEval,
     popupTopMenu,
+    popupAccountMenu,
     compositeWindowShot,
     waitForLayoutSettle,
     waitForPanels,
@@ -271,12 +272,12 @@ async function runV19Selftest(ctx) {
     app.exit(1);
     return;
   }
-  if (focusUi.zoomHidden || !/YouTube/i.test(focusUi.zoomLabel || '')) {
-    console.log('FAIL: zoom label should show B', focusUi);
+  if (focusUi.topBarHasZoom) {
+    console.log('FAIL: top bar should not have zoom control', focusUi);
     app.exit(1);
     return;
   }
-  console.log('PASS: focus highlight + zoom label for B', focusUi.zoomLabel);
+  console.log('PASS: focus highlight for B (zoom moved to panel menu)');
 
   const zA0 = panels.panelGetZoom('acc-v19-a');
   const zB0 = panels.panelGetZoom('acc-v19-b');
@@ -304,12 +305,18 @@ async function runV19Selftest(ctx) {
   console.log('PASS: Ctrl+/-/0 acts on focused panel only');
 
   const topMenu = popupTopMenu({ x: 100, y: 40 });
-  if (!topMenu || !topMenu.labels || !topMenu.labels.some((l) => /Zoom — YouTube/i.test(l))) {
-    console.log('FAIL: overflow zoom menu missing panel name', topMenu && topMenu.labels);
+  if (topMenu && topMenu.labels && topMenu.labels.some((l) => /Zoom\s*—/i.test(l))) {
+    console.log('FAIL: overflow menu should not have Zoom', topMenu.labels);
     app.exit(1);
     return;
   }
-  console.log('PASS: overflow Zoom — <nome>');
+  const accMenu = popupAccountMenu({ accountId: 'acc-v19-b', x: 100, y: 80 });
+  if (!accMenu || !accMenu.labels || !accMenu.labels.some((l) => /^Zoom\s+/i.test(l))) {
+    console.log('FAIL: panel menu missing Zoom', accMenu && accMenu.labels);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: zoom in panel menu, not overflow');
 
   // Focus frame inset: view bounds of focused should be inset vs content rect
   const insetCheck = await rendererEval(`

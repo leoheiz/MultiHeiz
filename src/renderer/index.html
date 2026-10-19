@@ -19,6 +19,10 @@
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
           </button>
         </div>
+        <button type="button" id="btn-add-account" class="btn primary sidebar-new-window" title="Nova janela (Ctrl+T)">
+          <span class="sidebar-new-label">+ Nova janela</span>
+          <span class="sidebar-new-icon" aria-hidden="true">+</span>
+        </button>
         <div id="sidebar-list" class="sidebar-list"></div>
         <div id="sidebar-modules" class="sidebar-modules">
           <div class="sidebar-modules-label">Módulos</div>
@@ -70,14 +74,6 @@
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg>
             <span id="downloads-badge" class="top-badge hidden">0</span>
           </button>
-          <div id="zoom-control" class="zoom-control" title="Zoom do painel focado" hidden>
-            <span class="zoom-chip" id="zoom-chip" aria-hidden="true"></span>
-            <span class="zoom-label" id="zoom-label">Zoom</span>
-            <button type="button" id="btn-zoom-out" class="btn icon ghost tiny" title="Diminuir zoom" aria-label="Diminuir zoom">−</button>
-            <button type="button" id="btn-zoom-reset" class="btn ghost tiny" title="Zoom 100%" aria-label="Zoom 100%">100%</button>
-            <button type="button" id="btn-zoom-in" class="btn icon ghost tiny" title="Aumentar zoom" aria-label="Aumentar zoom">+</button>
-          </div>
-          <button type="button" id="btn-add-account" class="btn primary">+ Nova janela</button>
           <button type="button" id="btn-overflow" class="btn icon ghost" title="Mais opções" aria-label="Mais opções">
             <span class="overflow-glyph" aria-hidden="true">›</span>
           </button>
@@ -344,18 +340,11 @@
               podem falhar — sites https normais costumam OK.
             </p>
             <p class="muted-note" id="ext-coexistence-hint" hidden></p>
-            <div class="row-inline ext-install-row">
-              <button type="button" class="btn ghost" id="btn-ext-unpacked">Pasta descompactada…</button>
-              <button type="button" class="btn ghost" id="btn-ext-crx">Arquivo .crx…</button>
-            </div>
-            <h3>Chrome Web Store / Edge Add-ons</h3>
-            <div class="row-inline">
-              <input id="ext-store-input" placeholder="URL ou ID da extensão" />
-              <button type="button" class="btn ghost" id="btn-ext-store">Instalar</button>
+            <div class="ext-add-row">
+              <button type="button" class="btn primary" id="btn-ext-add">+ Adicionar extensão</button>
             </div>
             <p class="muted-note" id="ext-status"></p>
-            <h3>Instaladas</h3>
-            <ul id="ext-list" class="ext-list"></ul>
+            <div id="ext-list" class="ext-cards"></div>
             <p class="muted-note">
               Licença: camada própria (MIT). Não usamos electron-chrome-extensions (GPL-3) —
               ver Sobre e THIRD_PARTY_NOTICES.
@@ -467,16 +456,20 @@
           </section>
 
           <section class="settings-pane" data-pane="atualizacoes">
+            <p>Canal: <strong id="settings-update-channel">—</strong></p>
             <p>Versão atual: <strong id="settings-version">—</strong></p>
+            <p class="muted-note">Última verificação: <span id="settings-update-last-check">—</span></p>
             <label class="check-row">
               <input type="checkbox" id="chk-auto-check-updates" checked />
               Verificar automaticamente ao iniciar
             </label>
             <div class="updates-actions">
-              <button type="button" class="btn primary" id="btn-check-updates">Verificar atualizações</button>
+              <button type="button" class="btn primary" id="btn-check-updates">Verificar agora</button>
               <button type="button" class="btn ghost hidden" id="btn-download-update">Baixar</button>
+              <button type="button" class="btn ghost hidden" id="btn-cancel-update">Cancelar download</button>
               <button type="button" class="btn primary hidden" id="btn-install-update">Reiniciar para atualizar</button>
-              <button type="button" class="btn ghost hidden" id="btn-open-releases">Abrir página de downloads</button>
+              <button type="button" class="btn ghost hidden" id="btn-open-download-folder">Abrir pasta do download</button>
+              <button type="button" class="btn ghost" id="btn-open-releases">Abrir página de versões</button>
               <button type="button" class="btn ghost" id="btn-open-novidades">Ver novidades</button>
             </div>
             <p id="updates-status" class="muted-note"></p>
@@ -531,6 +524,28 @@
           </section>
         </form>
       </div>
+    </dialog>
+
+    <dialog id="dlg-ext-add" class="dialog">
+      <form method="dialog" id="form-ext-add" class="dialog-body">
+        <h2>Adicionar extensão</h2>
+        <p class="muted-note">Escolha como instalar (Experimental — em testes).</p>
+        <label class="ext-add-option">
+          <span>Link ou ID da Chrome Web Store / Edge Add-ons</span>
+          <div class="row-inline">
+            <input id="ext-store-input" placeholder="URL ou ID da extensão" />
+            <button type="button" class="btn primary" id="btn-ext-store">Instalar</button>
+          </div>
+        </label>
+        <div class="row-inline ext-install-row">
+          <button type="button" class="btn ghost" id="btn-ext-crx">Arquivo .crx…</button>
+          <button type="button" class="btn ghost" id="btn-ext-unpacked">Pasta descompactada…</button>
+        </div>
+        <p class="muted-note" id="ext-add-status"></p>
+        <div class="dialog-actions">
+          <button type="submit" class="btn ghost" value="cancel">Fechar</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="dlg-novidades" class="dlg-novidades">

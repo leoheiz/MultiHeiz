@@ -604,6 +604,36 @@
     return `${L}:${L}`;
   }
 
+  function showV16ContextMenu(x, y, items) {
+    document.querySelectorAll('.context-menu.mh-v16-menu').forEach((n) => n.remove());
+    const menu = h('div', { className: 'context-menu mh-v16-menu' });
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    for (const it of items) {
+      menu.appendChild(
+        h('button', {
+          type: 'button',
+          text: it.label,
+          onClick: async () => {
+            menu.remove();
+            popOverlay('context-menu');
+            await it.onClick();
+          },
+        })
+      );
+    }
+    document.body.appendChild(menu);
+    pushOverlay('context-menu');
+    const onDoc = (ev) => {
+      if (!menu.contains(ev.target)) {
+        menu.remove();
+        popOverlay('context-menu');
+        document.removeEventListener('mousedown', onDoc, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', onDoc, true), 0);
+  }
+
   async function renderPlanilha(body) {
     const list = await window.multiheiz.planilhaList();
     const side = h('div', { className: 'planilha-side' });
@@ -626,16 +656,67 @@
         }
       },
     }));
+
+    async function renameWorkbookUi(wb) {
+      const next = window.prompt('Renomear pasta de trabalho:', wb.name || '');
+      if (next == null) return;
+      const name = String(next).trim();
+      if (!name || name === wb.name) return;
+      const updated = await window.multiheiz.planilhaRename(wb.id, name);
+      if (updated) planilhaWb = updated;
+      else if (planilhaWb && planilhaWb.id === wb.id) {
+        planilhaWb = await window.multiheiz.planilhaGet(wb.id);
+      }
+      renderModule();
+    }
+
+    async function deleteWorkbookUi(wb) {
+      if (!window.confirm(`Excluir a pasta de trabalho "${wb.name}"? Esta ação não pode ser desfeita.`)) {
+        return;
+      }
+      await window.multiheiz.planilhaDelete(wb.id);
+      if (planilhaWb && planilhaWb.id === wb.id) planilhaWb = null;
+      renderModule();
+    }
+
     for (const wb of list) {
-      side.appendChild(h('button', {
+      const row = h('div', {
+        className: 'planilha-wb-row',
+        style: 'display:flex;align-items:center;gap:2px',
+      });
+      const openMenu = (x, y) => {
+        showV16ContextMenu(x, y, [
+          { label: 'Renomear', onClick: () => renameWorkbookUi(wb) },
+          { label: 'Excluir', onClick: () => deleteWorkbookUi(wb) },
+        ]);
+      };
+      const btn = h('button', {
         type: 'button',
         className: 'planilha-wb-btn' + (planilhaWb && planilhaWb.id === wb.id ? ' active' : ''),
         text: wb.name,
+        style: 'flex:1;min-width:0',
         onClick: async () => {
           planilhaWb = await window.multiheiz.planilhaGet(wb.id);
           renderModule();
         },
-      }));
+      });
+      btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openMenu(e.clientX, e.clientY);
+      });
+      const more = h('button', {
+        type: 'button',
+        className: 'btn ghost tiny',
+        text: '⋯',
+        title: 'Mais opções',
+        onClick: (e) => {
+          e.stopPropagation();
+          const r = more.getBoundingClientRect();
+          openMenu(r.left, r.bottom + 2);
+        },
+      });
+      row.append(btn, more);
+      side.appendChild(row);
     }
     if (!planilhaWb && list[0]) {
       planilhaWb = await window.multiheiz.planilhaGet(list[0].id);
@@ -648,8 +729,54 @@
       (planilhaWb.sheets || []).find((s) => s.id === planilhaWb.activeSheetId) ||
       (planilhaWb.sheets || [])[0];
     const tabs = h('div', { className: 'planilha-tabs' });
+
+    async function renameSheetUi(sh) {
+      const next = window.prompt('Renomear aba:', sh.name || '');
+      if (next == null) return;
+      const name = String(next).trim();
+      if (!name || name === sh.name) return;
+      planilhaWb = await window.multiheiz.planilhaRenameSheet({
+        workbookId: planilhaWb.id,
+        sheetId: sh.id,
+        name,
+      });
+      renderModule();
+    }
+
+    async function deleteSheetUi(sh) {
+      const sheets = planilhaWb.sheets || [];
+      if (sheets.length <= 1) {
+        if (
+          window.confirm(
+            `Não é possível excluir a última aba. Excluir a pasta de trabalho "${planilhaWb.name}"?`
+          )
+        ) {
+          await window.multiheiz.planilhaDelete(planilhaWb.id);
+          planilhaWb = null;
+          renderModule();
+        }
+        return;
+      }
+      if (!window.confirm(`Excluir a aba "${sh.name}"? Esta ação não pode ser desfeita.`)) return;
+      planilhaWb = await window.multiheiz.planilhaDeleteSheet({
+        workbookId: planilhaWb.id,
+        sheetId: sh.id,
+      });
+      renderModule();
+    }
+
     for (const sh of planilhaWb.sheets || []) {
-      tabs.appendChild(h('button', {
+      const wrap = h('div', {
+        className: 'planilha-tab-wrap',
+        style: 'display:inline-flex;align-items:center;gap:0',
+      });
+      const openSheetMenu = (x, y) => {
+        showV16ContextMenu(x, y, [
+          { label: 'Renomear', onClick: () => renameSheetUi(sh) },
+          { label: 'Excluir', onClick: () => deleteSheetUi(sh) },
+        ]);
+      };
+      const tabBtn = h('button', {
         type: 'button',
         className: 'btn ghost' + (sh.id === sheet.id ? ' active' : ''),
         text: sh.name,
@@ -660,7 +787,24 @@
           });
           renderModule();
         },
-      }));
+      });
+      tabBtn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openSheetMenu(e.clientX, e.clientY);
+      });
+      const more = h('button', {
+        type: 'button',
+        className: 'btn ghost tiny',
+        text: '⋯',
+        title: 'Mais opções da aba',
+        onClick: (e) => {
+          e.stopPropagation();
+          const r = more.getBoundingClientRect();
+          openSheetMenu(r.left, r.bottom + 2);
+        },
+      });
+      wrap.append(tabBtn, more);
+      tabs.appendChild(wrap);
     }
     tabs.appendChild(h('button', {
       type: 'button', className: 'btn ghost', text: '+',
@@ -1087,6 +1231,7 @@
         h('button', {
           type: 'button', className: 'btn ghost', text: 'Remover',
           onClick: async () => {
+            if (!window.confirm(`Remover o lembrete "${r.title}"?`)) return;
             await window.multiheiz.alarmesRemoveReminder(r.id);
             renderModule();
           },
@@ -1126,6 +1271,14 @@
           type: 'button', className: 'btn ghost', text: 'Reset',
           onClick: async () => {
             await window.multiheiz.alarmesResetTimer(t.id);
+            renderModule();
+          },
+        }),
+        h('button', {
+          type: 'button', className: 'btn ghost', text: 'Remover',
+          onClick: async () => {
+            if (!window.confirm(`Remover o timer "${t.title}"?`)) return;
+            await window.multiheiz.alarmesRemoveTimer(t.id);
             renderModule();
           },
         })
@@ -1200,6 +1353,8 @@
       h('button', {
         type: 'button', className: 'btn ghost', text: 'Excluir',
         onClick: async () => {
+          const title = notasCurrent.title || 'Sem título';
+          if (!window.confirm(`Excluir a nota "${title}"? Esta ação não pode ser desfeita.`)) return;
           await window.multiheiz.notasRemove(notasCurrent.id);
           notasCurrent = null;
           renderModule();
@@ -1312,14 +1467,33 @@
   /* ---------- Atualizações (electron-updater) ---------- */
 
   function applyUpdatesStatus(st) {
+    if (!st) return;
     const el = document.getElementById('updates-status');
-    if (el) el.textContent = (st && st.message) || '';
+    if (el) {
+      // Mensagens do main; se começa com "Erro", manter como veio
+      el.textContent = st.message || '';
+    }
+    const chEl = document.getElementById('settings-update-channel');
+    if (chEl && (st.channelLabel || st.channel)) {
+      chEl.textContent = st.channelLabel || st.channel || '—';
+    }
+    const lastEl = document.getElementById('settings-update-last-check');
+    if (lastEl) {
+      lastEl.textContent = st.lastCheckAt
+        ? new Date(st.lastCheckAt).toLocaleString('pt-BR')
+        : '—';
+    }
     const btnDl = document.getElementById('btn-download-update');
     const btnInst = document.getElementById('btn-install-update');
-    const btnRel = document.getElementById('btn-open-releases');
-    if (btnDl) btnDl.classList.toggle('hidden', !(st && st.status === 'available' && !st.canInstall));
-    if (btnInst) btnInst.classList.toggle('hidden', !(st && st.canInstall));
-    if (btnRel) btnRel.classList.toggle('hidden', !(st && st.manualDownload));
+    const btnCancel = document.getElementById('btn-cancel-update');
+    const btnFolder = document.getElementById('btn-open-download-folder');
+    const showDl = !!(st.canDownload || (st.status === 'available' && !st.canInstall));
+    if (btnDl) btnDl.classList.toggle('hidden', !showDl);
+    if (btnInst) btnInst.classList.toggle('hidden', !st.canInstall);
+    if (btnCancel) btnCancel.classList.toggle('hidden', st.status !== 'downloading');
+    const showFolder = !!(st.notWritable || (st.status === 'error' && st.downloadPath));
+    if (btnFolder) btnFolder.classList.toggle('hidden', !showFolder);
+    // btn-open-releases permanece sempre visível
   }
 
   async function refreshUpdatesPane() {
@@ -1329,6 +1503,15 @@
       const auto = await window.multiheiz.updatesGetAutoCheck();
       const chk = document.getElementById('chk-auto-check-updates');
       if (chk && auto) chk.checked = auto.enabled !== false;
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (window.multiheiz.updatesGetChannel) {
+        const ch = await window.multiheiz.updatesGetChannel();
+        const chEl = document.getElementById('settings-update-channel');
+        if (chEl && ch) chEl.textContent = ch.channelLabel || ch.channel || '—';
+      }
     } catch {
       /* ignore */
     }
@@ -1356,13 +1539,28 @@
     const btnDl = document.getElementById('btn-download-update');
     if (btnDl) {
       btnDl.addEventListener('click', async () => {
-        // autoDownload is on; re-check triggers download for NSIS/AppImage
         btnDl.disabled = true;
         try {
-          const r = await window.multiheiz.updatesCheck();
+          const r = window.multiheiz.updatesDownload
+            ? await window.multiheiz.updatesDownload()
+            : await window.multiheiz.updatesCheck();
           applyUpdatesStatus(r);
         } finally {
           btnDl.disabled = false;
+        }
+      });
+    }
+    const btnCancel = document.getElementById('btn-cancel-update');
+    if (btnCancel) {
+      btnCancel.addEventListener('click', async () => {
+        btnCancel.disabled = true;
+        try {
+          if (window.multiheiz.updatesCancel) {
+            const r = await window.multiheiz.updatesCancel();
+            applyUpdatesStatus(r);
+          }
+        } finally {
+          btnCancel.disabled = false;
         }
       });
     }
@@ -1370,6 +1568,12 @@
     if (btnInst) {
       btnInst.addEventListener('click', async () => {
         await window.multiheiz.updatesInstall();
+      });
+    }
+    const btnFolder = document.getElementById('btn-open-download-folder');
+    if (btnFolder) {
+      btnFolder.addEventListener('click', () => {
+        if (window.multiheiz.updatesOpenDownload) window.multiheiz.updatesOpenDownload();
       });
     }
     const btnRel = document.getElementById('btn-open-releases');
@@ -1775,13 +1979,52 @@
   }
 
   function setExtStatus(msg, isError) {
-    const el = document.getElementById('ext-status');
-    if (!el) return;
-    el.textContent = msg || '';
-    el.style.color = isError ? '#c96b6b' : '';
+    for (const id of ['ext-status', 'ext-add-status']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.textContent = msg || '';
+      el.style.color = isError ? '#c96b6b' : '';
+    }
+  }
+
+  function closeExtAddDialog() {
+    const dlg = document.getElementById('dlg-ext-add');
+    if (dlg && dlg.open) dlg.close();
+  }
+
+  function extSourceLabel(source) {
+    if (source === 'chrome-web-store') return 'Chrome Web Store';
+    if (source === 'edge-addons') return 'Edge';
+    if (source === 'crx') return '.crx';
+    if (source === 'unpacked') return 'pasta';
+    return source || 'pasta';
+  }
+
+  function openSettingsSection(section) {
+    const btn = document.querySelector(`.settings-nav-btn[data-section="${section}"]`);
+    if (btn) btn.click();
   }
 
   function wireExtensionsUi() {
+    const btnAdd = document.getElementById('btn-ext-add');
+    if (btnAdd) {
+      btnAdd.addEventListener('click', () => {
+        const dlg = document.getElementById('dlg-ext-add');
+        if (!dlg) return;
+        const st = document.getElementById('ext-add-status');
+        if (st) {
+          st.textContent = '';
+          st.style.color = '';
+        }
+        pushOverlay('dlg-ext-add');
+        dlg.showModal();
+      });
+    }
+    const dlgAdd = document.getElementById('dlg-ext-add');
+    if (dlgAdd) {
+      dlgAdd.addEventListener('close', () => popOverlay('dlg-ext-add'));
+    }
+
     const btnUnp = document.getElementById('btn-ext-unpacked');
     if (btnUnp) {
       btnUnp.addEventListener('click', async () => {
@@ -1796,6 +2039,7 @@
           return;
         }
         setExtStatus('Instalada: ' + (r.extension && r.extension.name));
+        closeExtAddDialog();
         await refreshExtensionsUi();
         showSaved();
       });
@@ -1814,6 +2058,7 @@
           return;
         }
         setExtStatus('Instalada: ' + (r.extension && r.extension.name));
+        closeExtAddDialog();
         await refreshExtensionsUi();
         showSaved();
       });
@@ -1837,6 +2082,7 @@
           }
           setExtStatus('Instalada: ' + (r.extension && r.extension.name));
           if (inp) inp.value = '';
+          closeExtAddDialog();
           await refreshExtensionsUi();
           showSaved();
         } finally {
@@ -1862,7 +2108,8 @@
         el.textContent = '';
       }
     }
-    if (hint && hint.suggest && form.adblockEnabled && form.adblockEnabled.checked) {
+    const form = document.getElementById('form-settings');
+    if (hint && hint.suggest && form && form.adblockEnabled && form.adblockEnabled.checked) {
       // Soft prompt once per settings fill — do not auto-uncheck
       const abHint = document.getElementById('adblock-coexistence-hint');
       if (abHint && !abHint.dataset.offered) {
@@ -1879,150 +2126,178 @@
   }
 
   async function refreshExtensionsUi() {
-    const ul = document.getElementById('ext-list');
-    if (!ul || !window.multiheiz.extensionsList) return;
+    const host = document.getElementById('ext-list');
+    if (!host || !window.multiheiz.extensionsList) return;
     const list = await window.multiheiz.extensionsList();
     const accounts = (getState().accounts || []).slice();
-    ul.innerHTML = '';
+    host.replaceChildren();
     await refreshCoexistenceHints();
     if (!list.length) {
-      const empty = document.createElement('li');
-      empty.className = 'muted-note';
-      empty.style.display = 'block';
-      empty.textContent = 'Nenhuma extensão instalada.';
-      ul.appendChild(empty);
+      host.appendChild(
+        h('p', {
+          className: 'muted-note ext-empty',
+          text:
+            'Nenhuma extensão instalada. Clique em “+ Adicionar extensão” para instalar da Chrome Web Store / Edge, um arquivo .crx ou uma pasta descompactada.',
+        })
+      );
       return;
     }
     for (const ext of list) {
-      const li = document.createElement('li');
-      if (ext.iconDataUrl) {
-        const img = document.createElement('img');
-        img.className = 'ext-icon';
-        img.alt = '';
-        img.src = ext.iconDataUrl;
-        li.appendChild(img);
-      } else {
-        const ph = document.createElement('div');
-        ph.className = 'ext-icon placeholder';
-        ph.textContent = 'ext';
-        li.appendChild(ph);
-      }
-      const meta = document.createElement('div');
-      meta.className = 'ext-meta';
-      const name = document.createElement('div');
-      name.className = 'ext-name';
-      name.textContent = ext.name || ext.id;
-      const sub = document.createElement('div');
-      sub.className = 'ext-sub';
-      sub.textContent = `v${ext.version} · MV${ext.manifestVersion} · ${ext.source || '—'}`;
-      meta.append(name, sub);
-      if (ext.warnings && ext.warnings.length) {
-        const w = document.createElement('div');
-        w.className = 'ext-warn';
-        w.textContent = ext.warnings.slice(0, 3).join(' · ');
-        meta.appendChild(w);
-      }
-      li.appendChild(meta);
+      const isAll = ext.applyTo === 'all' || ext.applyTo == null;
+      const selectedIds = new Set(
+        isAll
+          ? []
+          : Array.isArray(ext.applyTo)
+            ? ext.applyTo
+            : []
+      );
 
-      const actions = document.createElement('div');
-      actions.className = 'ext-actions';
+      const icon = ext.iconDataUrl
+        ? h('img', { className: 'ext-icon', alt: '', src: ext.iconDataUrl })
+        : h('div', { className: 'ext-icon placeholder', text: 'ext' });
 
-      const en = document.createElement('label');
-      en.className = 'check';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = !!ext.enabled;
-      cb.addEventListener('change', async () => {
-        await window.multiheiz.extensionsSetEnabled(ext.id, cb.checked);
+      const body = h('div', { className: 'ext-card-body' },
+        h('div', { className: 'ext-name', text: ext.name || ext.id }),
+        h('div', {
+          className: 'ext-sub',
+          text: `v${ext.version || '—'} · ${extSourceLabel(ext.source)}`,
+        }),
+        ext.description
+          ? h('div', {
+            className: 'ext-desc',
+            text: String(ext.description).slice(0, 160),
+          })
+          : null,
+        ext.warnings && ext.warnings.length
+          ? h('div', {
+            className: 'ext-warn',
+            text: ext.warnings.slice(0, 3).join(' · '),
+          })
+          : null
+      );
+
+      const swLabel = h('label', { className: 'panel-ext-switch', title: 'Ativar / desativar' });
+      const sw = h('input', { type: 'checkbox' });
+      sw.checked = !!ext.enabled;
+      sw.addEventListener('change', async () => {
+        await window.multiheiz.extensionsSetEnabled(ext.id, sw.checked);
         await refreshExtensionsUi();
         showSaved();
       });
-      en.append(cb, document.createTextNode(' Ativa'));
-      actions.appendChild(en);
+      swLabel.append(sw, document.createTextNode(' Ativa'));
 
-      const applySel = document.createElement('select');
-      applySel.className = 'ext-apply';
-      const optAll = document.createElement('option');
-      optAll.value = 'all';
-      optAll.textContent = 'Aplicar a: todas as janelas';
-      applySel.appendChild(optAll);
+      const applyBox = h('div', { className: 'ext-apply-box' });
+      applyBox.appendChild(h('span', { text: 'Aplicar em:' }));
+      const radioAllId = `ext-apply-all-${ext.id}`;
+      const radioChooseId = `ext-apply-choose-${ext.id}`;
+      const radAllLabel = h('label', { className: 'check' });
+      const radAll = h('input', {
+        type: 'radio',
+        name: `ext-apply-${ext.id}`,
+        id: radioAllId,
+        value: 'all',
+      });
+      radAll.checked = isAll;
+      radAllLabel.append(radAll, document.createTextNode(' Todas as janelas'));
+      const radChooseLabel = h('label', { className: 'check' });
+      const radChoose = h('input', {
+        type: 'radio',
+        name: `ext-apply-${ext.id}`,
+        id: radioChooseId,
+        value: 'choose',
+      });
+      radChoose.checked = !isAll;
+      radChooseLabel.append(radChoose, document.createTextNode(' Escolher janelas'));
+      applyBox.append(radAllLabel, radChooseLabel);
+
+      const checks = h('div', {
+        className: 'ext-panel-checks',
+        style: isAll ? 'display:none' : '',
+      });
       for (const acc of accounts) {
-        const o = document.createElement('option');
-        o.value = acc.id;
-        o.textContent = 'Só: ' + (acc.name || acc.id);
-        applySel.appendChild(o);
+        const lab = h('label', { className: 'check' });
+        const cb = h('input', { type: 'checkbox', value: acc.id });
+        cb.checked = selectedIds.has(acc.id);
+        cb.addEventListener('change', async () => {
+          const ids = [];
+          checks.querySelectorAll('input[type="checkbox"]').forEach((c) => {
+            if (c.checked) ids.push(c.value);
+          });
+          await window.multiheiz.extensionsSetApplyTo(ext.id, ids);
+          await refreshExtensionsUi();
+          showSaved();
+        });
+        lab.append(cb, document.createTextNode(' ' + (acc.name || acc.id)));
+        checks.appendChild(lab);
       }
-      const multi = document.createElement('option');
-      multi.value = '__choose__';
-      multi.textContent = 'Escolher várias…';
-      applySel.appendChild(multi);
-
-      if (ext.applyTo === 'all' || ext.applyTo == null) applySel.value = 'all';
-      else if (Array.isArray(ext.applyTo) && ext.applyTo.length === 1) {
-        applySel.value = ext.applyTo[0];
-      } else {
-        applySel.value = '__choose__';
+      if (!accounts.length) {
+        checks.appendChild(
+          h('span', { className: 'muted-note', text: 'Nenhuma janela criada.' })
+        );
       }
+      applyBox.appendChild(checks);
 
-      applySel.addEventListener('change', async () => {
-        if (applySel.value === 'all') {
-          await window.multiheiz.extensionsSetApplyTo(ext.id, 'all');
-        } else if (applySel.value === '__choose__') {
-          const ids = accounts.map((a) => a.id);
-          const picked = window.prompt(
-            'IDs das janelas (vírgula), ou deixe vazio para todas:\n' +
-              accounts.map((a) => a.id + ' = ' + a.name).join('\n'),
-            Array.isArray(ext.applyTo) ? ext.applyTo.join(',') : ids.join(',')
-          );
-          if (picked == null) {
-            await refreshExtensionsUi();
-            return;
-          }
-          const listIds = picked
-            .split(/[,;\s]+/)
-            .map((s) => s.trim())
-            .filter(Boolean);
-          await window.multiheiz.extensionsSetApplyTo(
-            ext.id,
-            listIds.length ? listIds : 'all'
-          );
-        } else {
-          await window.multiheiz.extensionsSetApplyTo(ext.id, [applySel.value]);
-        }
+      radAll.addEventListener('change', async () => {
+        if (!radAll.checked) return;
+        checks.style.display = 'none';
+        await window.multiheiz.extensionsSetApplyTo(ext.id, 'all');
         await refreshExtensionsUi();
         showSaved();
       });
-      actions.appendChild(applySel);
+      radChoose.addEventListener('change', async () => {
+        if (!radChoose.checked) return;
+        checks.style.display = '';
+        const ids = accounts.map((a) => a.id);
+        const current = Array.isArray(ext.applyTo) && ext.applyTo.length
+          ? ext.applyTo
+          : ids;
+        await window.multiheiz.extensionsSetApplyTo(ext.id, current);
+        await refreshExtensionsUi();
+        showSaved();
+      });
 
-      if (ext.optionsPage) {
-        const btnOpt = document.createElement('button');
-        btnOpt.type = 'button';
-        btnOpt.className = 'btn ghost';
-        btnOpt.textContent = 'Opções';
-        btnOpt.addEventListener('click', async () => {
+      const btnOpt = h('button', {
+        type: 'button',
+        className: 'btn ghost',
+        text: 'Opções',
+        disabled: !ext.optionsPage,
+        onClick: async () => {
+          if (!ext.optionsPage) return;
           const focus =
             (hooks().getFocusedNav && hooks().getFocusedNav() && hooks().getFocusedNav().accountId) ||
             (accounts[0] && accounts[0].id);
           const r = await window.multiheiz.extensionsOpenOptions(ext.id, focus);
           if (r && !r.ok) setExtStatus(r.error || 'Falha ao abrir opções', true);
-        });
-        actions.appendChild(btnOpt);
-      }
-
-      const btnRm = document.createElement('button');
-      btnRm.type = 'button';
-      btnRm.className = 'btn ghost';
-      btnRm.textContent = 'Remover';
-      btnRm.addEventListener('click', async () => {
-        if (!window.confirm('Remover extensão “' + ext.name + '”?')) return;
-        await window.multiheiz.extensionsRemove(ext.id);
-        await refreshExtensionsUi();
-        showSaved();
+        },
       });
-      actions.appendChild(btnRm);
+      if (!ext.optionsPage) btnOpt.disabled = true;
 
-      li.appendChild(actions);
-      ul.appendChild(li);
+      const btnRm = h('button', {
+        type: 'button',
+        className: 'btn ghost',
+        text: 'Remover',
+        onClick: async () => {
+          const nome = ext.name || ext.id;
+          if (!window.confirm(`Remover ${nome}? Esta ação não pode ser desfeita.`)) return;
+          await window.multiheiz.extensionsRemove(ext.id);
+          await refreshExtensionsUi();
+          showSaved();
+        },
+      });
+
+      const actions = h('div', { className: 'ext-card-actions' },
+        swLabel,
+        applyBox,
+        btnOpt,
+        btnRm
+      );
+
+      const card = h('div', { className: 'ext-card', 'data-ext-id': ext.id },
+        icon,
+        body,
+        actions
+      );
+      host.appendChild(card);
     }
   }
 
@@ -2327,6 +2602,10 @@
   api.refreshKofiVisibility = refreshKofiVisibility;
   api.openNovidades = openNovidades;
   api.closeNovidadesAndMaybeMark = closeNovidadesAndMaybeMark;
+  api.openSettingsSection = openSettingsSection;
+  api.refreshExtensionsUi = refreshExtensionsUi;
+  api._refreshExtensionsUi = refreshExtensionsUi;
+  api.applyUpdatesStatus = applyUpdatesStatus;
   api.getActiveModule = () => activeModule;
   api.getActiveManager = () => activeManager;
   api.isStarredUrl = async (url) => !!(await window.multiheiz.bookmarksFindUrl(url));

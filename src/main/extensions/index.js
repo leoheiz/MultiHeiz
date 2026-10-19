@@ -363,6 +363,68 @@ function registerIpc() {
     );
   });
 
+  /** All installed extensions with per-window active flag for the puzzle menu. */
+  ipcMain.handle('extensions:for-panel', (_e, accountId) => {
+    const id = String(accountId || '');
+    return publicList().map((r) => {
+      const rec = store.getRecord(r.id);
+      const activeOnPanel = !!(rec && loader.appliesToAccount(rec, id));
+      return { ...r, activeOnPanel };
+    });
+  });
+
+  /**
+   * Toggle whether an extension applies to a single panel.
+   * When turning off while applyTo is 'all', switch to all other account ids.
+   */
+  ipcMain.handle('extensions:set-active-on-panel', async (_e, { id, accountId, active }) => {
+    const rec = store.getRecord(id);
+    if (!rec) return { ok: false, error: 'Extensão não encontrada' };
+    const ids = accountIds();
+    let next;
+    if (active) {
+      if (rec.applyTo === 'all' || rec.applyTo == null) {
+        next = 'all';
+      } else if (Array.isArray(rec.applyTo)) {
+        const set = new Set(rec.applyTo);
+        set.add(accountId);
+        next = ids.length && ids.every((a) => set.has(a)) ? 'all' : [...set];
+      } else {
+        next = [accountId];
+      }
+      if (!rec.enabled) {
+        store.patchRecord(id, { enabled: true, applyTo: next });
+      } else {
+        store.patchRecord(id, { applyTo: next });
+      }
+    } else {
+      if (rec.applyTo === 'all' || rec.applyTo == null) {
+        next = ids.filter((a) => a !== accountId);
+      } else if (Array.isArray(rec.applyTo)) {
+        next = rec.applyTo.filter((a) => a !== accountId);
+      } else {
+        next = [];
+      }
+      store.patchRecord(id, { applyTo: next.length ? next : [] });
+    }
+    await loader.syncExtension(id, ids);
+    emit({ type: 'extensions:changed', extensions: publicList() });
+    return {
+      ok: true,
+      extensions: publicList(),
+      forPanel: publicList().map((r) => {
+        const rec2 = store.getRecord(r.id);
+        return {
+          ...r,
+          activeOnPanel: !!(rec2 && loader.appliesToAccount(rec2, accountId)),
+        };
+      }),
+      note: active
+        ? null
+        : 'Extensão desativada nesta janela — recarregue a página se o efeito persistir.',
+    };
+  });
+
   // Selftest helpers (always registered; harmless in production)
   ipcMain.handle('extensions:selftest-install-unpacked', async (_e, dirPath) => {
     try {

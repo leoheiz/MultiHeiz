@@ -198,6 +198,36 @@ body {
   min-width: 0;
 }
 
+.sidebar-new-window {
+  margin: 8px 8px 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.sidebar-new-window .sidebar-new-icon {
+  display: none;
+  font-size: 18px;
+  line-height: 1;
+}
+#sidebar.collapsed .sidebar-new-window,
+#sidebar.auto-collapsed .sidebar-new-window {
+  margin: 6px;
+  padding: 8px 0;
+  min-width: 0;
+}
+#sidebar.collapsed .sidebar-new-window .sidebar-new-label,
+#sidebar.auto-collapsed .sidebar-new-window .sidebar-new-label {
+  display: none;
+}
+#sidebar.collapsed .sidebar-new-window .sidebar-new-icon,
+#sidebar.auto-collapsed .sidebar-new-window .sidebar-new-icon {
+  display: inline;
+}
+
 .sidebar-list {
   flex: 1;
   overflow-x: hidden;
@@ -1450,8 +1480,10 @@ dialog label.check {
 .panel-ext-menu {
   position: fixed;
   z-index: 10050;
-  min-width: 200px;
-  max-width: 280px;
+  min-width: 260px;
+  max-width: 340px;
+  max-height: min(70vh, 480px);
+  overflow: auto;
   padding: 6px;
   border-radius: 8px;
   background: var(--surface);
@@ -1459,32 +1491,154 @@ dialog label.check {
   border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
-.panel-ext-menu button {
+.panel-ext-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.panel-ext-row.inactive {
+  opacity: 0.55;
+}
+.panel-ext-row img {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.panel-ext-name {
+  flex: 1;
   text-align: left;
   border: 0;
   background: transparent;
+  color: inherit;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel-ext-name:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.panel-ext-name:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.panel-ext-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.panel-ext-manage {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  text-align: center;
+  border: 0;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: inherit;
   padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
   font: inherit;
 }
-.panel-ext-menu button:hover {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-.panel-ext-menu img {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
+.panel-ext-manage:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .panel-ext-menu .empty {
   padding: 8px 10px;
   font-size: 12px;
   color: var(--muted);
+}
+.panel-zoom-chip {
+  margin-left: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.panel-zoom-chip.flash {
+  outline: 1px solid var(--accent);
+}
+.ext-add-row {
+  margin: 8px 0 12px;
+}
+.ext-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0;
+}
+.ext-card {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 10px 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--text));
+}
+.ext-card .ext-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.ext-card .ext-icon.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+.ext-card .ext-card-body {
+  min-width: 0;
+}
+.ext-card .ext-name {
+  font-weight: 600;
+}
+.ext-card .ext-sub,
+.ext-card .ext-desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.ext-card .ext-card-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.ext-card .ext-apply-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.ext-card .ext-panel-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-left: 4px;
+}
+.ext-add-option {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
 }
 
 .adblock-user-rules {

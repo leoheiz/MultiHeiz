@@ -93,6 +93,7 @@ const SELFTEST_ADBLOCK_REAL = selftestMode === 'adblock-real';
 const SELFTEST_ADBLOCK_PACKAGED = selftestMode === 'adblock-packaged';
 const SELFTEST_V18 = selftestMode === 'v18';
 const SELFTEST_V19 = selftestMode === 'v19';
+const SELFTEST_V110 = selftestMode === 'v110';
 const SELFTEST_TITLEBAR = selftestMode === 'titlebar';
 const SELFTEST_EXT = selftestMode === 'ext';
 const SELFTEST_ABU = selftestMode === 'abu';
@@ -109,6 +110,7 @@ const ANY_SELFTEST =
   SELFTEST_ADBLOCK_PACKAGED ||
   SELFTEST_V18 ||
   SELFTEST_V19 ||
+  SELFTEST_V110 ||
   SELFTEST_TITLEBAR ||
   SELFTEST_EXT ||
   SELFTEST_ABU;
@@ -326,6 +328,11 @@ function setupApplicationMenu() {
       label: 'Janela',
       submenu: [
         {
+          label: 'Nova janela',
+          accelerator: 'CmdOrCtrl+T',
+          click: () => emitToRenderer({ type: 'ui:new-account' }),
+        },
+        {
           label: 'Abrir login no navegador padrão',
           click: () => {
             const id = focusedPanel();
@@ -359,6 +366,7 @@ function createWindow() {
     SELFTEST_INPUT ||
     SELFTEST_V16 ||
     SELFTEST_V19 ||
+    SELFTEST_V110 ||
     SELFTEST_TITLEBAR
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
@@ -415,6 +423,7 @@ function createWindow() {
       SELFTEST_BG ||
       SELFTEST_V18 ||
       SELFTEST_V19 ||
+      SELFTEST_V110 ||
       SELFTEST_TITLEBAR ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT,
@@ -462,6 +471,13 @@ function createWindow() {
   memory.initMemory(emitToRenderer);
 
   mainWindow.webContents.setZoomFactor(1);
+  try {
+    if (typeof mainWindow.webContents.setVisualZoomLevelLimits === 'function') {
+      mainWindow.webContents.setVisualZoomLevelLimits(1, 1);
+    }
+  } catch {
+    /* ignore */
+  }
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
   const persistBounds = () => {
@@ -715,6 +731,7 @@ function createWindow() {
             waitForUrl,
             rendererEval,
             popupTopMenu,
+            popupAccountMenu,
             compositeWindowShot,
             waitForLayoutSettle,
             waitForPanels,
@@ -751,6 +768,33 @@ function createWindow() {
                 windowChrome.applyTitleBarOverlay(mainWindow, appearance) || lastTitleBarOverlay;
               return lastTitleBarOverlay;
             },
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_V110) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runV110Selftest } = require('./selftest-v110');
+          runV110Selftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            popupTopMenu,
+            popupAccountMenu,
+            waitForLayoutSettle,
+            waitForPanels,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -2482,13 +2526,6 @@ function popupTopMenu(opts) {
   const x = Math.round(Number(opts && opts.x) || 0);
   const y = Math.round(Number(opts && opts.y) || 0);
   const st = getState();
-  const focused = panels.getFocusedAccountId();
-  const focusedAcc = focused
-    ? (st.accounts || []).find((a) => a.id === focused)
-    : null;
-  const zoomTitle = focusedAcc
-    ? `Zoom — ${focusedAcc.name}`
-    : 'Zoom — painel';
 
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const template = [
@@ -2511,29 +2548,6 @@ function popupTopMenu(opts) {
           click: () => {
             panels.panelMuteAll(false, st.activeWorkspaceId);
             emitToRenderer({ type: 'state:changed', state: publicState() });
-          },
-        },
-      ],
-    },
-    {
-      label: zoomTitle,
-      submenu: [
-        {
-          label: 'Aumentar (+)',
-          click: () => {
-            if (focused) panels.panelZoom(focused, 0.1);
-          },
-        },
-        {
-          label: 'Diminuir (−)',
-          click: () => {
-            if (focused) panels.panelZoom(focused, -0.1);
-          },
-        },
-        {
-          label: '100%',
-          click: () => {
-            if (focused) panels.panelZoom(focused, 0);
           },
         },
       ],
@@ -2592,6 +2606,7 @@ function popupTopMenu(opts) {
     SELFTEST_INPUT ||
     SELFTEST_V18 ||
     SELFTEST_V19 ||
+    SELFTEST_V110 ||
     envGet('MULTIHEIZ_MENU_INTERCEPT') === '1'
   ) {
     return { ok: true, intercepted: true, labels, x, y };
@@ -2623,6 +2638,8 @@ function popupAccountMenu(opts) {
   const muted = !!acc.muted;
   const maximized = st.maximizedAccountId === accountId;
 
+  const zoomPct = Math.round((panels.panelGetZoom(accountId) || 1) * 100);
+
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const template = [
     {
@@ -2636,6 +2653,23 @@ function popupAccountMenu(opts) {
     {
       label: 'Editar URL inicial',
       click: () => emitToRenderer({ type: 'ui:edit-account', accountId, focusUrl: true }),
+    },
+    {
+      label: `Zoom  ${zoomPct}%`,
+      submenu: [
+        {
+          label: 'Aumentar (+)',
+          click: () => panels.panelZoom(accountId, 0.1),
+        },
+        {
+          label: 'Diminuir (−)',
+          click: () => panels.panelZoom(accountId, -0.1),
+        },
+        {
+          label: 'Redefinir (100%)',
+          click: () => panels.panelZoom(accountId, 0),
+        },
+      ],
     },
     {
       label: 'Recarregar',
@@ -2735,6 +2769,9 @@ function popupAccountMenu(opts) {
 
   if (
     SELFTEST_INPUT ||
+    SELFTEST_V18 ||
+    SELFTEST_V19 ||
+    SELFTEST_V110 ||
     envGet('MULTIHEIZ_MENU_INTERCEPT') === '1'
   ) {
     return { ok: true, intercepted: true, labels, x, y, accountId };

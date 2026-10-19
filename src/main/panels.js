@@ -529,7 +529,14 @@ function createPanel(accountId) {
 
   view.webContents.setAudioMuted(!!account.muted);
 
-  // Per-panel zoom (view bounds unaffected)
+  // Per-panel zoom (view bounds unaffected); disable Chromium pinch/visual zoom
+  try {
+    if (typeof view.webContents.setVisualZoomLevelLimits === 'function') {
+      view.webContents.setVisualZoomLevelLimits(1, 1);
+    }
+  } catch {
+    /* ignore */
+  }
   const zf = Number(account.zoomFactor);
   if (Number.isFinite(zf) && zf >= 0.25 && zf <= 3) {
     try {
@@ -617,6 +624,16 @@ function createPanel(accountId) {
     emitToRenderer({ type: 'panel:favicon', accountId, favicon });
   });
   view.webContents.on('ipc-message', (_e, channel, data) => {
+    if (channel === 'panel:ctrl-wheel') {
+      const deltaY = data && typeof data.deltaY === 'number' ? data.deltaY : 0;
+      // wheel up (negative deltaY) = zoom in
+      const step = deltaY < 0 ? 0.1 : deltaY > 0 ? -0.1 : 0;
+      if (step !== 0) {
+        setFocusedAccount(accountId);
+        panelZoom(accountId, step);
+      }
+      return;
+    }
     if (channel === 'panel:fps' && data && typeof data.fps === 'number') {
       panelFps.set(accountId, data.fps);
       emitToRenderer({

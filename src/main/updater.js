@@ -1,25 +1,59 @@
 'use strict';
 
 /**
- * Auto-update via electron-updater (GitHub provider).
- * NSIS + AppImage: full download/install. Portable/.deb: check-only + open Releases.
+ * Auto-update via electron-updater (NSIS + AppImage) and portable self-update.
+ * .deb: check-only + open Releases.
  */
 
 const { app, ipcMain, shell } = require('electron');
 const { RELEASES_URL } = require('./config');
+const portable = require('./portable-update');
+const logger = require('./logger');
 
 const GITHUB_OWNER = 'leoheiz';
 const GITHUB_REPO = 'MultiHeiz';
 const AUTO_CHECK_DELAY_MS = 4000;
 
-/** @type {{ status: string, message: string, version: string|null, percent: number|null, canInstall: boolean, manualDownload: boolean }} */
+const CHANNEL_LABELS = {
+  nsis: 'Instalado',
+  portable: 'Portátil',
+  appimage: 'Linux AppImage',
+  deb: '.deb',
+  unknown: 'Desenvolvimento',
+  dev: 'Desenvolvimento',
+};
+
+/** @type {{
+ *   status: string,
+ *   message: string,
+ *   version: string|null,
+ *   percent: number|null,
+ *   bytesPerSecond: number|null,
+ *   canInstall: boolean,
+ *   canDownload: boolean,
+ *   manualDownload: boolean,
+ *   channel: string,
+ *   channelLabel: string,
+ *   lastCheckAt: number|null,
+ *   currentVersion: string,
+ *   notWritable: boolean,
+ *   downloadPath: string|null,
+ * }} */
 let lastStatus = {
   status: 'idle',
   message: '',
   version: null,
   percent: null,
+  bytesPerSecond: null,
   canInstall: false,
+  canDownload: false,
   manualDownload: false,
+  channel: 'unknown',
+  channelLabel: CHANNEL_LABELS.unknown,
+  lastCheckAt: null,
+  currentVersion: '',
+  notWritable: false,
+  downloadPath: null,
 };
 
 /** @type {((payload: object) => void) | null} */
@@ -32,16 +66,15 @@ let autoCheckTimer = null;
 let handlersBound = false;
 
 /**
- * Portable Windows exe or Linux .deb cannot self-update via electron-updater.
+ * Portable Windows exe or Linux .deb cannot use electron-updater install.
  * AppImage sets process.env.APPIMAGE; NSIS is the default win installed case.
  */
 function detectUpdateChannel() {
-  if (process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE) {
+  if (process.env.MULTIHEIZ_FAKE_PORTABLE_FILE || process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE) {
     return 'portable';
   }
   if (process.platform === 'linux') {
     if (process.env.APPIMAGE) return 'appimage';
-    // Packaged without APPIMAGE ⇒ .deb (or similar); cannot self-update
     if (app.isPackaged) return 'deb';
     return 'unknown';
   }
@@ -51,12 +84,29 @@ function detectUpdateChannel() {
   return 'unknown';
 }
 
+/** Channels that only open the Releases page (no in-app download). */
 function isManualOnlyChannel(channel) {
-  return channel === 'portable' || channel === 'deb';
+  return channel === 'deb';
+}
+
+function channelLabel(channel) {
+  return CHANNEL_LABELS[channel] || CHANNEL_LABELS.unknown;
 }
 
 function setStatus(partial) {
-  lastStatus = { ...lastStatus, ...partial };
+  const ch = partial.channel != null ? partial.channel : lastStatus.channel || detectUpdateChannel();
+  let message = partial.message != null ? partial.message : lastStatus.message;
+  if (partial.status === 'error' && message && !/^Erro:/i.test(message)) {
+    message = `Erro: ${message}`;
+  }
+  lastStatus = {
+    ...lastStatus,
+    ...partial,
+    message,
+    channel: ch,
+    channelLabel: channelLabel(ch),
+    currentVersion: app.getVersion(),
+  };
   if (typeof emitFn === 'function') {
     emitFn({ type: 'updates:status', ...lastStatus });
   }
@@ -64,7 +114,12 @@ function setStatus(partial) {
 }
 
 function getStatus() {
-  return { ...lastStatus };
+  return {
+    ...lastStatus,
+    channel: lastStatus.channel || detectUpdateChannel(),
+    channelLabel: channelLabel(lastStatus.channel || detectUpdateChannel()),
+    currentVersion: app.getVersion(),
+  };
 }
 
 function getAutoCheckEnabled(getState) {
@@ -72,7 +127,7 @@ function getAutoCheckEnabled(getState) {
     const st = typeof getState === 'function' ? getState() : null;
     const v = st && st.settings && st.settings.autoCheckUpdates;
     if (v === false) return false;
-    return true; // default ON
+    return true;
   } catch {
     return true;
   }
@@ -87,51 +142,46 @@ function setAutoCheckEnabled(enabled, updateState) {
   return true;
 }
 
-/**
- * Compare simple semver a vs b. Returns negative if a < b.
- */
 function compareSemver(a, b) {
-  const pa = String(a || '0.0.0')
-    .trim()
-    .match(/^(\d+)\.(\d+)\.(\d+)/);
-  const pb = String(b || '0.0.0')
-    .trim()
-    .match(/^(\d+)\.(\d+)\.(\d+)/);
-  const aa = pa ? [Number(pa[1]), Number(pa[2]), Number(pa[3])] : [0, 0, 0];
-  const bb = pb ? [Number(pb[1]), Number(pb[2]), Number(pb[3])] : [0, 0, 0];
-  for (let i = 0; i < 3; i++) {
-    if (aa[i] !== bb[i]) return aa[i] - bb[i];
-  }
-  return 0;
+  return portable.compareSemver(a, b);
+}
+
+function formatSpeed(bps) {
+  if (bps == null || !Number.isFinite(bps) || bps <= 0) return '';
+  const mb = bps / (1024 * 1024);
+  return mb >= 0.1
+    ? `${mb.toFixed(1).replace('.', ',')} MB/s`
+    : `${Math.round(bps / 1024)} KB/s`;
 }
 
 /**
- * Public GitHub releases API check (no token). Used for portable/deb and as fallback.
+ * Public GitHub releases API check (no token). Used for deb and as fallback.
  * @returns {Promise<{ ok: boolean, version?: string, error?: string, upToDate?: boolean }>}
  */
 async function checkViaGithubApi() {
   const current = app.getVersion();
-  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+  const url =
+    process.env.MULTIHEIZ_UPDATE_FEED_URL ||
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
   try {
-    const res = await fetch(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': `MultiHeiz/${current}`,
-      },
+    const r = await portable.httpGetBuffer(url, {
+      Accept: 'application/vnd.github+json',
     });
-    if (res.status === 404 || res.status === 401 || res.status === 403) {
+    if (r.status === 404 || r.status === 401 || r.status === 403) {
       return {
         ok: false,
         error:
-          res.status === 404
-            ? 'Repositório privado ou sem releases públicas'
-            : 'Não foi possível acessar as releases',
+          r.status === 403
+            ? 'Limite da API do GitHub (403) — tente mais tarde'
+            : r.status === 404
+              ? 'Repositório privado ou sem releases públicas'
+              : 'Não foi possível acessar as releases',
       };
     }
-    if (!res.ok) {
-      return { ok: false, error: `HTTP ${res.status}` };
+    if (r.status < 200 || r.status >= 300) {
+      return { ok: false, error: `HTTP ${r.status}` };
     }
-    const data = await res.json();
+    const data = JSON.parse(r.body.toString('utf8'));
     const tag = String((data && data.tag_name) || '').replace(/^v/i, '');
     if (!tag) return { ok: false, error: 'Release sem versão' };
     if (compareSemver(current, tag) >= 0) {
@@ -147,9 +197,12 @@ async function checkViaGithubApi() {
 }
 
 function getAutoUpdater() {
-  // Lazy require so missing dep / unpackaged never crashes module load
   // eslint-disable-next-line global-require
   return require('electron-updater').autoUpdater;
+}
+
+function forcePackagedForTest() {
+  return process.env.MULTIHEIZ_FORCE_PACKAGED === '1';
 }
 
 /**
@@ -161,34 +214,50 @@ function getAutoUpdater() {
  * }} opts
  */
 async function checkForUpdates(opts) {
-  const { getState, emitToRenderer, silent } = opts || {};
+  const { emitToRenderer, silent } = opts || {};
   emitFn = typeof emitToRenderer === 'function' ? emitToRenderer : emitFn;
 
-  if (!app.isPackaged) {
+  const channel = detectUpdateChannel();
+  const packaged = app.isPackaged || forcePackagedForTest();
+
+  if (!packaged && channel !== 'portable') {
     return setStatus({
       status: 'dev',
       message: 'Atualizações só funcionam na versão instalada',
       version: null,
       percent: null,
+      bytesPerSecond: null,
       canInstall: false,
+      canDownload: false,
       manualDownload: false,
+      channel,
+      lastCheckAt: Date.now(),
+      notWritable: false,
+      downloadPath: null,
     });
   }
 
-  const channel = detectUpdateChannel();
   setStatus({
     status: 'checking',
     message: 'Verificando…',
     version: null,
     percent: null,
+    bytesPerSecond: null,
     canInstall: false,
+    canDownload: false,
     manualDownload: false,
+    channel,
+    notWritable: false,
+    downloadPath: null,
   });
+  logger.info('updates:check', { channel });
 
-  if (isManualOnlyChannel(channel)) {
-    const r = await checkViaGithubApi();
+  if (channel === 'portable') {
+    const r = await portable.checkPortableUpdate({ logger });
+    const checkedAt = Date.now();
     if (!r.ok) {
       const msg = r.error || 'Erro ao verificar';
+      logger.warn('updates:portable check failed', { error: msg });
       if (silent) {
         return setStatus({
           status: 'idle',
@@ -196,16 +265,22 @@ async function checkForUpdates(opts) {
           version: null,
           percent: null,
           canInstall: false,
+          canDownload: false,
           manualDownload: false,
+          channel,
+          lastCheckAt: checkedAt,
         });
       }
       return setStatus({
         status: 'error',
         message: msg,
-        version: null,
+        version: r.version || null,
         percent: null,
         canInstall: false,
+        canDownload: false,
         manualDownload: false,
+        channel,
+        lastCheckAt: checkedAt,
       });
     }
     if (r.upToDate) {
@@ -215,7 +290,66 @@ async function checkForUpdates(opts) {
         version: r.version || app.getVersion(),
         percent: null,
         canInstall: false,
+        canDownload: false,
         manualDownload: false,
+        channel,
+        lastCheckAt: checkedAt,
+      });
+    }
+    return setStatus({
+      status: 'available',
+      message: `Nova versão ${r.version} disponível`,
+      version: r.version,
+      percent: null,
+      canInstall: false,
+      canDownload: true,
+      manualDownload: false,
+      channel,
+      lastCheckAt: checkedAt,
+    });
+  }
+
+  if (isManualOnlyChannel(channel)) {
+    const r = await checkViaGithubApi();
+    const checkedAt = Date.now();
+    if (!r.ok) {
+      const msg = r.error || 'Erro ao verificar';
+      if (silent) {
+        return setStatus({
+          status: 'idle',
+          message: '',
+          version: null,
+          percent: null,
+          canInstall: false,
+          canDownload: false,
+          manualDownload: false,
+          channel,
+          lastCheckAt: checkedAt,
+        });
+      }
+      return setStatus({
+        status: 'error',
+        message: msg,
+        version: null,
+        percent: null,
+        canInstall: false,
+        canDownload: false,
+        manualDownload: false,
+        channel,
+        lastCheckAt: checkedAt,
+      });
+    }
+    if (r.upToDate) {
+      return setStatus({
+        status: 'up-to-date',
+        message: 'Você está atualizado',
+        version: r.version || app.getVersion(),
+        percent: null,
+        canInstall: false,
+        canDownload: false,
+        manualDownload: false,
+        channel,
+        lastCheckAt: checkedAt,
       });
     }
     return setStatus({
@@ -224,7 +358,10 @@ async function checkForUpdates(opts) {
       version: r.version,
       percent: null,
       canInstall: false,
+      canDownload: false,
       manualDownload: true,
+      channel,
+      lastCheckAt: checkedAt,
     });
   }
 
@@ -239,6 +376,7 @@ async function checkForUpdates(opts) {
     const result = await autoUpdater.checkForUpdates();
     const info = result && result.updateInfo;
     const remote = info && info.version ? String(info.version) : null;
+    const checkedAt = Date.now();
     if (remote && compareSemver(app.getVersion(), remote) >= 0) {
       return setStatus({
         status: 'up-to-date',
@@ -246,7 +384,10 @@ async function checkForUpdates(opts) {
         version: remote,
         percent: null,
         canInstall: false,
+        canDownload: false,
         manualDownload: false,
+        channel,
+        lastCheckAt: checkedAt,
       });
     }
     if (remote) {
@@ -256,12 +397,16 @@ async function checkForUpdates(opts) {
         version: remote,
         percent: null,
         canInstall: false,
+        canDownload: false,
         manualDownload: false,
+        channel,
+        lastCheckAt: checkedAt,
       });
     }
-    return getStatus();
+    return setStatus({ ...getStatus(), lastCheckAt: checkedAt, channel });
   } catch (err) {
     const msg = shortError(err);
+    logger.warn('updates:check error', { error: msg });
     if (silent) {
       return setStatus({
         status: 'idle',
@@ -269,7 +414,10 @@ async function checkForUpdates(opts) {
         version: null,
         percent: null,
         canInstall: false,
+        canDownload: false,
         manualDownload: false,
+        channel,
+        lastCheckAt: Date.now(),
       });
     }
     return setStatus({
@@ -278,9 +426,101 @@ async function checkForUpdates(opts) {
       version: null,
       percent: null,
       canInstall: false,
+      canDownload: false,
       manualDownload: false,
+      channel,
+      lastCheckAt: Date.now(),
     });
   }
+}
+
+async function downloadUpdate() {
+  const channel = detectUpdateChannel();
+  if (channel === 'portable') {
+    let asset = portable.getPendingAsset();
+    if (!asset) {
+      const checked = await portable.checkPortableUpdate({ logger });
+      if (!checked.ok || checked.upToDate || !checked.asset) {
+        return setStatus({
+          status: 'error',
+          message: (checked && checked.error) || 'Nenhuma atualização para baixar',
+          canDownload: false,
+          canInstall: false,
+          channel,
+        });
+      }
+      asset = checked.asset;
+    }
+    setStatus({
+      status: 'downloading',
+      message: 'Baixando…',
+      percent: 0,
+      bytesPerSecond: null,
+      canInstall: false,
+      canDownload: false,
+      version: asset.version,
+      channel,
+    });
+    const r = await portable.downloadPortableAsset(asset, {
+      logger,
+      onProgress: (p) => {
+        const speed = formatSpeed(p.bytesPerSecond);
+        const pct = p.percent != null ? p.percent : null;
+        setStatus({
+          status: 'downloading',
+          message:
+            pct != null
+              ? `Baixando ${pct}%${speed ? ` (${speed})` : ''}`
+              : `Baixando…${speed ? ` (${speed})` : ''}`,
+          percent: pct,
+          bytesPerSecond: p.bytesPerSecond,
+          version: asset.version,
+          canInstall: false,
+          canDownload: false,
+          channel,
+        });
+      },
+    });
+    if (!r.ok) {
+      if (r.cancelled) {
+        return setStatus({
+          status: 'available',
+          message: `Nova versão ${asset.version} disponível`,
+          version: asset.version,
+          percent: null,
+          bytesPerSecond: null,
+          canInstall: false,
+          canDownload: true,
+          channel,
+        });
+      }
+      logger.error('updates:portable download failed', { error: r.error });
+      return setStatus({
+        status: 'error',
+        message: r.error || 'Erro no download',
+        version: asset.version,
+        percent: null,
+        bytesPerSecond: null,
+        canInstall: false,
+        canDownload: true,
+        channel,
+      });
+    }
+    return setStatus({
+      status: 'ready',
+      message: `Pronto — Reiniciar para atualizar`,
+      version: asset.version,
+      percent: 100,
+      bytesPerSecond: null,
+      canInstall: true,
+      canDownload: false,
+      downloadPath: r.path,
+      channel,
+    });
+  }
+
+  // NSIS / AppImage: re-check triggers autoDownload
+  return checkForUpdates({ silent: false, emitToRenderer: emitFn });
 }
 
 function shortError(err) {
@@ -302,6 +542,7 @@ function bindAutoUpdaterEvents(autoUpdater) {
       message: 'Verificando…',
       percent: null,
       canInstall: false,
+      canDownload: false,
       manualDownload: false,
     });
   });
@@ -313,6 +554,7 @@ function bindAutoUpdaterEvents(autoUpdater) {
       version: v,
       percent: null,
       canInstall: false,
+      canDownload: false,
       manualDownload: false,
     });
   });
@@ -323,16 +565,24 @@ function bindAutoUpdaterEvents(autoUpdater) {
       version: app.getVersion(),
       percent: null,
       canInstall: false,
+      canDownload: false,
       manualDownload: false,
     });
   });
   autoUpdater.on('download-progress', (p) => {
     const percent = p && typeof p.percent === 'number' ? Math.round(p.percent) : null;
+    const bps = p && typeof p.bytesPerSecond === 'number' ? p.bytesPerSecond : null;
+    const speed = formatSpeed(bps);
     setStatus({
       status: 'downloading',
-      message: percent != null ? `Baixando ${percent}%` : 'Baixando…',
+      message:
+        percent != null
+          ? `Baixando ${percent}%${speed ? ` (${speed})` : ''}`
+          : `Baixando…${speed ? ` (${speed})` : ''}`,
       percent,
+      bytesPerSecond: bps,
       canInstall: false,
+      canDownload: false,
       manualDownload: false,
     });
   });
@@ -340,27 +590,47 @@ function bindAutoUpdaterEvents(autoUpdater) {
     const v = info && info.version ? String(info.version) : lastStatus.version;
     setStatus({
       status: 'ready',
-      message: v ? `Versão ${v} pronta — reinicie para atualizar` : 'Atualização pronta — reinicie para atualizar',
+      message: v
+        ? `Pronto — Reiniciar para atualizar`
+        : 'Pronto — Reiniciar para atualizar',
       version: v,
       percent: 100,
       canInstall: true,
+      canDownload: false,
       manualDownload: false,
     });
   });
   autoUpdater.on('error', (err) => {
-    // Silent-ish: keep short message; auto-check callers already use silent path on throw
     setStatus({
       status: 'error',
       message: shortError(err),
       percent: null,
       canInstall: false,
+      canDownload: false,
       manualDownload: false,
     });
   });
 }
 
 function quitAndInstall() {
-  if (!app.isPackaged) {
+  const channel = detectUpdateChannel();
+  if (channel === 'portable') {
+    const r = portable.applyPortableAndRelaunch({ logger });
+    if (!r.ok) {
+      logger.error('updates:portable apply failed', { error: r.error });
+      setStatus({
+        status: 'error',
+        message: r.error || 'Falha ao aplicar atualização',
+        notWritable: !!r.notWritable,
+        downloadPath: r.downloadPath || portable.getDownloadedPath(),
+        canInstall: !r.notWritable,
+        channel,
+      });
+      return r;
+    }
+    return { ok: true };
+  }
+  if (!app.isPackaged && !forcePackagedForTest()) {
     return { ok: false, error: 'Somente na versão instalada' };
   }
   try {
@@ -390,12 +660,27 @@ function initUpdater(ctx) {
   const { getState, updateState, emitToRenderer, skipAutoCheck } = ctx || {};
   emitFn = typeof emitToRenderer === 'function' ? emitToRenderer : null;
 
+  const channel = detectUpdateChannel();
+  setStatus({
+    channel,
+    currentVersion: app.getVersion(),
+    status: lastStatus.status || 'idle',
+  });
+
+  if (channel === 'portable') {
+    portable.cleanupPortableLeftovers(logger);
+  }
+
   ipcMain.removeHandler('updates:check');
   ipcMain.removeHandler('updates:status');
   ipcMain.removeHandler('updates:install');
+  ipcMain.removeHandler('updates:download');
+  ipcMain.removeHandler('updates:cancel');
   ipcMain.removeHandler('updates:open-releases');
+  ipcMain.removeHandler('updates:open-download');
   ipcMain.removeHandler('updates:get-auto-check');
   ipcMain.removeHandler('updates:set-auto-check');
+  ipcMain.removeHandler('updates:get-channel');
 
   ipcMain.handle('updates:check', async () => {
     const st = await checkForUpdates({
@@ -407,8 +692,38 @@ function initUpdater(ctx) {
     return { ok: true, ...st };
   });
   ipcMain.handle('updates:status', () => ({ ok: true, ...getStatus() }));
+  ipcMain.handle('updates:download', async () => {
+    const st = await downloadUpdate();
+    return { ok: st.status !== 'error', ...st };
+  });
+  ipcMain.handle('updates:cancel', () => {
+    portable.cancelDownload();
+    const ch = detectUpdateChannel();
+    if (ch === 'portable' && lastStatus.version) {
+      setStatus({
+        status: 'available',
+        message: `Nova versão ${lastStatus.version} disponível`,
+        canDownload: true,
+        canInstall: false,
+        percent: null,
+        bytesPerSecond: null,
+        channel: ch,
+      });
+    }
+    return { ok: true, ...getStatus() };
+  });
   ipcMain.handle('updates:install', () => quitAndInstall());
   ipcMain.handle('updates:open-releases', () => openReleasesPage());
+  ipcMain.handle('updates:open-download', () => portable.openDownloadedFolder());
+  ipcMain.handle('updates:get-channel', () => {
+    const ch = detectUpdateChannel();
+    return {
+      ok: true,
+      channel: ch,
+      channelLabel: channelLabel(ch),
+      currentVersion: app.getVersion(),
+    };
+  });
   ipcMain.handle('updates:get-auto-check', () => ({
     ok: true,
     enabled: getAutoCheckEnabled(getState),
@@ -440,6 +755,7 @@ function initUpdater(ctx) {
 
   return {
     checkForUpdates,
+    downloadUpdate,
     getStatus,
     detectUpdateChannel,
     isManualOnlyChannel,
@@ -456,10 +772,19 @@ function resetStatusForTest() {
     message: '',
     version: null,
     percent: null,
+    bytesPerSecond: null,
     canInstall: false,
+    canDownload: false,
     manualDownload: false,
+    channel: 'unknown',
+    channelLabel: CHANNEL_LABELS.unknown,
+    lastCheckAt: null,
+    currentVersion: '',
+    notWritable: false,
+    downloadPath: null,
   };
   handlersBound = false;
+  portable.resetPortableStateForTest();
   if (autoCheckTimer) {
     clearTimeout(autoCheckTimer);
     autoCheckTimer = null;
@@ -469,6 +794,7 @@ function resetStatusForTest() {
 module.exports = {
   initUpdater,
   checkForUpdates,
+  downloadUpdate,
   getStatus,
   detectUpdateChannel,
   isManualOnlyChannel,
@@ -479,8 +805,11 @@ module.exports = {
   compareSemver,
   checkViaGithubApi,
   resetStatusForTest,
+  channelLabel,
+  CHANNEL_LABELS,
   GITHUB_OWNER,
   GITHUB_REPO,
   RELEASES_URL,
   AUTO_CHECK_DELAY_MS,
+  portable,
 };

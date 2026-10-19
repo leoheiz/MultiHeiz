@@ -68,8 +68,12 @@ let state = {
 
 /** When true, user forced the sidebar open while under the auto-collapse breakpoint */
 let sidebarForceExpanded = false;
-/** Current zoom factor for the focused panel (UI chip) */
+/** Current zoom factor for the focused panel */
 let focusedZoom = 1;
+/** @type {Map<string, number>} accountId -> zoom factor (for header chips) */
+const panelZoomMap = new Map();
+/** @type {ReturnType<typeof setTimeout> | null} */
+let zoomToastTimer = null;
 
 /** @type {Map<string, { url: string, title?: string, domain?: string, canGoBack: boolean, canGoForward: boolean, muted: boolean }>} */
 const navState = new Map();
@@ -129,12 +133,6 @@ const el = {
   btnWinMin: document.getElementById('btn-win-min'),
   btnWinMax: document.getElementById('btn-win-max'),
   btnWinClose: document.getElementById('btn-win-close'),
-  zoomControl: document.getElementById('zoom-control'),
-  zoomChip: document.getElementById('zoom-chip'),
-  zoomLabel: document.getElementById('zoom-label'),
-  btnZoomIn: document.getElementById('btn-zoom-in'),
-  btnZoomOut: document.getElementById('btn-zoom-out'),
-  btnZoomReset: document.getElementById('btn-zoom-reset'),
   btnMemTotal: document.getElementById('btn-mem-total'),
   btnFreeMem: document.getElementById('btn-free-mem'),
   memPopover: document.getElementById('mem-popover'),
@@ -406,24 +404,59 @@ function render() {
   renderPager();
   renderSidebar();
   renderGrid();
-  updateZoomControl();
   updateMemBadges();
   updateStatusBar();
 }
 
-function updateZoomControl() {
-  if (!el.zoomControl || !el.zoomLabel) return;
-  const acc = focusedAccountId
-    ? state.accounts.find((a) => a.id === focusedAccountId)
-    : null;
-  if (!acc) {
-    el.zoomControl.hidden = true;
+function zoomPctFor(accountId) {
+  const z = panelZoomMap.has(accountId)
+    ? panelZoomMap.get(accountId)
+    : accountId === focusedAccountId
+      ? focusedZoom
+      : 1;
+  const acc = state.accounts.find((a) => a.id === accountId);
+  const fromState = acc && Number(acc.zoomFactor);
+  const factor = panelZoomMap.has(accountId)
+    ? z
+    : Number.isFinite(fromState)
+      ? fromState
+      : z || 1;
+  return Math.round((factor || 1) * 100);
+}
+
+function showPanelZoomToast(accountId, zoom) {
+  const pct = Math.round((zoom || 1) * 100);
+  panelZoomMap.set(accountId, zoom);
+  const slot = el.grid.querySelector(`.panel-slot[data-account-id="${accountId}"]`);
+  if (!slot) return;
+  let chip = slot.querySelector('.panel-zoom-chip');
+  if (pct === 100) {
+    if (chip) chip.remove();
     return;
   }
-  el.zoomControl.hidden = false;
-  const pct = Math.round((focusedZoom || 1) * 100);
-  el.zoomLabel.textContent = `Zoom: ${acc.name} ${pct}%`;
-  if (el.zoomChip) el.zoomChip.style.background = acc.color || 'var(--accent)';
+  if (!chip) {
+    chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'panel-zoom-chip';
+    chip.title = 'Redefinir zoom (100%)';
+    chip.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const res = await window.multiheiz.panelZoom(accountId, 0);
+      if (res && res.ok && typeof res.zoom === 'number') {
+        focusedZoom = res.zoom;
+        panelZoomMap.set(accountId, res.zoom);
+        showPanelZoomToast(accountId, res.zoom);
+      }
+    });
+    const header = slot.querySelector('.panel-header');
+    if (header) header.appendChild(chip);
+  }
+  chip.textContent = `${pct}%`;
+  chip.classList.add('flash');
+  if (zoomToastTimer) clearTimeout(zoomToastTimer);
+  zoomToastTimer = setTimeout(() => {
+    chip.classList.remove('flash');
+  }, 1200);
 }
 
 function updateLockButton() {
@@ -536,16 +569,18 @@ function showWsMenu(x, y, ws) {
 }
 
 function closeMenus() {
-  const had = document.querySelectorAll('.context-menu').length > 0;
+  const hadCtx = document.querySelectorAll('.context-menu').length > 0;
+  const hadExt = document.querySelectorAll('.panel-ext-menu').length > 0;
   document.querySelectorAll('.context-menu').forEach((n) => n.remove());
   document.querySelectorAll('.panel-ext-menu').forEach((n) => n.remove());
-  if (had) popOverlay('context-menu');
+  if (hadCtx) popOverlay('context-menu');
+  if (hadExt) popOverlay('panel-ext-menu');
 }
 
 async function openPanelExtensionsMenu(accountId, x, y) {
   closeMenus();
-  if (!window.multiheiz.extensionsActionsFor) return;
-  const actions = await window.multiheiz.extensionsActionsFor(accountId);
+  if (!window.multiheiz.extensionsForPanel) return;
+  const list = await window.multiheiz.extensionsForPanel(accountId);
   const menu = document.createElement('div');
   menu.className = 'panel-ext-menu';
   menu.style.left = Math.max(8, x) + 'px';
@@ -554,38 +589,108 @@ async function openPanelExtensionsMenu(accountId, x, y) {
   badge.className = 'badge-experimental panel-ext-badge';
   badge.textContent = 'Experimental (em testes)';
   menu.appendChild(badge);
-  if (!actions || !actions.length) {
+
+  if (!list || !list.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = 'Nenhuma extensão com ação nesta janela. Configure em Configurações → Extensões.';
+    empty.textContent = 'Nenhuma extensão instalada';
     menu.appendChild(empty);
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'panel-ext-manage';
+    addBtn.textContent = 'Adicionar extensão';
+    addBtn.addEventListener('click', () => {
+      closeMenus();
+      openSettingsSection('extensoes');
+    });
+    menu.appendChild(addBtn);
   } else {
-    for (const ext of actions) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
+    for (const ext of list) {
+      const row = document.createElement('div');
+      row.className = 'panel-ext-row' + (ext.activeOnPanel ? '' : ' inactive');
       if (ext.iconDataUrl) {
         const img = document.createElement('img');
         img.src = ext.iconDataUrl;
         img.alt = '';
-        btn.appendChild(img);
+        row.appendChild(img);
       }
-      btn.appendChild(document.createTextNode(ext.actionTitle || ext.name || 'Extensão'));
-      btn.addEventListener('click', async () => {
+      const nameBtn = document.createElement('button');
+      nameBtn.type = 'button';
+      nameBtn.className = 'panel-ext-name';
+      nameBtn.textContent = ext.name || ext.id;
+      nameBtn.disabled = !ext.activeOnPanel || !ext.hasAction;
+      nameBtn.title = ext.hasAction
+        ? 'Abrir popup da extensão'
+        : 'Esta extensão não tem popup';
+      nameBtn.addEventListener('click', async () => {
         closeMenus();
         const r = await window.multiheiz.extensionsOpenAction(ext.id, accountId, x, y);
         if (r && !r.ok) showToast(r.error || 'Não foi possível abrir o popup');
       });
-      menu.appendChild(btn);
+      row.appendChild(nameBtn);
+
+      const swLabel = document.createElement('label');
+      swLabel.className = 'panel-ext-switch';
+      swLabel.title = 'Ativa nesta janela';
+      const sw = document.createElement('input');
+      sw.type = 'checkbox';
+      sw.checked = !!ext.activeOnPanel;
+      sw.addEventListener('change', async () => {
+        const r = await window.multiheiz.extensionsSetActiveOnPanel(
+          ext.id,
+          accountId,
+          sw.checked
+        );
+        if (r && r.note) showToast(r.note);
+        closeMenus();
+        openPanelExtensionsMenu(accountId, x, y);
+      });
+      swLabel.append(sw, document.createTextNode(' Nesta janela'));
+      row.appendChild(swLabel);
+      menu.appendChild(row);
     }
   }
+
+  const footer = document.createElement('button');
+  footer.type = 'button';
+  footer.className = 'panel-ext-manage';
+  footer.textContent = 'Gerenciar extensões';
+  footer.addEventListener('click', () => {
+    closeMenus();
+    openSettingsSection('extensoes');
+  });
+  menu.appendChild(footer);
+
   document.body.appendChild(menu);
+  pushOverlay('panel-ext-menu');
   const onDoc = (ev) => {
     if (!menu.contains(ev.target)) {
       closeMenus();
       document.removeEventListener('mousedown', onDoc, true);
+      document.removeEventListener('keydown', onKey, true);
     }
   };
-  setTimeout(() => document.addEventListener('mousedown', onDoc, true), 0);
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') {
+      closeMenus();
+      document.removeEventListener('mousedown', onDoc, true);
+      document.removeEventListener('keydown', onKey, true);
+    }
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', onDoc, true);
+    document.addEventListener('keydown', onKey, true);
+  }, 0);
+}
+
+function openSettingsSection(section) {
+  openSettings();
+  if (window.MultiHeizV16 && window.MultiHeizV16.openSettingsSection) {
+    window.MultiHeizV16.openSettingsSection(section);
+  } else {
+    const btn = document.querySelector(`.settings-nav-btn[data-section="${section}"]`);
+    if (btn) btn.click();
+  }
 }
 
 function renderPager() {
@@ -922,6 +1027,25 @@ function buildPanelSlot(acc, tile) {
   actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnMax, btnMore);
   header.append(stripe, fav, btnStar, btnShield, btnExt, titleBlock, actions);
   header.dataset.role = 'panel-header';
+
+  const zPct = zoomPctFor(acc.id);
+  if (zPct !== 100) {
+    const zChip = document.createElement('button');
+    zChip.type = 'button';
+    zChip.className = 'panel-zoom-chip';
+    zChip.textContent = `${zPct}%`;
+    zChip.title = 'Redefinir zoom (100%)';
+    zChip.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const res = await window.multiheiz.panelZoom(acc.id, 0);
+      if (res && res.ok && typeof res.zoom === 'number') {
+        focusedZoom = res.zoom;
+        panelZoomMap.set(acc.id, res.zoom);
+        showPanelZoomToast(acc.id, res.zoom);
+      }
+    });
+    header.appendChild(zChip);
+  }
 
   if (isLivreEditMode()) {
     header.style.cursor = 'grab';
@@ -1446,20 +1570,6 @@ el.btnSidebarToggle.addEventListener('click', async () => {
   }
 });
 
-async function applyFocusedZoom(delta) {
-  const id = focusedAccountId;
-  if (!id) return;
-  const res = await window.multiheiz.panelZoom(id, delta);
-  if (res && res.ok && typeof res.zoom === 'number') {
-    focusedZoom = res.zoom;
-    updateZoomControl();
-  }
-}
-
-if (el.btnZoomIn) el.btnZoomIn.addEventListener('click', () => applyFocusedZoom(0.1));
-if (el.btnZoomOut) el.btnZoomOut.addEventListener('click', () => applyFocusedZoom(-0.1));
-if (el.btnZoomReset) el.btnZoomReset.addEventListener('click', () => applyFocusedZoom(0));
-
 el.btnLayoutLock.addEventListener('click', async () => {
   applyState(await window.multiheiz.updateUi({ layoutLocked: !isLayoutLocked() }));
 });
@@ -1732,22 +1842,29 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'panel:focus-changed') {
     focusedAccountId = payload.accountId || null;
-    if (typeof payload.zoom === 'number') focusedZoom = payload.zoom;
+    if (typeof payload.zoom === 'number') {
+      focusedZoom = payload.zoom;
+      if (focusedAccountId) panelZoomMap.set(focusedAccountId, payload.zoom);
+    }
     renderSidebar();
     // Highlight focused panel chrome; URL bar (Ctrl+L) follows focusedAccountId
     for (const slot of el.grid.querySelectorAll('.panel-slot')) {
       slot.classList.toggle('focused', slot.dataset.accountId === focusedAccountId);
     }
-    updateZoomControl();
     // Re-sync so focused panel view inset (FOCUS_FRAME) updates
     scheduleSync();
     return;
   }
   if (payload.type === 'panel:zoom-changed') {
-    if (payload.accountId === focusedAccountId && typeof payload.zoom === 'number') {
-      focusedZoom = payload.zoom;
-      updateZoomControl();
+    if (typeof payload.zoom === 'number' && payload.accountId) {
+      panelZoomMap.set(payload.accountId, payload.zoom);
+      if (payload.accountId === focusedAccountId) focusedZoom = payload.zoom;
+      showPanelZoomToast(payload.accountId, payload.zoom);
     }
+    return;
+  }
+  if (payload.type === 'ui:new-account') {
+    openAccountDialog(null);
     return;
   }
   if (payload.type === 'ui:help-shortcuts') {
@@ -2180,7 +2297,7 @@ function setWindowMaximizedUi(maximized) {
 function isTopbarInteractiveTarget(target) {
   if (!target || !target.closest) return false;
   return !!target.closest(
-    'button, select, input, a, label, .tabs, .tab, .layout-label, .zoom-control, .pager, .win-controls, .app-icon'
+    'button, select, input, a, label, .tabs, .tab, .layout-label, .pager, .win-controls, .app-icon'
   );
 }
 
@@ -2355,12 +2472,22 @@ Object.assign(window.__multiheizUi, {
     const focused = [...el.grid.querySelectorAll('.panel-slot.focused')].map(
       (s) => s.dataset.accountId
     );
+    const topZoom = document.getElementById('zoom-control');
+    const topAdd = document.querySelector('#topbar #btn-add-account');
+    const chip = focusedAccountId
+      ? el.grid.querySelector(
+          `.panel-slot[data-account-id="${focusedAccountId}"] .panel-zoom-chip`
+        )
+      : null;
     return {
       focusedAccountId,
       focusedSlots: focused,
-      zoomLabel: el.zoomLabel ? el.zoomLabel.textContent : '',
-      zoomHidden: !!(el.zoomControl && el.zoomControl.hidden),
+      zoomLabel: chip ? chip.textContent : '',
+      zoomHidden: !chip,
       zoomPct: Math.round((focusedZoom || 1) * 100),
+      topBarHasZoom: !!topZoom,
+      topBarHasNewWindow: !!topAdd,
+      sidebarHasNewWindow: !!(el.btnAddAccount && el.sidebar && el.sidebar.contains(el.btnAddAccount)),
       settingsIconHtml: el.btnSettings ? el.btnSettings.innerHTML : '',
     };
   },

@@ -1,7 +1,7 @@
 {
   "name": "multiheiz",
   "productName": "MultiHeiz",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Navegador multi-janela com painéis e sessões independentes",
   "homepage": "https://github.com/leoheiz/MultiHeiz",
   "repository": "github:leoheiz/MultiHeiz",
@@ -28,6 +28,8 @@
     "selftest:titlebar": "node tools/selftest-titlebar.js",
     "selftest:ext": "node tools/selftest-ext.js",
     "selftest:updater": "node tools/selftest-updater.js",
+    "selftest:v110": "node tools/selftest-v110.js",
+    "check:update-live": "node tools/check-update-live.js",
     "check:adblock-real": "node tools/check-adblock-real.js",
     "check:encoding": "node tools/check-encoding.js",
     "clean": "node tools/clean-dist.js",

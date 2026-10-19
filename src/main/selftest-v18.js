@@ -432,13 +432,11 @@ window.__iframeEarly = window.__mhEarlyOk === true;
   const needLabels = [
     /Recarregar todas/i,
     /^Som$/i,
-    /^Zoom/i,
     /^Layout$/i,
     /Downloads/i,
     /Tela cheia/i,
     /^Ajuda$/i,
     /Silenciar todas/i,
-    /100%/,
     /Novidades/i,
     /Atalhos/i,
   ];
@@ -448,6 +446,11 @@ window.__iframeEarly = window.__mhEarlyOk === true;
       app.exit(1);
       return;
     }
+  }
+  if (topMenu.labels.some((l) => /^Zoom/i.test(l))) {
+    console.log('FAIL: overflow menu should not have Zoom (moved to panel menu)', topMenu.labels);
+    app.exit(1);
+    return;
   }
   console.log('PASS: overflow › menu labels');
 
@@ -998,22 +1001,22 @@ window.__iframeEarly = window.__mhEarlyOk === true;
     validated.entryCount
   );
 
-  if (!changelog.shouldShowNovidades(null, '1.0.1')) {
+  if (!changelog.shouldShowNovidades(null, '1.1.0')) {
     console.log('FAIL: should show when never seen');
     app.exit(1);
     return;
   }
-  if (!changelog.shouldShowNovidades('0.9.0', '1.0.1')) {
-    console.log('FAIL: should show after update 0.9.0 -> 1.0.1');
+  if (!changelog.shouldShowNovidades('0.9.0', '1.1.0')) {
+    console.log('FAIL: should show after update 0.9.0 -> 1.1.0');
     app.exit(1);
     return;
   }
-  if (!changelog.shouldShowNovidades('1.0.0', '1.0.1')) {
-    console.log('FAIL: should show after update 1.0.0 -> 1.0.1');
+  if (!changelog.shouldShowNovidades('1.0.1', '1.1.0')) {
+    console.log('FAIL: should show after update 1.0.1 -> 1.1.0');
     app.exit(1);
     return;
   }
-  if (changelog.shouldShowNovidades('1.0.1', '1.0.1')) {
+  if (changelog.shouldShowNovidades('1.1.0', '1.1.0')) {
     console.log('FAIL: should not show when already seen');
     app.exit(1);
     return;
@@ -1102,17 +1105,18 @@ window.__iframeEarly = window.__mhEarlyOk === true;
         tags: [...new Set(tags)],
         has100: versions.includes('1.0.0'),
         has101: versions.includes('1.0.1'),
-        bothVersions:
-          versions.length === 2 &&
+        has110: versions.includes('1.1.0'),
+        allVersions:
           versions.includes('1.0.0') &&
-          versions.includes('1.0.1'),
+          versions.includes('1.0.1') &&
+          versions.includes('1.1.0'),
         tagNovo: tags.includes('Novo'),
         tagMelhoria: tags.includes('Melhoria'),
         tagCorrecao: tags.includes('Correção'),
       };
     })()
   `);
-  if (!uiNov || !uiNov.ok || !uiNov.has100 || !uiNov.has101 || !uiNov.bothVersions) {
+  if (!uiNov || !uiNov.ok || !uiNov.has100 || !uiNov.has101 || !uiNov.has110 || !uiNov.allVersions) {
     console.log('FAIL: novidades UI', uiNov);
     app.exit(1);
     return;

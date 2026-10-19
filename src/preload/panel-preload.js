@@ -107,6 +107,25 @@ function injectEarlySync() {
 
 injectEarlySync();
 
+/** Ctrl+wheel zoom — preventDefault so page pinch-zoom does not double-apply. */
+try {
+  window.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      try {
+        ipcRenderer.send('panel:ctrl-wheel', { deltaY: e.deltaY });
+      } catch {
+        /* ignore */
+      }
+    },
+    { passive: false, capture: true }
+  );
+} catch {
+  /* ignore */
+}
+
 let frames = 0;
 let lastReport = Date.now();
 

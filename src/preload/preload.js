@@ -88,6 +88,9 @@ contextBridge.exposeInMainWorld('multiheiz', {
   extensionsOpenAction: (id, accountId, x, y) =>
     ipcRenderer.invoke('extensions:open-action', { id, accountId, x, y }),
   extensionsActionsFor: (accountId) => ipcRenderer.invoke('extensions:actions-for', accountId),
+  extensionsForPanel: (accountId) => ipcRenderer.invoke('extensions:for-panel', accountId),
+  extensionsSetActiveOnPanel: (id, accountId, active) =>
+    ipcRenderer.invoke('extensions:set-active-on-panel', { id, accountId, active }),
 
   bookmarksList: () => ipcRenderer.invoke('bookmarks:list'),
   bookmarksFindUrl: (url) => ipcRenderer.invoke('bookmarks:find-url', url),
@@ -122,8 +125,12 @@ contextBridge.exposeInMainWorld('multiheiz', {
   diagnosticsProcessInfo: () => ipcRenderer.invoke('diagnostics:process-info'),
   updatesCheck: () => ipcRenderer.invoke('updates:check'),
   updatesStatus: () => ipcRenderer.invoke('updates:status'),
+  updatesDownload: () => ipcRenderer.invoke('updates:download'),
+  updatesCancel: () => ipcRenderer.invoke('updates:cancel'),
   updatesInstall: () => ipcRenderer.invoke('updates:install'),
   updatesOpenReleases: () => ipcRenderer.invoke('updates:open-releases'),
+  updatesOpenDownload: () => ipcRenderer.invoke('updates:open-download'),
+  updatesGetChannel: () => ipcRenderer.invoke('updates:get-channel'),
   updatesGetAutoCheck: () => ipcRenderer.invoke('updates:get-auto-check'),
   updatesSetAutoCheck: (enabled) => ipcRenderer.invoke('updates:set-auto-check', enabled),
   changelogGet: () => ipcRenderer.invoke('changelog:get'),
