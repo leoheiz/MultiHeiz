@@ -11,6 +11,7 @@ Este arquivo lista dependências de runtime e listas de filtros usadas pelo Mult
 | [adm-zip](https://github.com/cthackers/adm-zip) | MIT | Extração de arquivos `.crx` |
 | [exceljs](https://github.com/exceljs/exceljs) | MIT | Exportação XLSX do módulo Planilha |
 | [@ghostery/adblocker-electron](https://github.com/ghostery/adblocker) | MPL-2.0 | Motor de bloqueio embutido (e pacotes `@ghostery/*` / `@cliqz` relacionados, também MPL-2.0) |
+| [@adguard/agtree](https://github.com/AdguardTeam/agtree) | MIT (AdGuard Software Ltd.) | Parser/conversor de regras AdGuard → sintaxe uBO (`##+js`); usado só no pré-processamento de listas ABU opcionais. **Não** se usam `@adguard/tswebextension`, `@adguard/tsurlfilter` nem `@adguard/scriptlets` (GPL). |
 
 ### Ghostery adblocker (MPL-2.0)
 

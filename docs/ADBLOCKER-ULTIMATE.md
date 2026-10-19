@@ -17,8 +17,19 @@ All five are opt-in (`defaultOn: false`), never bundled in the installer, and la
 
 Source: [adblockultimate.net/filters](https://adblockultimate.net/filters) (AdAvoid Ltd.).
 No dedicated Portuguese list on filters.adavoid.org — EasyList Spanish covers ES/PT sites.
-See `THIRD_PARTY_NOTICES.md` and catalog `src/main/adblock/lists.js`. AdGuard-syntax
-preprocessing / scriptlet conversion is phase 5B.
+See `THIRD_PARTY_NOTICES.md` and catalog `src/main/adblock/lists.js`.
+
+### AdGuard-syntax preprocessing (1.2.0 phase 5B)
+
+Before `ElectronBlocker.parse`, ABU lists (`vendor: 'AdBlocker Ultimate'`) are rewritten:
+
+| Input | Action |
+|-------|--------|
+| Network + `##` / `#@#` cosmetics | Pass through |
+| `#%#//scriptlet(...)` | Convert via MIT `@adguard/agtree` → `##+js(...)`; drop conversion failures |
+| `#$#`, `#?#`, `#@%#`, `$$`, raw `#%#` JS, `!#if` blocks | Drop (never execute raw `#%#` JS) |
+
+`@adguard/agtree` loads lazily (`await import`) only when an ABU list is enabled; if import fails, scriptlets are skipped. Converted/dropped counts appear in list meta / engine status `preprocess`.
 
 ---
 

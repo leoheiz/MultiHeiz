@@ -112,8 +112,30 @@ Default OFF: AdGuard Tracking `3.txt` (~11 MB); AdBlocker Ultimate (AdAvoid) o
 `abu_spanish_portuguese` (ES/PT regional). Baixadas em runtime; não vão no pacote.
 Auto-update 6/12/24/48 h (default 24).
 
+ABU lists use AdGuard syntax: `src/main/adblock/preprocess.js` converts `#%#//scriptlet`
+→ `##+js` via `@adguard/agtree` (MIT, lazy `import`) and drops other AdGuard-only forms
+(`#$#`, `#?#`, raw `#%#` JS, etc.) before Ghostery parse.
+
 Números de build (listas default, com resources) são registrados em
 `docs/adblock-real-results.md` / `TASK-v1.7.1.result.md` após `check:adblock-real`.
+
+### ABU build measurement (1.2.0 phase 5B)
+
+Measured 2026-10-19 on this PC (`win32`, Node v24.5.0) with a TEMP cache dir via
+`node --expose-gc tools/measure-abu-build.js` (each scenario in a **fresh process**;
+`FiltersEngine.parse` — not the interactive Electron session). See also
+`TASK-1.2.0-phase5B.result.md`.
+
+| Scenario | build (ms) | ΔRSS (MB) | Δheap (MB) | RSS after (MB) | network | cosmetic | scriptlets conv/drop | AG-only dropped |
+|----------|------------|-----------|------------|----------------|---------|----------|----------------------|-----------------|
+| (a) defaults | 625 | 356.7 | 186.1 | 417.1 | 147578 | 61692 | 0/0 | 0 |
+| (b) defaults + abu_ad + abu_security + abu_anticircumvention + abu_spanish_portuguese | 1164 | 539.2 | 412.2 | 598.9 | 232553 | 126469 | 4481/505 | 12988 |
+| (c) (b) + abu_privacy | 2145 | 786.7 | 609.0 | 846.9 | 592505 | 127145 | 4925/538 | 13099 |
+
+Relative to (a): (b) ≈ **+183 MB RSS** / **+0.5 s**; (c) ≈ **+430 MB RSS** / **+1.5 s**
+(and ~592k network filters). (c) exceeds the “>+400 MB” heavy threshold vs defaults —
+**`abu_privacy` stays default OFF** with the existing size warning. All ABU lists remain
+opt-in (`defaultOn: false`).
 
 
 ## v1.8 early MAIN WORLD scriptlets (phase 1)

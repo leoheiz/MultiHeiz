@@ -41,6 +41,51 @@ async function runAdblockSelftest(ctx) {
   const shotsDir = path.join(__dirname, '..', '..', 'docs', 'screenshots');
   fs.mkdirSync(shotsDir, { recursive: true });
 
+  // Phase 5B: ABU catalog present, default off, not bundled; preprocess sample
+  {
+    const abuIds = [
+      'abu_ad',
+      'abu_privacy',
+      'abu_security',
+      'abu_anticircumvention',
+      'abu_spanish_portuguese',
+    ];
+    for (const id of abuIds) {
+      const def = adblock.LISTS && adblock.LISTS[id];
+      if (!def || def.defaultOn !== false || def.vendor !== 'AdBlocker Ultimate') {
+        throw new Error('FAIL: ABU catalog entry invalid: ' + id);
+      }
+      const bundled = path.join(__dirname, def.file);
+      if (fs.existsSync(bundled)) {
+        throw new Error('FAIL: ABU list bundled next to adblock module: ' + def.file);
+      }
+    }
+    const preMod = adblock.preprocess;
+    if (!preMod || typeof preMod.preprocessAbuList !== 'function') {
+      throw new Error('FAIL: adblock.preprocess not exported');
+    }
+    const sample =
+      "example.com#%#//scriptlet('set-constant', 'x', 'noopFunc')\n" +
+      "example.com#$#x { display:none !important }\n" +
+      "example.com#?#div:has(.ad)\n";
+    const pre = await preMod.preprocessAbuList(sample);
+    if (!/##\+js\(set-constant,\s*x,\s*noopFunc\)/.test(pre.text)) {
+      throw new Error('FAIL: scriptlet not converted: ' + pre.text);
+    }
+    if (pre.text.includes('#$#') || pre.text.includes('#?#')) {
+      throw new Error('FAIL: AdGuard-only lines not dropped: ' + pre.text);
+    }
+    console.log(
+      'PASS: ABU catalog + preprocess (conv=' +
+        pre.stats.scriptletsConverted +
+        ' dropScriptlet=' +
+        pre.stats.scriptletsDropped +
+        ' dropAg=' +
+        pre.stats.adguardOnlyDropped +
+        ')'
+    );
+  }
+
   /** @type {http.Server|null} */
   let server = null;
   /** @type {Map<string, number>} */

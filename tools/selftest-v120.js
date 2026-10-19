@@ -395,6 +395,93 @@ async function runNodeChecks() {
   console.log('PASS: adblock rebuild serialized (parallelPeak≤1)');
   assert(adblock.REBUILD_DEBOUNCE_MS >= 300 && adblock.REBUILD_DEBOUNCE_MS <= 500, 'debounce 300-500ms');
 
+  // --- ABU catalog + AdGuard-syntax preprocessing (phase 5B) ---
+  const { LISTS: abuLists, defaultListFlags } = require('../src/main/adblock/lists');
+  const abuIds = [
+    'abu_ad',
+    'abu_privacy',
+    'abu_security',
+    'abu_anticircumvention',
+    'abu_spanish_portuguese',
+  ];
+  for (const id of abuIds) {
+    assert(abuLists[id], 'ABU list missing: ' + id);
+    assert(abuLists[id].defaultOn === false, id + ' must be defaultOn:false');
+    assert(abuLists[id].vendor === 'AdBlocker Ultimate', id + ' vendor');
+  }
+  const flags = defaultListFlags();
+  for (const id of abuIds) {
+    assert(flags[id] === false, 'defaultListFlags ' + id + ' false');
+  }
+  // Not bundled in package source / build.files
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert(pkg.dependencies && pkg.dependencies['@adguard/agtree'], '@adguard/agtree in dependencies');
+  assert(!pkg.devDependencies || !pkg.devDependencies['@adguard/agtree'], 'agtree not only in devDeps');
+  const buildFiles = (pkg.build && pkg.build.files) || [];
+  assert(buildFiles.includes('src/**/*'), 'build packs src');
+  assert(!buildFiles.some((f) => /\.txt$/.test(String(f))), 'no filter .txt in build.files');
+  for (const id of abuIds) {
+    const file = abuLists[id].file;
+    const underSrc = path.join(root, 'src', file);
+    assert(!fs.existsSync(underSrc), 'ABU list not bundled under src/: ' + file);
+  }
+  const {
+    preprocessAbuList,
+    classifyAbuLine,
+    resetAgtreeCache,
+  } = require('../src/main/adblock/preprocess');
+  resetAgtreeCache();
+  assert(classifyAbuLine("example.com##.ad") === 'pass', '## cosmetic passes');
+  assert(classifyAbuLine("||ads.example^") === 'pass', 'network passes');
+  assert(classifyAbuLine("example.com#$#foo { display:none }") === 'drop', '#$# dropped');
+  assert(classifyAbuLine("example.com#?#div:has(.ad)") === 'drop', '#?# dropped');
+  assert(
+    classifyAbuLine("example.com#%#//scriptlet('set-constant', 'x', 'noopFunc')") === 'scriptlet',
+    'scriptlet classified'
+  );
+  assert(classifyAbuLine("example.com#%#console.log(1)") === 'drop', 'raw #%# JS dropped');
+  const sample = [
+    "||ads.example.com^",
+    "example.com##.ad-banner",
+    "example.com#@#.keep",
+    "example.com#%#//scriptlet('set-constant', 'x', 'noopFunc')",
+    "example.com#$#abort-current-inline-script",
+    "example.com#?#div:has(> .ad)",
+    "example.com#%#console.log('nope')",
+    "!#if (adguard)",
+    "bad.com#%#//scriptlet('trusted-suppress-native-method', 'x')",
+  ].join('\n');
+  const pre = await preprocessAbuList(sample);
+  assert(pre.text.includes('||ads.example.com^'), 'network kept');
+  assert(pre.text.includes('example.com##.ad-banner'), '## kept');
+  assert(pre.text.includes('example.com#@#.keep'), '#@# kept');
+  assert(
+    /example\.com##\+js\(set-constant,\s*x,\s*noopFunc\)/.test(pre.text),
+    'scriptlet converted to ##+js: ' + pre.text
+  );
+  assert(!pre.text.includes('#$#'), '#$# line removed');
+  assert(!pre.text.includes('#?#'), '#?# line removed');
+  assert(!pre.text.includes("console.log('nope')"), 'raw JS removed');
+  assert(!pre.text.includes('!#if'), 'preprocessor dropped');
+  assert(pre.stats.scriptletsConverted >= 1, 'converted count');
+  assert(pre.stats.adguardOnlyDropped >= 3, 'adguard-only drops (≥ #$# #?# rawJS)');
+  assert(pre.stats.agtreeAvailable === true, 'agtree available');
+  // Failure path: unsupported scriptlet is dropped (not thrown)
+  assert(
+    !pre.text.includes('trusted-suppress-native-method'),
+    'unsupported scriptlet dropped'
+  );
+  assert(pre.stats.scriptletsDropped >= 1, 'dropped unsupported scriptlet');
+  console.log(
+    'PASS: ABU catalog + preprocess (converted=' +
+      pre.stats.scriptletsConverted +
+      ' dropped=' +
+      pre.stats.scriptletsDropped +
+      ' agOnly=' +
+      pre.stats.adguardOnlyDropped +
+      ')'
+  );
+
   // --- Parte C UX (static) ---
   const indexHtml = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8');
   assert(indexHtml.includes('id="dlg-history-clear"'), 'dlg-history-clear present');

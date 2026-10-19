@@ -124,6 +124,7 @@
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "@adguard/agtree": "^4.3.0",
     "@ghostery/adblocker-electron": "^2.20.1",
     "adm-zip": "^0.6.1",
     "electron-updater": "^6.8.9",

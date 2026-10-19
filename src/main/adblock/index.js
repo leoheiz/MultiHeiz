@@ -21,6 +21,12 @@ const {
   defaultListFlags,
   countFilterLines,
 } = require('./lists');
+const {
+  preprocessAbuList,
+  shouldPreprocessList,
+  emptyStats: emptyPreprocessStats,
+  mergeStats: mergePreprocessStats,
+} = require('./preprocess');
 
 const PRELOAD_RESOLVED = resolvePreloadPath(path.join(__dirname, 'cosmetic-preload.js'));
 const PRELOAD_PATH = PRELOAD_RESOLVED.path;
@@ -62,6 +68,8 @@ const REBUILD_DEBOUNCE_MS = 400;
 /** Instrumentation for selftests: peak parallel rebuilds (should stay ≤ 1). */
 let rebuildParallelPeak = 0;
 let rebuildParallelNow = 0;
+/** Last ABU AdGuard-syntax preprocess totals (converted/dropped). */
+let lastPreprocessStats = emptyPreprocessStats();
 
 /** @type {WeakMap<Electron.Session, { accountId: string|null, preloadId: string|undefined }>} */
 const attachedSessions = new WeakMap();
@@ -664,6 +672,7 @@ async function gatherFilterText(opts = {}) {
   let anyFresh = false;
   let anyCache = false;
   let anyError = false;
+  const preprocessTotals = emptyPreprocessStats();
 
   for (const id of selectedBuiltinListIds()) {
     const info = LISTS[id];
@@ -705,14 +714,34 @@ async function gatherFilterText(opts = {}) {
     }
 
     if (body) {
-      chunks.push(body);
+      let parseBody = body;
+      /** @type {ReturnType<typeof emptyPreprocessStats> | null} */
+      let preStats = null;
+      if (shouldPreprocessList(info)) {
+        emitProgress(`Pré-processando ${info.name}…`);
+        const pre = await preprocessAbuList(body);
+        parseBody = pre.text;
+        preStats = pre.stats;
+        mergePreprocessStats(preprocessTotals, pre.stats);
+      }
+      chunks.push(parseBody);
       listStatus[id] = status;
       listMeta[id] = {
-        ruleCount: countFilterLines(body),
+        ruleCount: countFilterLines(parseBody),
         lastUpdateAt: Date.now(),
         status,
         error: null,
         bytes: Buffer.byteLength(body, 'utf8'),
+        ...(preStats
+          ? {
+              preprocess: {
+                scriptletsConverted: preStats.scriptletsConverted,
+                scriptletsDropped: preStats.scriptletsDropped,
+                adguardOnlyDropped: preStats.adguardOnlyDropped,
+                agtreeAvailable: preStats.agtreeAvailable,
+              },
+            }
+          : {}),
       };
     } else {
       listStatus[id] = 'erro';
@@ -787,8 +816,35 @@ async function gatherFilterText(opts = {}) {
   if (ab.youtubeExperimental) chunks.push(YOUTUBE_EXPERIMENTAL_FILTERS);
   if (ab.cosmetic !== false) chunks.push(GOOGLE_SEARCH_COSMETICS);
 
+  lastPreprocessStats = preprocessTotals;
+
   if (!chunks.length) {
-    return { text: '', listStatus, listMeta, fromCache: false, empty: true, anyError };
+    return {
+      text: '',
+      listStatus,
+      listMeta,
+      fromCache: false,
+      empty: true,
+      anyError,
+      preprocess: preprocessTotals,
+    };
+  }
+
+  if (
+    preprocessTotals.scriptletsConverted ||
+    preprocessTotals.scriptletsDropped ||
+    preprocessTotals.adguardOnlyDropped
+  ) {
+    debugLog(
+      'ABU preprocess scriptletsConverted=' +
+        preprocessTotals.scriptletsConverted +
+        ' dropped=' +
+        preprocessTotals.scriptletsDropped +
+        ' adguardOnlyDropped=' +
+        preprocessTotals.adguardOnlyDropped +
+        ' agtree=' +
+        preprocessTotals.agtreeAvailable
+    );
   }
 
   return {
@@ -798,6 +854,7 @@ async function gatherFilterText(opts = {}) {
     fromCache: anyCache && !anyFresh,
     empty: false,
     anyError,
+    preprocess: preprocessTotals,
   };
 }
 
@@ -1766,6 +1823,7 @@ function getStatus() {
     progress: rebuildProgress,
     catalog,
     groupLabels: GROUP_LABELS,
+    preprocess: { ...lastPreprocessStats },
   };
 }
 
@@ -2061,4 +2119,5 @@ module.exports = {
   getRebuildDebug,
   resetRebuildDebug,
   REBUILD_DEBOUNCE_MS,
+  preprocess: require('./preprocess'),
 };
