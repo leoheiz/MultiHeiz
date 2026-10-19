@@ -35,6 +35,7 @@ const { clampBoundsToDisplays, ensureWindowOnDisplay } = require('./window-bound
 const windowChrome = require('./window-chrome');
 const ipcGuard = require('./ipc-guard');
 const permissions = require('./permissions');
+const { sanitizeUserStartUrl } = require('./url-policy');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -1037,6 +1038,12 @@ function registerIpc() {
     updateState((s) => {
       const next = { ...partial };
       delete next.adblock;
+      if (next.homepage != null) {
+        next.homepage = sanitizeUserStartUrl(
+          next.homepage,
+          (s.settings && s.settings.homepage) || 'https://www.google.com'
+        );
+      }
       s.settings = { ...s.settings, ...next };
       if (adblockPartial && typeof adblockPartial === 'object') {
         const prevAb = s.settings.adblock || adblock.defaultAdblockSettings();
@@ -1276,14 +1283,16 @@ function registerIpc() {
     const s = getState();
     const id = makeId('acc');
     const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
+    const homepageFallback =
+      (s.settings && s.settings.homepage) || 'https://www.google.com';
     const account = {
       id,
       name: (data && data.name) || `Janela ${s.accounts.length + 1}`,
       color: (data && data.color) || colors[s.accounts.length % colors.length],
-      startUrl:
-        (data && data.startUrl) ||
-        (s.settings && s.settings.homepage) ||
-        'https://www.google.com',
+      startUrl: sanitizeUserStartUrl(
+        (data && data.startUrl) || homepageFallback,
+        homepageFallback
+      ),
       workspaceId: (data && data.workspaceId) || s.activeWorkspaceId,
       muted: false,
       pauseInBackground: !!(data && data.pauseInBackground),
@@ -1314,7 +1323,9 @@ function registerIpc() {
       if (!a) return;
       if (fields.name != null) a.name = String(fields.name).trim() || a.name;
       if (fields.color != null) a.color = fields.color;
-      if (fields.startUrl != null) a.startUrl = fields.startUrl;
+      if (fields.startUrl != null) {
+        a.startUrl = sanitizeUserStartUrl(fields.startUrl, a.startUrl || 'https://www.google.com');
+      }
       if (fields.workspaceId != null) a.workspaceId = fields.workspaceId;
       if (typeof fields.muted === 'boolean') a.muted = fields.muted;
       if (typeof fields.pauseInBackground === 'boolean') {

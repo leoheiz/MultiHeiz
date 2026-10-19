@@ -7,6 +7,7 @@ const { resolveNavigateUrl } = require('./search-url');
 const {
   classifyScheme,
   isNavigableUrl,
+  allowInternalDataUrls,
   isKnownIdentityProviderUrl,
 } = require('./url-policy');
 const history = require('./history');
@@ -674,7 +675,7 @@ function createPanel(accountId) {
       const entry2 = panels.get(accountId);
       if (!entry2 || entry2.view.webContents.isDestroyed()) return;
       const target = validatedURL || entry2.view.webContents.getURL();
-      if (target && isNavigableUrl(target, { allowData: true })) {
+      if (target && isNavigableUrl(target, { allowData: allowInternalDataUrls() })) {
         entry2.view.webContents.loadURL(target).catch(() => {});
       }
     }, delay);
@@ -722,14 +723,15 @@ function createPanel(accountId) {
   } catch {
     /* older Electron without input-event */
   }
-  // Block in-page navigations to non-http(s) schemes (defense in depth)
+  // Block in-page navigations to non-http(s) schemes (defense in depth).
+  // data: only while MULTIHEIZ_SELFTEST (internal probes), never for normal browsing.
   view.webContents.on('will-navigate', (e, url) => {
-    if (!isNavigableUrl(url, { allowData: true })) {
+    if (!isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
       e.preventDefault();
     }
   });
   view.webContents.on('will-redirect', (e, url) => {
-    if (!isNavigableUrl(url, { allowData: true })) {
+    if (!isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
       e.preventDefault();
     }
   });
@@ -754,11 +756,12 @@ function createPanel(accountId) {
   // Actual navigation may be deferred by staggered load queue
   if (!deferNextCreateLoad) {
     let url = startUrlFor(account);
-    // data: allowed only for trusted account startUrl (selftest probes); never from window.open
-    if (!isNavigableUrl(url, { allowData: true })) {
+    // data: only for selftest probe startUrl; user-typed startUrl is http/https only
+    const dataOpts = { allowData: allowInternalDataUrls() };
+    if (!isNavigableUrl(url, dataOpts)) {
       url = normalizeUrl(url) || 'https://www.google.com';
     }
-    if (isNavigableUrl(url, { allowData: true })) {
+    if (isNavigableUrl(url, dataOpts)) {
       view.webContents.loadURL(url).catch((err) => {
         console.error('loadURL failed', accountId, err);
       });
@@ -772,6 +775,8 @@ function createPanel(accountId) {
 
 function rememberUrl(accountId, url) {
   if (!url || url.startsWith('about:') || url.startsWith('chrome:')) return;
+  // Never persist data:/file:/javascript: as lastUrl (user reopen must stay http/https)
+  if (!isNavigableUrl(url)) return;
   updateState((s) => {
     const acc = s.accounts.find((a) => a.id === accountId);
     if (acc) acc.lastUrl = url;
@@ -1167,7 +1172,11 @@ function pumpLoadQueue() {
     return;
   }
   const account = getAccount(id);
-  const url = account ? startUrlFor(account) : 'https://www.google.com';
+  let url = account ? startUrlFor(account) : 'https://www.google.com';
+  const dataOpts = { allowData: allowInternalDataUrls() };
+  if (!isNavigableUrl(url, dataOpts)) {
+    url = normalizeUrl(url) || 'https://www.google.com';
+  }
   const wc = entry.view.webContents;
   const current = (() => {
     try {
@@ -1177,7 +1186,7 @@ function pumpLoadQueue() {
     }
   })();
   if (!current || current === 'about:blank') {
-    if (isNavigableUrl(url, { allowData: true })) {
+    if (isNavigableUrl(url, dataOpts)) {
       wc.loadURL(url).catch(() => {});
     } else {
       loadQueuePending.delete(id);

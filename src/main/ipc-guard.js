@@ -154,7 +154,45 @@ function unregisterUiWebContents(wc) {
 }
 
 /**
- * Monkey-patch ipcMain.handle / ipcMain.on before handlers are registered.
+ * Wrap an invoke-style listener (handle / handleOnce).
+ * @param {string} channel
+ * @param {Function} listener
+ */
+function wrapHandleListener(channel, listener) {
+  return async (event, ...args) => {
+    if (!isAllowedIpc(event, channel)) {
+      logReject(channel, 'untrusted-ui-or-panel');
+      return undefined;
+    }
+    return listener(event, ...args);
+  };
+}
+
+/**
+ * Wrap an on-style listener (on / once), including sendSync returnValue.
+ * @param {string} channel
+ * @param {Function} listener
+ */
+function wrapOnListener(channel, listener) {
+  return (event, ...args) => {
+    if (!isAllowedIpc(event, channel)) {
+      logReject(channel, 'untrusted-ui-or-panel');
+      try {
+        // sendSync callers expect a returnValue
+        if (event && Object.prototype.hasOwnProperty.call(event, 'returnValue')) {
+          event.returnValue = undefined;
+        }
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    return listener(event, ...args);
+  };
+}
+
+/**
+ * Monkey-patch ipcMain.handle / on / handleOnce / once before handlers are registered.
  */
 function install(opts = {}) {
   configure(opts);
@@ -163,34 +201,29 @@ function install(opts = {}) {
 
   const origHandle = ipcMain.handle.bind(ipcMain);
   const origOn = ipcMain.on.bind(ipcMain);
+  const origHandleOnce =
+    typeof ipcMain.handleOnce === 'function' ? ipcMain.handleOnce.bind(ipcMain) : null;
+  const origOnce = typeof ipcMain.once === 'function' ? ipcMain.once.bind(ipcMain) : null;
 
   ipcMain.handle = (channel, listener) => {
-    return origHandle(channel, async (event, ...args) => {
-      if (!isAllowedIpc(event, channel)) {
-        logReject(channel, 'untrusted-ui-or-panel');
-        return undefined;
-      }
-      return listener(event, ...args);
-    });
+    return origHandle(channel, wrapHandleListener(channel, listener));
   };
 
   ipcMain.on = (channel, listener) => {
-    return origOn(channel, (event, ...args) => {
-      if (!isAllowedIpc(event, channel)) {
-        logReject(channel, 'untrusted-ui-or-panel');
-        try {
-          // sendSync callers expect a returnValue
-          if (event && Object.prototype.hasOwnProperty.call(event, 'returnValue')) {
-            event.returnValue = undefined;
-          }
-        } catch {
-          /* ignore */
-        }
-        return;
-      }
-      return listener(event, ...args);
-    });
+    return origOn(channel, wrapOnListener(channel, listener));
   };
+
+  if (origHandleOnce) {
+    ipcMain.handleOnce = (channel, listener) => {
+      return origHandleOnce(channel, wrapHandleListener(channel, listener));
+    };
+  }
+
+  if (origOnce) {
+    ipcMain.once = (channel, listener) => {
+      return origOnce(channel, wrapOnListener(channel, listener));
+    };
+  }
 }
 
 /**

@@ -15,6 +15,7 @@ const planilha = require('./modules/planilha');
 const alarmes = require('./modules/alarmes');
 const notas = require('./modules/notas');
 const memory = require('./memory');
+const { sanitizeUserStartUrl, isNavigableUrl } = require('./url-policy');
 
 const openExternalLog = [];
 
@@ -322,6 +323,11 @@ function initV16(ctx) {
   }
 
   function openUrlInWindow(url, mode, windowId) {
+    const raw = String(url || '').trim();
+    // Favoritos/histórico: só http(s); demais esquemas não navegam
+    if (!isNavigableUrl(raw)) {
+      return { ok: false, reason: 'blocked-scheme' };
+    }
     const st = getState();
     let targetId = windowId;
     if (mode === 'new' || (!targetId && mode !== 'current')) {
@@ -332,7 +338,7 @@ function initV16(ctx) {
         id,
         name: 'Janela',
         color: colors[st.accounts.length % colors.length],
-        startUrl: url,
+        startUrl: sanitizeUserStartUrl(raw, 'https://www.google.com'),
         workspaceId: st.activeWorkspaceId,
         muted: false,
         pauseInBackground: false,
@@ -343,14 +349,14 @@ function initV16(ctx) {
         s.accounts.push(account);
       });
       emitToRenderer({ type: 'state:changed', state: publicState() });
-      panels.panelNavigate(id, url);
+      panels.panelNavigate(id, raw);
       return { ok: true, windowId: id, state: publicState() };
     }
     if (mode === 'current' || !targetId) {
       targetId = panels.getFocusedAccountId() || (st.accounts[0] && st.accounts[0].id);
     }
     if (!targetId) return { ok: false, reason: 'no-window' };
-    panels.panelNavigate(targetId, url);
+    panels.panelNavigate(targetId, raw);
     return { ok: true, windowId: targetId, state: publicState() };
   }
 

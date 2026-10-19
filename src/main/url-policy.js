@@ -107,8 +107,17 @@ function isAboutBlank(url) {
 }
 
 /**
+ * data: startUrl is only for internal selftest probes, never for user-typed URLs.
+ * @returns {boolean}
+ */
+function allowInternalDataUrls() {
+  return !!process.env.MULTIHEIZ_SELFTEST;
+}
+
+/**
  * Only http(s) (and about:blank when needed internally) may load in a panel.
- * Optional allowData: trusted internal loads (selftest probe startUrl) — never from window.open.
+ * Optional allowData: trusted internal loads (selftest probe startUrl) — never from window.open
+ * and never for startUrl digitado pelo usuário fora de MULTIHEIZ_SELFTEST.
  * @param {string} url
  * @param {{ allowData?: boolean }} [opts]
  * @returns {boolean}
@@ -120,6 +129,22 @@ function isNavigableUrl(url, opts = {}) {
   if (u.protocol === 'http:' || u.protocol === 'https:') return true;
   if (opts.allowData && u.protocol === 'data:') return true;
   return false;
+}
+
+/**
+ * Sanitize account startUrl / homepage from UI: http(s) or bare host; block file/data/javascript/…
+ * Em selftest, data: continua permitido para probes.
+ * @param {string} url
+ * @param {string} [fallback]
+ * @returns {string}
+ */
+function sanitizeUserStartUrl(url, fallback = 'https://www.google.com') {
+  const raw = String(url || '').trim();
+  if (!raw) return fallback;
+  if (isNavigableUrl(raw, { allowData: allowInternalDataUrls() })) return raw;
+  // Bare domain / path without scheme — keep; load path will resolve via omnibox rules
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)) return raw;
+  return fallback;
 }
 
 /**
@@ -214,6 +239,8 @@ function isKnownIdentityProviderUrl(url) {
 module.exports = {
   classifyScheme,
   isNavigableUrl,
+  allowInternalDataUrls,
+  sanitizeUserStartUrl,
   isKnownIdentityProviderUrl,
   isAboutBlank,
   EXTERNAL_SCHEMES,
