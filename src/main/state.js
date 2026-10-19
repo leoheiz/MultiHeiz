@@ -63,6 +63,10 @@ function defaultState() {
       suspendHidden: false,
       suspendDelayMs: 0,
       keepBackgroundRunning: false,
+      /** One-shot migration markers (do not remove keys once set) */
+      migrations: {
+        keepAlive120: true,
+      },
       // Memória
       memoryLimitMb: 0,
       panelMemoryLimitMb: 0,
@@ -217,6 +221,23 @@ function migrate(parsed) {
   }
   if (typeof next.settings.keepBackgroundRunning !== 'boolean') {
     next.settings.keepBackgroundRunning = false;
+  }
+  // v1.2.0 one-shot: pre-1.2.0 profiles had keepBackgroundRunning=true as the old
+  // default (kept every panel alive). Force OFF once; do not touch per-account
+  // keepAliveInBackground. Marker from *parsed* settings only (not defaultState),
+  // so legacy files without migrations still migrate.
+  {
+    const rawMigrations =
+      parsed.settings &&
+      parsed.settings.migrations &&
+      typeof parsed.settings.migrations === 'object'
+        ? parsed.settings.migrations
+        : {};
+    next.settings.migrations = { ...rawMigrations };
+    if (!next.settings.migrations.keepAlive120) {
+      next.settings.keepBackgroundRunning = false;
+      next.settings.migrations.keepAlive120 = true;
+    }
   }
   if (typeof next.settings.persistSessions !== 'boolean') {
     next.settings.persistSessions = true;

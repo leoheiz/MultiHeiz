@@ -299,7 +299,75 @@ async function runNodeChecks() {
     st.settings.keepBackgroundRunning === false,
     'keepBackgroundRunning defaults false when missing'
   );
+  assert(
+    st.settings.migrations && st.settings.migrations.keepAlive120 === true,
+    'keepAlive120 migration marker set on first load'
+  );
   console.log('PASS: keepAliveInBackground / keepBackgroundRunning default OFF');
+
+  // --- keepAlive120 one-shot: legacy keepBackgroundRunning=true → forced false ---
+  clearModuleMatch(/\/src\/main\/(state|json-store)/);
+  const userData2 = path.join(tempRoot, 'userData-mig');
+  fs.mkdirSync(userData2, { recursive: true });
+  installElectronStub({ tempDir: tempRoot, userData: userData2 });
+  clearModuleMatch(/\/src\/main\/(state|json-store)/);
+  const statePath2 = path.join(userData2, 'multiheiz-state.json');
+  fs.writeFileSync(
+    statePath2,
+    JSON.stringify({
+      accounts: [
+        {
+          id: 'acc-legacy-kb',
+          name: 'LegacyKB',
+          color: '#2bb8a6',
+          startUrl: 'https://example.com',
+          workspaceId: 'ws',
+          muted: false,
+          keepAliveInBackground: true,
+        },
+      ],
+      workspaces: [{ id: 'ws', name: 'W' }],
+      activeWorkspaceId: 'ws',
+      settings: {
+        keepBackgroundRunning: true,
+      },
+      ui: {},
+      appearance: {},
+    }),
+    'utf8'
+  );
+  const stateMod2 = require('../src/main/state');
+  stateMod2.loadState();
+  const st2 = stateMod2.getState();
+  assert(
+    st2.settings.keepBackgroundRunning === false,
+    'keepAlive120 forces keepBackgroundRunning false once'
+  );
+  assert(
+    st2.settings.migrations && st2.settings.migrations.keepAlive120 === true,
+    'keepAlive120 marker written'
+  );
+  assert(
+    st2.accounts[0] && st2.accounts[0].keepAliveInBackground === true,
+    'keepAliveInBackground per account left untouched'
+  );
+  // Second load with marker + user re-enabled keepBackgroundRunning must keep true
+  stateMod2.flushSave();
+  const saved = JSON.parse(fs.readFileSync(statePath2, 'utf8'));
+  saved.settings.keepBackgroundRunning = true;
+  assert(saved.settings.migrations.keepAlive120 === true, 'saved file has marker');
+  fs.writeFileSync(statePath2, JSON.stringify(saved), 'utf8');
+  clearModuleMatch(/\/src\/main\/(state|json-store)/);
+  installElectronStub({ tempDir: tempRoot, userData: userData2 });
+  clearModuleMatch(/\/src\/main\/(state|json-store)/);
+  const stateMod3 = require('../src/main/state');
+  stateMod3.loadState();
+  const st3 = stateMod3.getState();
+  assert(
+    st3.settings.keepBackgroundRunning === true,
+    'after marker, user keepBackgroundRunning=true is preserved'
+  );
+  console.log('PASS: keepAlive120 one-shot migration');
 
   // --- adblock rebuild single-flight (parallel peak ≤ 1) ---
   clearModuleMatch(/\/src\/main\/adblock/);
