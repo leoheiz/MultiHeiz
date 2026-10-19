@@ -111,6 +111,7 @@ const el = {
   sidebarList: document.getElementById('sidebar-list'),
   btnSidebarToggle: document.getElementById('btn-sidebar-toggle'),
   tabs: document.getElementById('workspace-tabs'),
+  btnTabsMore: document.getElementById('btn-tabs-more'),
   grid: document.getElementById('grid'),
   layoutSelect: document.getElementById('layout-select'),
   btnLayoutLock: document.getElementById('btn-layout-lock'),
@@ -383,7 +384,9 @@ function updateSidebarCollapseClasses() {
   el.sidebar.classList.toggle('collapsed', collapsed);
   el.sidebar.classList.toggle('auto-collapsed', auto);
   if (el.btnSidebarToggle) {
-    el.btnSidebarToggle.title = collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral';
+    const label = collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral';
+    el.btnSidebarToggle.title = label;
+    el.btnSidebarToggle.setAttribute('aria-label', label);
   }
 }
 
@@ -462,7 +465,9 @@ function showPanelZoomToast(accountId, zoom) {
 function updateLockButton() {
   const locked = isLayoutLocked();
   const livreEdit = state.layout === 'livre' && !locked && !state.maximizedAccountId;
-  el.btnLayoutLock.title = locked ? 'Destravar layout' : 'Travar layout';
+  const lockLabel = locked ? 'Destravar layout' : 'Travar layout';
+  el.btnLayoutLock.title = lockLabel;
+  el.btnLayoutLock.setAttribute('aria-label', lockLabel);
   el.btnLayoutLock.innerHTML = svg(locked ? ICO.lock : ICO.unlock);
   el.btnLayoutLock.classList.toggle('active', livreEdit);
   el.btnLayoutLock.style.display = state.layout === 'livre' ? '' : 'none';
@@ -511,6 +516,9 @@ function renderTabs() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'tab' + (ws.id === state.activeWorkspaceId ? ' active' : '');
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', ws.id === state.activeWorkspaceId ? 'true' : 'false');
+    btn.setAttribute('aria-label', ws.name || 'Área de trabalho');
     btn.textContent = ws.name;
     btn.addEventListener('click', async () => {
       applyState(await window.multiheiz.setWorkspace(ws.id));
@@ -523,6 +531,7 @@ function renderTabs() {
     edit.className = 'tab-edit';
     edit.textContent = '✎';
     edit.title = 'Renomear';
+    edit.setAttribute('aria-hidden', 'true');
     edit.addEventListener('click', (e) => {
       e.stopPropagation();
       openWorkspaceDialog(ws);
@@ -530,6 +539,37 @@ function renderTabs() {
     btn.appendChild(edit);
     el.tabs.appendChild(btn);
   }
+  requestAnimationFrame(updateTabsOverflow);
+}
+
+function updateTabsOverflow() {
+  if (!el.tabs || !el.btnTabsMore) return;
+  const overflow = el.tabs.scrollWidth > el.tabs.clientWidth + 2;
+  el.btnTabsMore.classList.toggle('hidden', !overflow);
+}
+
+function showTabsOverflowMenu() {
+  if (!el.btnTabsMore || !state.workspaces?.length) return;
+  closeMenus();
+  const r = el.btnTabsMore.getBoundingClientRect();
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.style.left = `${Math.max(8, r.left)}px`;
+  menu.style.top = `${r.bottom + 4}px`;
+  for (const ws of state.workspaces) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.textContent = ws.name + (ws.id === state.activeWorkspaceId ? ' ✓' : '');
+    item.addEventListener('click', async () => {
+      closeMenus();
+      applyState(await window.multiheiz.setWorkspace(ws.id));
+    });
+    menu.appendChild(item);
+  }
+  document.body.appendChild(menu);
+  pushOverlay('context-menu');
 }
 
 function showWsMenu(x, y, ws) {
@@ -729,7 +769,8 @@ function renderSidebar() {
   el.sidebarList.innerHTML = '';
   const list = accountsInWorkspace();
   for (const acc of list) {
-    const item = document.createElement('div');
+    const item = document.createElement('button');
+    item.type = 'button';
     item.className =
       'sidebar-item' + (focusedAccountId === acc.id || visiblePageAccounts().some((a) => a.id === acc.id && a.id === focusedAccountId) ? ' active' : '');
     if (visiblePageAccounts().some((a) => a.id === acc.id) && !focusedAccountId) {
@@ -769,8 +810,11 @@ function renderSidebar() {
     const dot = document.createElement('span');
     dot.className = `status-dot ${st}`;
     dot.title = stLabel;
+    dot.setAttribute('aria-hidden', 'true');
 
-    item.title = `${acc.name} — ${stLabel}`;
+    const a11yLabel = `${acc.name} — ${stLabel}`;
+    item.title = a11yLabel;
+    item.setAttribute('aria-label', a11yLabel);
     item.append(stripe, fav, body, dot);
     item.addEventListener('click', async () => {
       focusedAccountId = acc.id;
@@ -787,6 +831,12 @@ function renderSidebar() {
     item.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       showAccountMenu(e.clientX, e.clientY, acc);
+    });
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        item.click();
+      }
     });
     el.sidebarList.appendChild(item);
   }
@@ -1143,6 +1193,7 @@ function iconBtn(pathD, title, onClick) {
   b.type = 'button';
   b.className = 'btn icon ghost';
   b.title = title;
+  b.setAttribute('aria-label', title);
   b.innerHTML = svg(pathD);
   b.addEventListener('click', onClick);
   return b;
@@ -1552,6 +1603,30 @@ if (el.btnOverflow) {
     e.stopPropagation();
   });
 }
+if (el.btnTabsMore) {
+  el.btnTabsMore.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showTabsOverflowMenu();
+  });
+}
+if (el.tabs) {
+  el.tabs.addEventListener(
+    'wheel',
+    (e) => {
+      if (el.tabs.scrollWidth <= el.tabs.clientWidth + 1) return;
+      const dy = e.deltaY;
+      const dx = e.deltaX;
+      if (Math.abs(dy) >= Math.abs(dx) && dy !== 0) {
+        e.preventDefault();
+        el.tabs.scrollLeft += dy;
+        updateTabsOverflow();
+      }
+    },
+    { passive: false }
+  );
+  el.tabs.addEventListener('scroll', () => updateTabsOverflow(), { passive: true });
+}
+window.addEventListener('resize', () => updateTabsOverflow());
 
 el.btnSidebarToggle.addEventListener('click', async () => {
   const narrow = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT;

@@ -96,9 +96,49 @@
   function showSaved() {
     const el = document.getElementById('settings-saved');
     if (!el) return;
+    el.classList.remove('error');
+    el.textContent = 'Salvo';
     el.classList.remove('hidden');
     if (saveIndicatorTimer) clearTimeout(saveIndicatorTimer);
     saveIndicatorTimer = setTimeout(() => el.classList.add('hidden'), 1200);
+  }
+
+  function showSaveError(reason) {
+    const el = document.getElementById('settings-saved');
+    if (!el) return;
+    const short = String(reason || 'falha desconhecida').replace(/\s+/g, ' ').trim().slice(0, 80);
+    el.classList.add('error');
+    el.textContent = short ? `Erro ao salvar: ${short}` : 'Erro ao salvar';
+    el.classList.remove('hidden');
+    if (saveIndicatorTimer) clearTimeout(saveIndicatorTimer);
+    saveIndicatorTimer = setTimeout(() => el.classList.add('hidden'), 3200);
+  }
+
+  let historyClearResolver = null;
+
+  function openHistoryClearDialog(hasWindowFilter) {
+    const dlg = document.getElementById('dlg-history-clear');
+    const form = document.getElementById('form-history-clear');
+    const select = document.getElementById('history-clear-range');
+    const hint = document.getElementById('history-clear-hint');
+    const winOpt = select && select.querySelector('option[value="window"]');
+    if (!dlg || !form || !select) return Promise.resolve(null);
+    if (winOpt) winOpt.disabled = !hasWindowFilter;
+    if (hint) hint.classList.toggle('hidden', !!hasWindowFilter);
+    if (!hasWindowFilter && select.value === 'window') select.value = 'hour';
+    return new Promise((resolve) => {
+      historyClearResolver = resolve;
+      pushOverlay('dlg-history-clear');
+      dlg.showModal();
+    });
+  }
+
+  function finishHistoryClearDialog(value) {
+    const resolve = historyClearResolver;
+    historyClearResolver = null;
+    const dlg = document.getElementById('dlg-history-clear');
+    if (dlg && dlg.open) dlg.close();
+    if (resolve) resolve(value);
   }
 
   /* ---------- Managers ---------- */
@@ -251,9 +291,13 @@
       h('button', {
         type: 'button', className: 'btn ghost', text: 'Limpar…',
         onClick: async () => {
-          const choice = prompt('Limpar: hour / today / 7days / all / window');
+          const choice = await openHistoryClearDialog(!!filter.value);
           if (!choice) return;
-          if (choice === 'window' && filter.value) {
+          if (choice === 'window') {
+            if (!filter.value) {
+              toast('Selecione uma janela no filtro');
+              return;
+            }
             await window.multiheiz.historyClear({ windowId: filter.value });
           } else {
             await window.multiheiz.historyClear({ range: choice });
@@ -503,6 +547,7 @@
           type: 'button',
           className: 'sidebar-module-btn' + (activeModule === it.id ? ' active' : ''),
           title: it.label,
+          'aria-label': it.label,
           'data-label': it.label,
           onClick: () => openModule(it.id),
         },
@@ -1751,55 +1796,60 @@
     settingsSaveTimer = setTimeout(async () => {
       const form = document.getElementById('form-settings');
       if (!form) return;
-      const partial = {
-        openLastPage: !!form.openLastPage.checked,
-        persistSessions: !!(form.persistSessions && form.persistSessions.checked),
-        confirmOnRemove: !!form.confirmOnRemove.checked,
-        keepBackgroundRunning: !!form.keepBackgroundRunning.checked,
-        suspendHidden: !!form.suspendHidden.checked,
-        suspendDelayMs: Number(form.suspendDelayMs.value) || 0,
-        homepage: form.homepage.value || 'https://www.google.com',
-        uaIdentity: (form.uaIdentity && form.uaIdentity.value) || 'chrome',
-        blankLinkMode: (form.blankLinkMode && form.blankLinkMode.value) || 'same',
-        searchEngine: form.searchEngine.value || 'google',
-        searchTemplate: form.searchTemplate.value || '',
-        memoryLimitMb: Number(form.memoryLimitMb.value) || 0,
-        panelMemoryLimitMb: Number(form.panelMemoryLimitMb.value) || 0,
-        hardMemoryLimit: !!form.hardMemoryLimit.checked,
-        backgroundThrottling: !!form.backgroundThrottling.checked,
-        backgroundFps: Number(form.backgroundFps.value) || 5,
-        backgroundPreset: (form.backgroundPreset && form.backgroundPreset.value) || 'balanced',
-        lightMode: !!(form.lightMode && form.lightMode.checked),
-        frameCapHidden: Number(form.frameCapHidden && form.frameCapHidden.value) || 30,
-        frameCapAll: Number(form.frameCapAll && form.frameCapAll.value) || 0,
-        preferHighPerfGpu: !!(form.preferHighPerfGpu && form.preferHighPerfGpu.checked),
-        modules: {
-          planilha: !!form.modPlanilha.checked,
-          alarmes: !!form.modAlarmes.checked,
-          notas: !!form.modNotas.checked,
-        },
-        adblock: {
-          enabled: !!form.adblockEnabled.checked,
-          antiTracking: !!form.adblockAntiTracking.checked,
-          cosmetic: !!form.adblockCosmetic.checked,
-          youtubeExperimental: !!form.adblockYoutube.checked,
-          updateIntervalHours: Number(form.adblockUpdateInterval && form.adblockUpdateInterval.value) || 24,
-          lists: collectAdblockListFlags(),
-        },
-      };
-      const st = await window.multiheiz.updateSettings(partial);
-      applyState(st);
-      await window.multiheiz.downloadsSettings({
-        askWhereToSave: !!form.askWhereToSave.checked,
-      });
-      if (hooks().readAppearanceFromForm && hooks().updateAppearanceLive) {
-        const appearance = hooks().readAppearanceFromForm();
-        const st2 = await window.multiheiz.updateAppearance(appearance);
-        applyState(st2);
+      try {
+        const partial = {
+          openLastPage: !!form.openLastPage.checked,
+          persistSessions: !!(form.persistSessions && form.persistSessions.checked),
+          confirmOnRemove: !!form.confirmOnRemove.checked,
+          keepBackgroundRunning: !!form.keepBackgroundRunning.checked,
+          suspendHidden: !!form.suspendHidden.checked,
+          suspendDelayMs: Number(form.suspendDelayMs.value) || 0,
+          homepage: form.homepage.value || 'https://www.google.com',
+          uaIdentity: (form.uaIdentity && form.uaIdentity.value) || 'chrome',
+          blankLinkMode: (form.blankLinkMode && form.blankLinkMode.value) || 'same',
+          searchEngine: form.searchEngine.value || 'google',
+          searchTemplate: form.searchTemplate.value || '',
+          memoryLimitMb: Number(form.memoryLimitMb.value) || 0,
+          panelMemoryLimitMb: Number(form.panelMemoryLimitMb.value) || 0,
+          hardMemoryLimit: !!form.hardMemoryLimit.checked,
+          backgroundThrottling: !!form.backgroundThrottling.checked,
+          backgroundFps: Number(form.backgroundFps.value) || 5,
+          backgroundPreset: (form.backgroundPreset && form.backgroundPreset.value) || 'balanced',
+          lightMode: !!(form.lightMode && form.lightMode.checked),
+          frameCapHidden: Number(form.frameCapHidden && form.frameCapHidden.value) || 30,
+          frameCapAll: Number(form.frameCapAll && form.frameCapAll.value) || 0,
+          preferHighPerfGpu: !!(form.preferHighPerfGpu && form.preferHighPerfGpu.checked),
+          modules: {
+            planilha: !!form.modPlanilha.checked,
+            alarmes: !!form.modAlarmes.checked,
+            notas: !!form.modNotas.checked,
+          },
+          adblock: {
+            enabled: !!form.adblockEnabled.checked,
+            antiTracking: !!form.adblockAntiTracking.checked,
+            cosmetic: !!form.adblockCosmetic.checked,
+            youtubeExperimental: !!form.adblockYoutube.checked,
+            updateIntervalHours: Number(form.adblockUpdateInterval && form.adblockUpdateInterval.value) || 24,
+            lists: collectAdblockListFlags(),
+          },
+        };
+        const st = await window.multiheiz.updateSettings(partial);
+        applyState(st);
+        await window.multiheiz.downloadsSettings({
+          askWhereToSave: !!form.askWhereToSave.checked,
+        });
+        if (hooks().readAppearanceFromForm && hooks().updateAppearanceLive) {
+          const appearance = hooks().readAppearanceFromForm();
+          const st2 = await window.multiheiz.updateAppearance(appearance);
+          applyState(st2);
+        }
+        showSaved();
+        renderSidebarModules();
+        refreshAdblockUi();
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err || '');
+        showSaveError(msg);
       }
-      showSaved();
-      renderSidebarModules();
-      refreshAdblockUi();
     }, 280);
   }
 
@@ -2470,6 +2520,28 @@
     document.getElementById('btn-favorites')?.addEventListener('click', () => openManager('favorites'));
     document.getElementById('btn-history')?.addEventListener('click', () => openManager('history'));
     document.getElementById('btn-downloads')?.addEventListener('click', () => openManager('downloads'));
+
+    document.getElementById('form-history-clear')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const select = document.getElementById('history-clear-range');
+      const value = select && select.value ? select.value : '';
+      finishHistoryClearDialog(value || null);
+    });
+    document.getElementById('history-clear-cancel')?.addEventListener('click', () => {
+      finishHistoryClearDialog(null);
+    });
+    document.getElementById('dlg-history-clear')?.addEventListener('cancel', (e) => {
+      e.preventDefault();
+      finishHistoryClearDialog(null);
+    });
+    document.getElementById('dlg-history-clear')?.addEventListener('close', () => {
+      popOverlay('dlg-history-clear');
+      if (historyClearResolver) {
+        const resolve = historyClearResolver;
+        historyClearResolver = null;
+        resolve(null);
+      }
+    });
 
     document.getElementById('btn-fav-cancel')?.addEventListener('click', () => {
       document.getElementById('dlg-favorite')?.close();

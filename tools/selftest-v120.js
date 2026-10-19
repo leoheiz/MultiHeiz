@@ -327,6 +327,27 @@ async function runNodeChecks() {
   console.log('PASS: adblock rebuild serialized (parallelPeak≤1)');
   assert(adblock.REBUILD_DEBOUNCE_MS >= 300 && adblock.REBUILD_DEBOUNCE_MS <= 500, 'debounce 300-500ms');
 
+  // --- Parte C UX (static) ---
+  const indexHtml = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8');
+  assert(indexHtml.includes('id="dlg-history-clear"'), 'dlg-history-clear present');
+  assert(indexHtml.includes('Limpar histórico'), 'history clear title pt-BR');
+  assert(indexHtml.includes('id="btn-tabs-more"'), 'tabs overflow » button');
+  assert(/id="btn-favorites"[^>]*aria-label="Favoritos"/.test(indexHtml), 'favorites aria-label');
+  assert(/id="btn-history"[^>]*aria-label="Histórico"/.test(indexHtml), 'history aria-label');
+  assert(/id="btn-downloads"[^>]*aria-label="Downloads"/.test(indexHtml), 'downloads aria-label');
+  const v16 = fs.readFileSync(path.join(root, 'src/renderer/v16-ui.js'), 'utf8');
+  assert(!/prompt\('Limpar: hour/.test(v16), 'history clear no longer uses English prompt()');
+  assert(v16.includes('showSaveError'), 'autosave shows Erro ao salvar');
+  assert(v16.includes('openHistoryClearDialog'), 'history clear uses in-app dialog');
+  const appJs = fs.readFileSync(path.join(root, 'src/renderer/app.js'), 'utf8');
+  assert(appJs.includes("setAttribute('aria-label', title)"), 'iconBtn sets aria-label');
+  assert(appJs.includes('updateTabsOverflow'), 'tabs overflow helper');
+  assert(appJs.includes("createElement('button')") && appJs.includes('sidebar-item'), 'sidebar items are buttons');
+  const css = fs.readFileSync(path.join(root, 'src/renderer/styles.css'), 'utf8');
+  assert(css.includes(':focus-visible'), 'focus-visible styles');
+  assert(css.includes('scrollbar-width: none') || css.includes('.tabs::-webkit-scrollbar'), 'tabs scrollbar hidden');
+  console.log('PASS: Parte C UX static checks');
+
   try {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   } catch {
