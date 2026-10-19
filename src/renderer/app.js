@@ -550,6 +550,10 @@ async function openPanelExtensionsMenu(accountId, x, y) {
   menu.className = 'panel-ext-menu';
   menu.style.left = Math.max(8, x) + 'px';
   menu.style.top = Math.max(8, y) + 'px';
+  const badge = document.createElement('div');
+  badge.className = 'badge-experimental panel-ext-badge';
+  badge.textContent = 'Experimental (em testes)';
+  menu.appendChild(badge);
   if (!actions || !actions.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
@@ -894,7 +898,7 @@ function buildPanelSlot(acc, tile) {
   countEl.className = 'adblock-count';
   countEl.textContent = String(blockedN);
   if (blockedN > 0) btnShield.appendChild(countEl);
-  const btnExt = iconBtn(ICO.puzzle, 'Extensões nesta janela', (e) => {
+  const btnExt = iconBtn(ICO.puzzle, 'Extensões nesta janela (em testes)', (e) => {
     e.stopPropagation();
     const r = btnExt.getBoundingClientRect();
     openPanelExtensionsMenu(acc.id, Math.round(r.left), Math.round(r.bottom + 4));

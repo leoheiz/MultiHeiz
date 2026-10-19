@@ -90,7 +90,7 @@ general sites.
 
 ## v1.7.1 diagnóstico
 
-Leo: bloqueio “fraco”; anúncios do Google (Search / AdSense / DoubleClick) e YouTube não
+Feedback do usuário: bloqueio “fraco”; anúncios do Google (Search / AdSense / DoubleClick) e YouTube não
 sumiam na prática. Causas reais encontradas e corrigidas:
 
 | Bug | Efeito | Correção |

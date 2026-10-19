@@ -440,14 +440,24 @@ async function runAbuSelftest(ctx) {
   app.exit(0);
 }
 
+/** Redact absolute TEMP user paths for public docs. */
+function sanitizeTempPath(p) {
+  const s = String(p || '');
+  const m = s.match(/multiheiz-abu-[^\\/]+(.*)$/i);
+  if (m) return '%TEMP%\\multiheiz-abu-****' + (m[1] || '').replace(/\//g, '\\');
+  return s
+    .replace(/^[A-Za-z]:\\Users\\[^\\]+\\AppData\\Local\\Temp\\/i, '%TEMP%\\')
+    .replace(/^\/tmp\//, '/tmp/');
+}
+
 function renderDoc(r) {
   const lines = [];
   lines.push('# AdBlocker Ultimate on MultiHeiz (Phase 3b)');
   lines.push('');
-  lines.push('Honest results from a TEMP `MULTIHEIZ_USERDATA` run (not Leo’s real profile).');
+  lines.push('Honest results from a TEMP `MULTIHEIZ_USERDATA` run (not a personal user profile).');
   lines.push('');
   lines.push('- When: `' + r.when + '`');
-  lines.push('- userData: `' + r.userData + '`');
+  lines.push('- userData: `' + sanitizeTempPath(r.userData) + '`');
   lines.push('- Chrome Web Store ID: `' + r.chromeId + '`');
   lines.push('- Edge Add-ons ID (fallback): `' + r.edgeId + '`');
   lines.push('');
@@ -458,7 +468,7 @@ function renderDoc(r) {
   } else {
     lines.push('- **OK** — ' + r.install.name + ' v' + r.install.version);
     lines.push('- Source: `' + r.install.source + '` storeId=`' + r.install.storeId + '`');
-    lines.push('- Path: `' + r.install.path + '`');
+    lines.push('- Path: `' + sanitizeTempPath(r.install.path) + '`');
     lines.push('- networkBlocker / hasDnr: ' + r.install.networkBlocker + ' / ' + r.install.hasDnr);
     if (r.install.warnings && r.install.warnings.length) {
       lines.push('- Warnings: ' + r.install.warnings.join('; '));

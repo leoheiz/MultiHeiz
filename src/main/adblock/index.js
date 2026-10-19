@@ -1629,6 +1629,7 @@ function getDiagnostics() {
     engineSource: st.engineSource,
     ready: st.ready,
     enabled: st.enabled,
+    youtubeExperimental: !!st.youtubeExperimental,
     networkFilterCount: st.networkFilterCount,
     cosmeticFilterCount: st.cosmeticFilterCount,
     resourcesLoaded: st.resourcesLoaded,

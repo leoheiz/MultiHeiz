@@ -998,17 +998,22 @@ window.__iframeEarly = window.__mhEarlyOk === true;
     validated.entryCount
   );
 
-  if (!changelog.shouldShowNovidades(null, '1.0.0')) {
+  if (!changelog.shouldShowNovidades(null, '1.0.1')) {
     console.log('FAIL: should show when never seen');
     app.exit(1);
     return;
   }
-  if (!changelog.shouldShowNovidades('0.9.0', '1.0.0')) {
-    console.log('FAIL: should show after update 0.9.0 -> 1.0.0');
+  if (!changelog.shouldShowNovidades('0.9.0', '1.0.1')) {
+    console.log('FAIL: should show after update 0.9.0 -> 1.0.1');
     app.exit(1);
     return;
   }
-  if (changelog.shouldShowNovidades('1.0.0', '1.0.0')) {
+  if (!changelog.shouldShowNovidades('1.0.0', '1.0.1')) {
+    console.log('FAIL: should show after update 1.0.0 -> 1.0.1');
+    app.exit(1);
+    return;
+  }
+  if (changelog.shouldShowNovidades('1.0.1', '1.0.1')) {
     console.log('FAIL: should not show when already seen');
     app.exit(1);
     return;
@@ -1096,14 +1101,18 @@ window.__iframeEarly = window.__mhEarlyOk === true;
         count: r && r.count,
         tags: [...new Set(tags)],
         has100: versions.includes('1.0.0'),
-        only100: versions.length === 1 && versions[0] === '1.0.0',
+        has101: versions.includes('1.0.1'),
+        bothVersions:
+          versions.length === 2 &&
+          versions.includes('1.0.0') &&
+          versions.includes('1.0.1'),
         tagNovo: tags.includes('Novo'),
         tagMelhoria: tags.includes('Melhoria'),
         tagCorrecao: tags.includes('Correção'),
       };
     })()
   `);
-  if (!uiNov || !uiNov.ok || !uiNov.has100 || !uiNov.only100) {
+  if (!uiNov || !uiNov.ok || !uiNov.has100 || !uiNov.has101 || !uiNov.bothVersions) {
     console.log('FAIL: novidades UI', uiNov);
     app.exit(1);
     return;

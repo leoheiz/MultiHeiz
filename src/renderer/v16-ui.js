@@ -2079,6 +2079,9 @@
           engineSource: abDiag.engineSource,
           ready: abDiag.ready,
           enabled: abDiag.enabled,
+          youtubeAds: abDiag.youtubeExperimental
+            ? 'ligado — Experimental'
+            : 'desligado',
           networkFilterCount: abDiag.networkFilterCount,
           cosmeticFilterCount: abDiag.cosmeticFilterCount,
           resourcesLoaded: abDiag.resourcesLoaded,
@@ -2101,6 +2104,8 @@
 
   function applyKofiVisibility(kofiUrl) {
     const show = !!kofiUrl;
+    const section = document.getElementById('kofi-support-section');
+    if (section) section.classList.toggle('hidden', !show);
     for (const id of ['btn-kofi', 'btn-kofi-status']) {
       const el = document.getElementById(id);
       if (el) el.classList.toggle('hidden', !show);

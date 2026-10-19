@@ -1,6 +1,29 @@
 {
   "versions": [
     {
+      "version": "1.0.1",
+      "date": "2026-10-19",
+      "title": "Avisos e apoio",
+      "entries": [
+        {
+          "tag": "Melhoria",
+          "text": "Extensões de terceiros marcadas como Experimental (em testes), com aviso de limitações."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Bloqueio de anúncios do YouTube (embutido) reforçado como Experimental."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Ko-fi apresentado só como apoio opcional ao desenvolvedor (não como recurso do app)."
+        },
+        {
+          "tag": "Correção",
+          "text": "Higiene de docs públicos (sem caminhos locais de usuário)."
+        }
+      ]
+    },
+    {
       "version": "1.0.0",
       "date": "2026-10-19",
       "title": "Primeira versão pública",
@@ -35,7 +58,7 @@
         },
         {
           "tag": "Novo",
-          "text": "Atualizações automáticas (NSIS e AppImage) e botão Ko-fi."
+          "text": "Atualizações automáticas (NSIS e AppImage)."
         },
         {
           "tag": "Correção",

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Empty = hide "Apoiar no Ko-fi" button / status heart.
+ * Empty = hide "Apoiar o desenvolvedor (Ko-fi)" button / status heart.
  * Override in tests with MULTIHEIZ_KOFI_URL (incl. empty string).
  */
 let KOFI_URL =

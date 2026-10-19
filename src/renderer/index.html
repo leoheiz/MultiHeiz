@@ -119,7 +119,7 @@
           <span id="stat-fps" title="FPS do painel focado (melhor esforço via rAF)">FPS —</span>
           <span id="stat-uptime" title="Tempo ligado">Uptime —</span>
           <span class="spacer"></span>
-          <button type="button" id="btn-kofi-status" class="btn icon ghost kofi-heart hidden" title="Apoiar no Ko-fi">
+          <button type="button" id="btn-kofi-status" class="btn icon ghost kofi-heart hidden" title="Apoiar o desenvolvedor (Ko-fi)">
             <svg class="ico kofi-heart-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21C12 21 3.5 15.2 2.2 10.4 1.2 6.8 3.6 4 6.8 4c1.8 0 3.3 1 4.2 2.4C12 5 13.4 4 15.2 4c3.2 0 5.6 2.8 4.6 6.4C18.5 15.2 12 21 12 21z"/></svg>
           </button>
           <button type="button" id="btn-mem-total" class="btn ghost mem-total" title="Monitor de memória">
@@ -182,7 +182,7 @@
           <button type="button" class="settings-nav-btn" data-section="navegacao">Navegação</button>
           <button type="button" class="settings-nav-btn" data-section="downloads">Downloads</button>
           <button type="button" class="settings-nav-btn" data-section="adblock">Bloqueador de anúncios</button>
-          <button type="button" class="settings-nav-btn" data-section="extensoes">Extensões</button>
+          <button type="button" class="settings-nav-btn" data-section="extensoes">Extensões <span class="badge-experimental">em testes</span></button>
           <button type="button" class="settings-nav-btn" data-section="aparencia">Aparência</button>
           <button type="button" class="settings-nav-btn" data-section="memoria">Memória</button>
           <button type="button" class="settings-nav-btn" data-section="desempenho">Desempenho</button>
@@ -295,7 +295,7 @@
             </label>
             <label class="check">
               <input type="checkbox" name="adblockYoutube" id="adblock-youtube" />
-              Bloquear anúncios do YouTube (experimental)
+              Bloquear anúncios do YouTube — Experimental
             </label>
             <p class="muted-note">
               Regras ativas: <strong id="adblock-total-rules">—</strong>
@@ -333,9 +333,15 @@
           </section>
 
           <section class="settings-pane" data-pane="extensoes" id="extensoes-section">
+            <h3>
+              Extensões
+              <span class="badge-experimental">Experimental (em testes)</span>
+            </h3>
             <p class="muted-note">
-              Extensões Chrome/Edge (MV2/MV3) por pasta, arquivo .crx ou ID/URL da loja.
-              Regras DNR estáticas são aplicadas pelo shim do MultiHeiz (rede).
+              Recurso em testes: pode não funcionar em todos os sites. Extensões de bloqueio
+              aplicam só as regras de rede (DNR via shim do MultiHeiz); esconder elementos na
+              página (cosmético) é limitado. Em http://127.0.0.1 (loopback) algumas extensões
+              podem falhar — sites https normais costumam OK.
             </p>
             <p class="muted-note" id="ext-coexistence-hint" hidden></p>
             <div class="row-inline ext-install-row">
@@ -352,7 +358,7 @@
             <ul id="ext-list" class="ext-list"></ul>
             <p class="muted-note">
               Licença: camada própria (MIT). Não usamos electron-chrome-extensions (GPL-3) —
-              ver Sobre e docs/TASK-v1.9.notes.md.
+              ver Sobre e THIRD_PARTY_NOTICES.
             </p>
           </section>
 
@@ -496,7 +502,14 @@
             <p class="muted-note">Electron <span id="about-electron"></span> · Chromium <span id="about-chrome"></span></p>
             <p class="muted-note">Tudo gratuito — sem licenças, ativação ou paywall.</p>
             <button type="button" class="btn ghost" id="btn-about-novidades">Novidades / Log de atualizações</button>
-            <button type="button" class="btn primary hidden" id="btn-kofi">Apoiar no Ko-fi</button>
+            <div id="kofi-support-section" class="kofi-support-section hidden">
+              <h3>Apoiar o desenvolvedor</h3>
+              <p class="muted-note">
+                O MultiHeiz é grátis. Se quiser ajudar o desenvolvedor, você pode apoiar no Ko-fi
+                (opcional).
+              </p>
+              <button type="button" class="btn primary hidden" id="btn-kofi">Apoiar no Ko-fi (opcional)</button>
+            </div>
             <h3>Licenças de terceiros</h3>
             <ul id="about-licenses" class="license-list">
               <li>Electron — MIT</li>

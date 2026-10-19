@@ -1,9 +1,9 @@
 # AdBlocker Ultimate on MultiHeiz (Phase 3b)
 
-Honest results from a TEMP `MULTIHEIZ_USERDATA` run (not Leo’s real profile).
+Honest results from a TEMP `MULTIHEIZ_USERDATA` run (not a personal user profile).
 
 - When: `2026-10-19T03:03:35.175Z`
-- userData: `C:\Users\Leo\AppData\Local\Temp\multiheiz-abu-29fHYo`
+- userData: `%TEMP%\multiheiz-abu-****`
 - Chrome Web Store ID: `ohahllgiabjaoigichmmfljhkcfikeof`
 - Edge Add-ons ID (fallback): `pciakllldcajllepkbbihkmfkikheffb`
 
@@ -11,7 +11,7 @@ Honest results from a TEMP `MULTIHEIZ_USERDATA` run (not Leo’s real profile).
 
 - **OK** — AdBlocker Ultimate v4.4.3
 - Source: `chrome-web-store` storeId=`ohahllgiabjaoigichmmfljhkcfikeof`
-- Path: `C:\Users\Leo\AppData\Local\Temp\multiheiz-abu-29fHYo\extensions\ohahllgiabjaoigichmmfljhkcfikeof\4.4.3`
+- Path: `%TEMP%\multiheiz-abu-****\extensions\ohahllgiabjaoigichmmfljhkcfikeof\4.4.3`
 - networkBlocker / hasDnr: true / true
 - Warnings: declarative_net_request — regras estáticas aplicadas via shim DNR do MultiHeiz
 

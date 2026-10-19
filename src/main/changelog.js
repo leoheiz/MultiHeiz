@@ -109,7 +109,7 @@ function validateChangelog(data) {
   const d = data || loadChangelog();
   const versions = (d && d.versions) || [];
   const semvers = versions.map((v) => String(v.version || ''));
-  const need = ['1.0.0'];
+  const need = ['1.0.0', '1.0.1'];
   const missing = need.filter((v) => !semvers.includes(v));
   let badTag = null;
   let entryCount = 0;

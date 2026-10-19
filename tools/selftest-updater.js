@@ -17,7 +17,7 @@ function installElectronStub() {
   const stub = {
     app: {
       isPackaged: false,
-      getVersion: () => '1.0.0',
+      getVersion: () => '1.0.1',
     },
     ipcMain: {
       removeHandler() {},
