@@ -17,6 +17,7 @@ const adblock = require('./adblock');
 const userAgent = require('./user-agent');
 const sessionPersist = require('./session-persist');
 const permissions = require('./permissions');
+const chromeFullscreen = require('./chrome-fullscreen');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
@@ -800,11 +801,13 @@ function createPanel(accountId) {
   view.webContents.on('focus', () => {
     setFocusedAccount(accountId);
   });
-  // Click / key inside page also focuses this panel (sidebar + URL follow)
-  view.webContents.on('before-input-event', (_e, input) => {
+  // Click / key inside page also focuses this panel (sidebar + URL follow).
+  // F11 / Esc for chrome-fullscreen focus mode (preventDefault only when handled).
+  view.webContents.on('before-input-event', (e, input) => {
     if (input && (input.type === 'keyDown' || input.type === 'mouseDown')) {
       setFocusedAccount(accountId);
     }
+    chromeFullscreen.handleBeforeInput(e, input, accountId);
   });
   try {
     view.webContents.on('input-event', (_e, input) => {
@@ -815,6 +818,13 @@ function createPanel(accountId) {
   } catch {
     /* older Electron without input-event */
   }
+  // Track HTML5 element fullscreen so Esc/F11 are left to the page when active.
+  view.webContents.on('enter-html-full-screen', () => {
+    chromeFullscreen.noteHtmlFullscreen(accountId, true);
+  });
+  view.webContents.on('leave-html-full-screen', () => {
+    chromeFullscreen.noteHtmlFullscreen(accountId, false);
+  });
   // Block in-page navigations to non-http(s) schemes (defense in depth).
   // data: only while MULTIHEIZ_SELFTEST (internal probes), never for normal browsing.
   view.webContents.on('will-navigate', (e, url) => {
@@ -1020,6 +1030,7 @@ function destroyPanel(accountId, { keepLastUrl = true } = {}) {
   panelFps.delete(accountId);
   overlaySnapshots.delete(accountId);
   overlaySnapshotLru = overlaySnapshotLru.filter((id) => id !== accountId);
+  chromeFullscreen.clearHtmlFullscreen(accountId);
   if (focusedAccountId === accountId) focusedAccountId = null;
 }
 

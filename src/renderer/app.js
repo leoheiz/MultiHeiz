@@ -1905,7 +1905,11 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'window:fullscreen') {
     document.body.classList.toggle('is-fullscreen', !!payload.fullscreen);
-    // F11 keeps the top row visible — panel bounds stay below --topbar-h.
+    scheduleSync();
+    return;
+  }
+  if (payload.type === 'chrome:hidden') {
+    document.body.classList.toggle('is-chrome-hidden', !!payload.hidden);
     scheduleSync();
     return;
   }
@@ -2237,11 +2241,32 @@ window.__multiheizUi = {
   isLivreEditMode,
   HANDLE_INSET,
   getChromeInsets: () => {
-    const sidebarW = el.sidebar.getBoundingClientRect().width;
+    const topbarEl = el.topbar;
+    const statusEl = document.getElementById('statusbar');
     return {
-      topbar: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 48,
-      statusbar: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--statusbar-h')) || 28,
-      sidebar: sidebarW,
+      topbar: topbarEl ? topbarEl.getBoundingClientRect().height : 0,
+      statusbar: statusEl ? statusEl.getBoundingClientRect().height : 0,
+      sidebar: el.sidebar.getBoundingClientRect().width,
+    };
+  },
+  isChromeHidden: () => document.body.classList.contains('is-chrome-hidden'),
+  getChromeVisibility: () => {
+    const topbarEl = el.topbar;
+    const statusEl = document.getElementById('statusbar');
+    const measure = (node) => {
+      if (!node) return { display: 'none', offsetHeight: 0, offsetWidth: 0 };
+      const cs = getComputedStyle(node);
+      return {
+        display: cs.display,
+        offsetHeight: node.offsetHeight,
+        offsetWidth: node.offsetWidth,
+      };
+    };
+    return {
+      chromeHidden: document.body.classList.contains('is-chrome-hidden'),
+      topbar: measure(topbarEl),
+      sidebar: measure(el.sidebar),
+      statusbar: measure(statusEl),
     };
   },
   getTitlebarMetrics: () => {

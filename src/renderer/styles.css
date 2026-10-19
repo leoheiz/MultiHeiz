@@ -1031,6 +1031,41 @@ select {
   z-index: 3;
 }
 
+/* F11 focus mode: hide app chrome; panel grid fills the content area */
+body.is-chrome-hidden #sidebar,
+body.is-chrome-hidden #topbar,
+body.is-chrome-hidden #statusbar {
+  display: none !important;
+}
+body.is-chrome-hidden #grid {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 0;
+  gap: 0;
+}
+body.is-chrome-hidden #main-col.has-clock-skew #grid,
+body.is-chrome-hidden #main-col.has-clock-skew.editing-layout #grid,
+body.is-chrome-hidden #main-col.editing-layout #grid {
+  top: 0;
+}
+body.is-chrome-hidden .layout-edit-banner,
+body.is-chrome-hidden .clock-skew-banner {
+  display: none !important;
+}
+body.is-chrome-hidden .panel-header {
+  display: none !important;
+}
+body.is-chrome-hidden .panel-slot {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+body.is-chrome-hidden .panel-slot.focused {
+  box-shadow: none;
+}
+
 #statusbar .mem-total {
   padding: 2px 8px;
   font-size: 11px;

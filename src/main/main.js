@@ -33,6 +33,7 @@ const changelog = require('./changelog');
 const updater = require('./updater');
 const { clampBoundsToDisplays, ensureWindowOnDisplay } = require('./window-bounds');
 const windowChrome = require('./window-chrome');
+const chromeFullscreen = require('./chrome-fullscreen');
 const ipcGuard = require('./ipc-guard');
 const permissions = require('./permissions');
 const { sanitizeUserStartUrl } = require('./url-policy');
@@ -172,6 +173,7 @@ const SELFTEST_V19 = selftestMode === 'v19';
 const SELFTEST_V110 = selftestMode === 'v110';
 const SELFTEST_V120 = selftestMode === 'v120';
 const SELFTEST_TITLEBAR = selftestMode === 'titlebar';
+const SELFTEST_FULLSCREEN = selftestMode === 'fullscreen';
 const SELFTEST_EXT = selftestMode === 'ext';
 const SELFTEST_ABU = selftestMode === 'abu';
 const SELFTEST_SECURITY = selftestMode === 'security';
@@ -191,6 +193,7 @@ const ANY_SELFTEST =
   SELFTEST_V110 ||
   SELFTEST_V120 ||
   SELFTEST_TITLEBAR ||
+  SELFTEST_FULLSCREEN ||
   SELFTEST_EXT ||
   SELFTEST_ABU ||
   SELFTEST_SECURITY;
@@ -321,9 +324,7 @@ function setupApplicationMenu() {
           label: 'Tela cheia',
           accelerator: 'F11',
           click: () => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.setFullScreen(!mainWindow.isFullScreen());
-            }
+            chromeFullscreen.toggle();
           },
         },
         { type: 'separator' },
@@ -448,7 +449,8 @@ function createWindow() {
     SELFTEST_V19 ||
     SELFTEST_V110 ||
     SELFTEST_V120 ||
-    SELFTEST_TITLEBAR
+    SELFTEST_TITLEBAR ||
+    SELFTEST_FULLSCREEN
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -507,6 +509,7 @@ function createWindow() {
       SELFTEST_V110 ||
       SELFTEST_V120 ||
       SELFTEST_TITLEBAR ||
+      SELFTEST_FULLSCREEN ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT,
     paintWhenInitiallyHidden: true,
@@ -550,6 +553,7 @@ function createWindow() {
   }
 
   panels.initPanels(mainWindow, emitToRenderer);
+  chromeFullscreen.init(mainWindow, emitToRenderer, notifyDisplayOrChromeChange);
   memory.initMemory(emitToRenderer);
 
   // Harden main UI: stay on local index.html; no webviews / window.open
@@ -613,8 +617,14 @@ function createWindow() {
     emitToRenderer({ type: 'window:fullscreen', fullscreen: true });
   });
   mainWindow.on('leave-full-screen', () => {
+    chromeFullscreen.onLeaveFullScreen();
     notifyDisplayOrChromeChange();
     emitToRenderer({ type: 'window:fullscreen', fullscreen: false });
+  });
+
+  // F11 / Esc when focus is on the main UI (not a panel WebContentsView)
+  mainWindow.webContents.on('before-input-event', (e, input) => {
+    chromeFullscreen.handleBeforeInput(e, input, null);
   });
 
   // Sync overlay colors if appearance was loaded after options snapshot
@@ -917,6 +927,32 @@ function createWindow() {
             sleep,
             waitForUrl,
             rendererEval,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_FULLSCREEN) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runFullscreenSelftest } = require('./selftest-fullscreen');
+          runFullscreenSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            chromeFullscreen,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -1257,6 +1293,7 @@ function registerIpc() {
       isMaximizable: mainWindow && !mainWindow.isDestroyed() ? mainWindow.isMaximizable() : false,
       isMaximized: maximized,
       isFullScreen: fullscreen,
+      chromeHidden: chromeFullscreen.isChromeHidden(),
       lastOverlay: lastTitleBarOverlay,
       topbarHeight: windowChrome.TOPBAR_HEIGHT,
     };
@@ -2744,9 +2781,7 @@ function popupTopMenu(opts) {
     {
       label: 'Tela cheia (F11)',
       click: () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.setFullScreen(!mainWindow.isFullScreen());
-        }
+        chromeFullscreen.toggle();
       },
     },
     {

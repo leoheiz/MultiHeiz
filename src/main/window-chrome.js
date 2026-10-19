@@ -8,7 +8,7 @@ const TOPBAR_HEIGHT = 48;
  * - Windows: titleBarStyle 'hidden' + titleBarOverlay so native min/max/close
  *   keep Windows 11 Snap Layouts on maximize hover.
  * - Linux (and non-Windows): frame:false with custom HTML min/max/close via IPC.
- * Fullscreen (F11): keep the top row visible so panel bounds stay correct.
+ * Fullscreen focus mode (F11): hide topbar + sidebar so panels fill the content area.
  */
 
 /**
@@ -55,7 +55,7 @@ function getChromeConstructorOptions(appearance) {
         frame: true,
         titleBarOverlay: { ...overlay },
         topbarHeight: TOPBAR_HEIGHT,
-        fullscreenKeepsRow: true,
+        fullscreenKeepsRow: false,
       },
     };
   }
@@ -70,7 +70,7 @@ function getChromeConstructorOptions(appearance) {
       frame: false,
       titleBarOverlay: null,
       topbarHeight: TOPBAR_HEIGHT,
-      fullscreenKeepsRow: true,
+      fullscreenKeepsRow: false,
     },
   };
 }

@@ -169,7 +169,7 @@ async function runTitlebarSelftest(ctx) {
       return;
     }
   }
-  if (chrome.topbarHeight !== 48 || chrome.fullscreenKeepsRow !== true) {
+  if (chrome.topbarHeight !== 48 || chrome.fullscreenKeepsRow !== false) {
     console.log('FAIL: chrome policy mismatch', chrome);
     app.exit(1);
     return;
