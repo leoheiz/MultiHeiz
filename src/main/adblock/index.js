@@ -49,6 +49,19 @@ let networkFilterCount = 0;
 let cosmeticFilterCount = 0;
 let rebuildInProgress = false;
 let rebuildProgress = '';
+/** Coalesce concurrent buildEngine calls (single-flight + trailing rerun). */
+let rebuildActive = false;
+let rebuildAgain = false;
+/** @type {{ resolve: (v: boolean) => void, reject: (e: Error) => void }[]} */
+let rebuildWaiters = [];
+/** @type {Record<string, unknown>} */
+let rebuildPendingOpts = {};
+/** @type {ReturnType<typeof setTimeout> | null} */
+let rebuildDebounceTimer = null;
+const REBUILD_DEBOUNCE_MS = 400;
+/** Instrumentation for selftests: peak parallel rebuilds (should stay ≤ 1). */
+let rebuildParallelPeak = 0;
+let rebuildParallelNow = 0;
 
 /** @type {WeakMap<Electron.Session, { accountId: string|null, preloadId: string|undefined }>} */
 const attachedSessions = new WeakMap();
@@ -785,10 +798,10 @@ async function gatherFilterText(opts = {}) {
 }
 
 /**
+ * Actual engine compile (single runner). Callers go through buildEngine / schedule.
  * @param {{ forceDownload?: boolean, skipSerialize?: boolean }} [opts]
  */
-async function buildEngine(opts = {}) {
-  rebuildInProgress = true;
+async function buildEngineBody(opts = {}) {
   emitProgress('Compilando motor…');
   const t0 = Date.now();
   const rss0 = process.memoryUsage().rss;
@@ -810,7 +823,6 @@ async function buildEngine(opts = {}) {
           statusMessage: 'Usando listas pré-construídas (sem cache local)',
           lastUpdateAt: Date.now(),
         });
-        rebuildInProgress = false;
         emitProgress('');
         debugLog('engine source=prebuilt filters', networkFilterCount, cosmeticFilterCount);
         return true;
@@ -827,7 +839,6 @@ async function buildEngine(opts = {}) {
       statusMessage: 'Sem listas e offline — bloqueio desativado',
       lastUpdateAt: ab.lastUpdateAt || null,
     });
-    rebuildInProgress = false;
     emitProgress('');
     return false;
   }
@@ -848,7 +859,6 @@ async function buildEngine(opts = {}) {
       listMeta: gathered.listMeta,
       statusMessage: 'Erro ao compilar motor',
     });
-    rebuildInProgress = false;
     emitProgress('');
     return false;
   }
@@ -893,7 +903,6 @@ async function buildEngine(opts = {}) {
     lastBuildRssMb,
     engineSource,
   });
-  rebuildInProgress = false;
   emitProgress('');
   debugLog(
     'engine built',
@@ -905,6 +914,98 @@ async function buildEngine(opts = {}) {
     'rssDeltaMb=' + lastBuildRssMb
   );
   return true;
+}
+
+/**
+ * Debounced + single-flight rebuild: never two bodies in parallel; if a request
+ * arrives during a rebuild, one trailing rebuild runs with coalesced opts.
+ * @param {{ forceDownload?: boolean, skipSerialize?: boolean }} [opts]
+ * @param {{ immediate?: boolean }} [sched]
+ * @returns {Promise<boolean>}
+ */
+function buildEngine(opts = {}, sched = {}) {
+  const immediate = !!(sched && sched.immediate);
+  return new Promise((resolve, reject) => {
+    rebuildPendingOpts = {
+      ...rebuildPendingOpts,
+      ...opts,
+      // forceDownload sticks if any caller asked for it
+      forceDownload: !!(rebuildPendingOpts.forceDownload || opts.forceDownload),
+      skipSerialize:
+        opts.skipSerialize !== undefined
+          ? !!opts.skipSerialize
+          : !!rebuildPendingOpts.skipSerialize,
+    };
+    rebuildWaiters.push({ resolve, reject });
+    const kick = () => {
+      rebuildDebounceTimer = null;
+      void flushRebuildQueue();
+    };
+    if (immediate) {
+      if (rebuildDebounceTimer) {
+        clearTimeout(rebuildDebounceTimer);
+        rebuildDebounceTimer = null;
+      }
+      kick();
+      return;
+    }
+    if (rebuildDebounceTimer) clearTimeout(rebuildDebounceTimer);
+    rebuildDebounceTimer = setTimeout(kick, REBUILD_DEBOUNCE_MS);
+  });
+}
+
+async function flushRebuildQueue() {
+  if (rebuildActive) {
+    rebuildAgain = true;
+    return;
+  }
+  if (!rebuildWaiters.length && !Object.keys(rebuildPendingOpts).length && !rebuildAgain) {
+    return;
+  }
+  rebuildActive = true;
+  rebuildInProgress = true;
+  rebuildAgain = false;
+  const opts = { ...rebuildPendingOpts };
+  rebuildPendingOpts = {};
+  const waiters = rebuildWaiters;
+  rebuildWaiters = [];
+  rebuildParallelNow += 1;
+  if (rebuildParallelNow > rebuildParallelPeak) rebuildParallelPeak = rebuildParallelNow;
+  let result = false;
+  let err = null;
+  try {
+    result = await buildEngineBody(opts);
+  } catch (e) {
+    err = e;
+  } finally {
+    rebuildParallelNow = Math.max(0, rebuildParallelNow - 1);
+    rebuildActive = false;
+    rebuildInProgress = false;
+  }
+  if (err) {
+    for (const w of waiters) w.reject(err);
+  } else {
+    for (const w of waiters) w.resolve(result);
+  }
+  if (rebuildAgain || rebuildWaiters.length || Object.keys(rebuildPendingOpts).length) {
+    rebuildAgain = false;
+    await flushRebuildQueue();
+  }
+}
+
+function getRebuildDebug() {
+  return {
+    active: rebuildActive,
+    parallelNow: rebuildParallelNow,
+    parallelPeak: rebuildParallelPeak,
+    pendingWaiters: rebuildWaiters.length,
+    debounceMs: REBUILD_DEBOUNCE_MS,
+  };
+}
+
+function resetRebuildDebug() {
+  rebuildParallelPeak = 0;
+  rebuildParallelNow = 0;
 }
 
 function tryLoadSerializedEngine() {
@@ -1211,6 +1312,8 @@ function attachSession(ses, accountId) {
       }
       prev.preloadId = undefined;
     }
+    // Still register early IPC so panel-preload sendSync always has a listener
+    registerCosmeticIpc();
     debugLog('attachSession: blocker inactive', accountId);
     return;
   }
@@ -1384,6 +1487,9 @@ function scheduleUpdateTimer() {
  */
 function init(opts) {
   emitFn = opts.emit || null;
+  // Register early-scriptlets before any panel/extension frame can sendSync
+  // (attachSession may not run yet when accounts are empty or blocker inactive).
+  registerCosmeticIpc();
   readyPromise = (async () => {
     try {
       ensureDir();
@@ -1413,15 +1519,18 @@ function init(opts) {
             .catch((e) => console.warn('[adblock] bg update', e && e.message));
         }
       } else {
-        ok = await buildEngine({
-          forceDownload:
-            isTestMode() &&
-            (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
-              envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
-              envGet('MULTIHEIZ_SELFTEST') === 'v18')
-              ? false
-              : stale,
-        });
+        ok = await buildEngine(
+          {
+            forceDownload:
+              isTestMode() &&
+              (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
+                envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
+                envGet('MULTIHEIZ_SELFTEST') === 'v18')
+                ? false
+                : stale,
+          },
+          { immediate: true }
+        );
       }
 
       if (ok) {
@@ -1444,14 +1553,17 @@ function whenReady() {
 }
 
 async function updateListsNow() {
-  const ok = await buildEngine({
-    forceDownload: !(
-      isTestMode() &&
-      (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
-        envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
-        envGet('MULTIHEIZ_SELFTEST') === 'v18')
-    ),
-  });
+  const ok = await buildEngine(
+    {
+      forceDownload: !(
+        isTestMode() &&
+        (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
+          envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
+          envGet('MULTIHEIZ_SELFTEST') === 'v18')
+      ),
+    },
+    { immediate: true }
+  );
   reattachAll();
   emitStatus();
   return getStatus();
@@ -1485,7 +1597,7 @@ async function applySettings(partial) {
       typeof partial.userRules === 'string' ||
       Array.isArray(partial.customLists)
     ) {
-      await buildEngine({ forceDownload: false });
+      await buildEngine({ forceDownload: false }, { immediate: true });
       reattachAll();
     } else {
       reattachAll();
@@ -1581,7 +1693,7 @@ async function addCustomList(url) {
     [id]: { ruleCount, lastUpdateAt: Date.now(), status: 'ok', error: null },
   };
   writeAdblockSettings({ customLists, listMeta });
-  await buildEngine({ forceDownload: false });
+  await buildEngine({ forceDownload: false }, { immediate: true });
   reattachAll();
   emitStatus();
   return { ok: true, entry, ruleCount, status: getStatus() };
@@ -1597,7 +1709,7 @@ function removeCustomList(id) {
 
 async function setUserRules(text) {
   writeAdblockSettings({ userRules: String(text || '') });
-  await buildEngine({ forceDownload: false });
+  await buildEngine({ forceDownload: false }, { immediate: true });
   reattachAll();
   emitStatus();
   return getStatus();
@@ -1881,7 +1993,7 @@ async function injectTestFilters(text) {
   } catch {
     /* ignore */
   }
-  await buildEngine({ forceDownload: false, skipSerialize: false });
+  await buildEngine({ forceDownload: false, skipSerialize: false }, { immediate: true });
   reattachAll();
   return getStatus();
 }
@@ -1939,4 +2051,8 @@ module.exports = {
   knownSessions,
   PRELOAD_PATH,
   shutdown,
+  buildEngine,
+  getRebuildDebug,
+  resetRebuildDebug,
+  REBUILD_DEBOUNCE_MS,
 };

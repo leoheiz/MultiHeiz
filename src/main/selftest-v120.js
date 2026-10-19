@@ -54,6 +54,7 @@ async function runV120Selftest(ctx) {
     muted: false,
     lastUrl: null,
     zoomFactor: 1,
+    keepAliveInBackground: false,
   });
 
   updateState((s) => {
@@ -71,10 +72,33 @@ async function runV120Selftest(ctx) {
       ...s.settings,
       openLastPage: false,
       homepage: base + '/',
+      keepBackgroundRunning: false,
+      backgroundPreset: 'balanced',
     };
   });
   flushSave();
   emitToRenderer({ type: 'state:changed', state: publicState() });
+
+  // Part B: keepAlive default OFF
+  if (panels.keepRunningInBackground('acc-v120-a')) {
+    console.log('FAIL: keepRunningInBackground should be false by default');
+    app.exit(1);
+    return;
+  }
+  updateState((s) => {
+    const a = s.accounts.find((x) => x.id === 'acc-v120-a');
+    if (a) a.keepAliveInBackground = true;
+  });
+  if (!panels.keepRunningInBackground('acc-v120-a')) {
+    console.log('FAIL: keepAliveInBackground=true should keep running');
+    app.exit(1);
+    return;
+  }
+  updateState((s) => {
+    const a = s.accounts.find((x) => x.id === 'acc-v120-a');
+    if (a) a.keepAliveInBackground = false;
+  });
+  console.log('PASS: keepAliveInBackground opt-in (default OFF)');
 
   const slots = [
     { accountId: 'acc-v120-a', x: 0, y: 40, width: 400, height: 400 },
@@ -151,13 +175,69 @@ async function runV120Selftest(ctx) {
   panels.unmarkAccountRemoving('acc-v120-a');
   console.log('PASS: layout:sync skips account being removed');
 
+  // Part B: overlay snapshot compress + LRU cap
+  updateState((s) => {
+    s.accounts = [
+      mkAcc('acc-v120-a', 'A'),
+      mkAcc('acc-v120-b', 'B'),
+      mkAcc('acc-v120-c', 'C'),
+      mkAcc('acc-v120-d', 'D'),
+      mkAcc('acc-v120-e', 'E'),
+      mkAcc('acc-v120-f', 'F'),
+      mkAcc('acc-v120-g', 'G'),
+    ];
+  });
+  flushSave();
+  const manySlots = [
+    { accountId: 'acc-v120-a', x: 0, y: 40, width: 200, height: 200 },
+    { accountId: 'acc-v120-b', x: 200, y: 40, width: 200, height: 200 },
+    { accountId: 'acc-v120-c', x: 400, y: 40, width: 200, height: 200 },
+    { accountId: 'acc-v120-d', x: 600, y: 40, width: 200, height: 200 },
+    { accountId: 'acc-v120-e', x: 800, y: 40, width: 200, height: 200 },
+    { accountId: 'acc-v120-f', x: 1000, y: 40, width: 200, height: 200 },
+    { accountId: 'acc-v120-g', x: 1200, y: 40, width: 200, height: 200 },
+  ];
+  panels.syncVisiblePanels(manySlots);
+  await sleep(800);
+  await panels.setOverlay('v120-snap-test', true);
+  await sleep(600);
+  const snapDbg = panels.getOverlaySnapshotDebug();
+  if (snapDbg.count > panels.OVERLAY_SNAPSHOT_MAX) {
+    console.log('FAIL: overlay snapshot LRU exceeded max', snapDbg);
+    await panels.setOverlay('v120-snap-test', false);
+    app.exit(1);
+    return;
+  }
+  if (snapDbg.maxChars > panels.OVERLAY_SNAPSHOT_MAX_CHARS) {
+    console.log('FAIL: snapshot dataURL too large', snapDbg);
+    await panels.setOverlay('v120-snap-test', false);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: overlay snapshots capped', {
+    count: snapDbg.count,
+    max: snapDbg.max,
+    maxChars: snapDbg.maxChars,
+    maxWidth: snapDbg.maxWidth,
+  });
+  panels.destroyPanel('acc-v120-g');
+  const afterDestroy = panels.getOverlaySnapshotDebug();
+  if (afterDestroy.lru && afterDestroy.lru.includes('acc-v120-g')) {
+    console.log('FAIL: snapshot LRU kept destroyed panel', afterDestroy);
+    await panels.setOverlay('v120-snap-test', false);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: snapshot released on destroyPanel');
+  await panels.setOverlay('v120-snap-test', false);
+
   try {
     server.close();
   } catch {
     /* ignore */
   }
 
-  console.log('PASS: selftest v120 (panels)');
+  console.log('PASS: selftest v120 (panels A+B)');
   app.exit(0);
 }
 

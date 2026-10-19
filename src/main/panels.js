@@ -66,6 +66,14 @@ const lastOnScreenSize = new Map();
 /** Snapshot dataURLs shown behind modals while views are parked (v1.4). */
 /** @type {Map<string, string>} */
 const overlaySnapshots = new Map();
+/** LRU order for overlaySnapshots (newest at end). */
+/** @type {string[]} */
+let overlaySnapshotLru = [];
+const OVERLAY_SNAPSHOT_MAX = 6;
+const OVERLAY_SNAPSHOT_MAX_WIDTH = 640;
+const OVERLAY_SNAPSHOT_JPEG_QUALITY = 70;
+/** Soft cap on dataURL length (~JPEG at 640px is well under this). */
+const OVERLAY_SNAPSHOT_MAX_CHARS = 1_200_000;
 
 /**
  * Bumped whenever overlays close (or a new park cycle starts) so an in-flight
@@ -148,6 +156,47 @@ function withTimeout(promise, ms) {
 }
 
 /**
+ * Downscale + JPEG compress a capture for overlay backdrop memory.
+ * @param {Electron.NativeImage} img
+ * @returns {string|null} data URL or null
+ */
+function compressSnapshotImage(img) {
+  if (!img || img.isEmpty()) return null;
+  let work = img;
+  try {
+    const size = img.getSize();
+    const w = size && size.width ? size.width : 0;
+    if (w > OVERLAY_SNAPSHOT_MAX_WIDTH) {
+      const scale = OVERLAY_SNAPSHOT_MAX_WIDTH / w;
+      const h = Math.max(1, Math.round((size.height || 1) * scale));
+      if (typeof img.resize === 'function') {
+        work = img.resize({ width: OVERLAY_SNAPSHOT_MAX_WIDTH, height: h, quality: 'better' });
+      }
+    }
+  } catch {
+    work = img;
+  }
+  try {
+    if (typeof work.toJPEG === 'function') {
+      const buf = work.toJPEG(OVERLAY_SNAPSHOT_JPEG_QUALITY);
+      if (buf && buf.length) {
+        const dataUrl = 'data:image/jpeg;base64,' + Buffer.from(buf).toString('base64');
+        if (dataUrl.length <= OVERLAY_SNAPSHOT_MAX_CHARS) return dataUrl;
+      }
+    }
+  } catch {
+    /* fall through to PNG dataURL */
+  }
+  try {
+    const dataUrl = work.toDataURL();
+    if (dataUrl && dataUrl.length <= OVERLAY_SNAPSHOT_MAX_CHARS) return dataUrl;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
  * Capture visible on-screen panels for overlay backdrop (parallel, ~150 ms each).
  * @returns {Promise<Array<{ accountId: string, dataUrl: string|null, color: string }>>}
  */
@@ -162,11 +211,7 @@ async function captureVisibleSnapshots() {
     }
     try {
       const img = await withTimeout(entry.view.webContents.capturePage(), CAPTURE_TIMEOUT_MS);
-      const dataUrl = img.toDataURL();
-      // Bound memory: skip absurdly large captures
-      if (dataUrl && dataUrl.length > 8_000_000) {
-        return { accountId, dataUrl: null, color };
-      }
+      const dataUrl = compressSnapshotImage(img);
       return { accountId, dataUrl, color };
     } catch {
       return { accountId, dataUrl: null, color };
@@ -175,14 +220,29 @@ async function captureVisibleSnapshots() {
   return Promise.all(tasks);
 }
 
+function touchSnapshotLru(accountId) {
+  overlaySnapshotLru = overlaySnapshotLru.filter((id) => id !== accountId);
+  overlaySnapshotLru.push(accountId);
+  while (overlaySnapshotLru.length > OVERLAY_SNAPSHOT_MAX) {
+    const evict = overlaySnapshotLru.shift();
+    if (evict) overlaySnapshots.delete(evict);
+  }
+}
+
 function emitOverlaySnapshots(list) {
   overlaySnapshots.clear();
+  overlaySnapshotLru = [];
   const payload = [];
   for (const item of list || []) {
-    if (item.dataUrl) overlaySnapshots.set(item.accountId, item.dataUrl);
+    if (item.dataUrl) {
+      overlaySnapshots.set(item.accountId, item.dataUrl);
+      touchSnapshotLru(item.accountId);
+    }
+    // After LRU eviction, drop dataUrl from payload if evicted
+    const kept = item.dataUrl && overlaySnapshots.has(item.accountId) ? item.dataUrl : null;
     payload.push({
       accountId: item.accountId,
-      dataUrl: item.dataUrl,
+      dataUrl: kept,
       color: item.color,
     });
   }
@@ -191,7 +251,23 @@ function emitOverlaySnapshots(list) {
 
 function clearOverlaySnapshots() {
   overlaySnapshots.clear();
+  overlaySnapshotLru = [];
   emitToRenderer({ type: 'overlay:snapshots', snapshots: [] });
+}
+
+/** @returns {{ count: number, max: number, maxChars: number, maxWidth: number }} */
+function getOverlaySnapshotDebug() {
+  let maxChars = 0;
+  for (const url of overlaySnapshots.values()) {
+    if (url && url.length > maxChars) maxChars = url.length;
+  }
+  return {
+    count: overlaySnapshots.size,
+    max: OVERLAY_SNAPSHOT_MAX,
+    maxChars,
+    maxWidth: OVERLAY_SNAPSHOT_MAX_WIDTH,
+    lru: overlaySnapshotLru.slice(),
+  };
 }
 
 /**
@@ -448,19 +524,21 @@ function getAccount(accountId) {
   return getState().accounts.find((a) => a.id === accountId) || null;
 }
 
+/**
+ * Whether a hidden panel stays parked/alive (anti-throttle loop + no Chromium throttle).
+ * v1.2.0: opt-in per window (`keepAliveInBackground`, default OFF). Global
+ * `keepBackgroundRunning` still forces all panels alive when explicitly ON.
+ */
 function keepRunningInBackground(accountId) {
   const settings = getState().settings || {};
   const preset = settings.backgroundPreset || 'balanced';
-  if (preset === 'always') {
-    const accAlways = getAccount(accountId);
-    if (accAlways && accAlways.pauseInBackground) return false;
-    return true;
-  }
-  if (preset === 'max-save') return false;
-  if (settings.keepBackgroundRunning === false) return false;
   const acc = getAccount(accountId);
   if (acc && acc.pauseInBackground) return false;
-  return true;
+  if (preset === 'max-save') return false;
+  if (preset === 'always') return true;
+  if (acc && acc.keepAliveInBackground) return true;
+  if (settings.keepBackgroundRunning === true) return true;
+  return false;
 }
 
 function homeUrlFor(account) {
@@ -586,8 +664,8 @@ function createPanel(accountId) {
       // Required so session cosmetic preload (type:'frame') runs in iframes
       nodeIntegrationInSubFrames: true,
       preload: PANEL_PRELOAD,
-      // Always false in prefs; runtime control via setBackgroundThrottling
-      backgroundThrottling: false,
+      // Runtime control via setBackgroundThrottling / applyThrottlingTo
+      backgroundThrottling: true,
     },
   });
 
@@ -597,14 +675,6 @@ function createPanel(accountId) {
     view.webContents.setUserAgent(chromeUserAgent());
   } catch {
     /* older electron */
-  }
-
-  try {
-    if (typeof view.webContents.setBackgroundThrottling === 'function') {
-      view.webContents.setBackgroundThrottling(false);
-    }
-  } catch {
-    /* ignore */
   }
 
   view.webContents.setAudioMuted(!!account.muted);
@@ -770,6 +840,11 @@ function createPanel(accountId) {
   };
   panels.set(accountId, entry);
   logMutation(accountId, 'create', {});
+  try {
+    applyThrottlingTo(accountId);
+  } catch {
+    /* ignore */
+  }
 
   if (areOverlaysActive()) {
     parkPanelOffscreen(entry);
@@ -944,6 +1019,7 @@ function destroyPanel(accountId, { keepLastUrl = true } = {}) {
   lastOnScreenSize.delete(accountId);
   panelFps.delete(accountId);
   overlaySnapshots.delete(accountId);
+  overlaySnapshotLru = overlaySnapshotLru.filter((id) => id !== accountId);
   if (focusedAccountId === accountId) focusedAccountId = null;
 }
 
@@ -957,8 +1033,8 @@ function clearSuspendTimer(accountId) {
 
 function scheduleSuspend(accountId) {
   const settings = getState().settings;
-  // keepBackgroundRunning (default ON) wins over auto-suspend unless user wants suspendHidden
-  if (settings.keepBackgroundRunning !== false && !settings.suspendHidden) {
+  // Opt-in keep-alive (per window or global) skips auto-suspend
+  if (keepRunningInBackground(accountId) && !settings.suspendHidden) {
     return;
   }
   if (!settings.suspendHidden) return;
@@ -1664,19 +1740,14 @@ function applyThrottlingTo(accountId) {
   const acc = getAccount(accountId);
   const pauseBg = !!(acc && acc.pauseInBackground);
   const preset = settings.backgroundPreset || 'balanced';
-  const keepBg =
-    preset === 'always'
-      ? true
-      : preset === 'max-save'
-        ? false
-        : settings.keepBackgroundRunning !== false;
+  const keepBg = keepRunningInBackground(accountId);
   const userThrottle = !!settings.backgroundThrottling || preset === 'max-save';
   const fps = Math.max(1, Number(settings.backgroundFps) || 5);
   const capHidden = Math.max(1, Number(settings.frameCapHidden) || 30);
   const capAll = Number(settings.frameCapAll) || 0;
 
   let shouldThrottle = false;
-  if (preset === 'always') {
+  if (preset === 'always' && !pauseBg) {
     shouldThrottle = false;
   } else if (!isFocused) {
     if (!isOnScreen) {
@@ -1905,7 +1976,12 @@ module.exports = {
   getPanelFps,
   getOverlaySnapshotMap,
   captureVisibleSnapshots,
+  compressSnapshotImage,
   prepareAndParkForOverlay,
   clearOverlaySnapshots,
+  getOverlaySnapshotDebug,
+  OVERLAY_SNAPSHOT_MAX,
+  OVERLAY_SNAPSHOT_MAX_WIDTH,
+  OVERLAY_SNAPSHOT_MAX_CHARS,
   childPopups,
 };

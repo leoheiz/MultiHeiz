@@ -59,10 +59,10 @@ function defaultState() {
       homepage: 'https://www.google.com',
       searchEngine: 'google',
       searchTemplate: 'https://www.google.com/search?q=%s',
-      // v1.3: keep hidden panels alive by default (media keeps playing)
+      // v1.2.0: hidden panels throttle by default; opt-in per window (keepAliveInBackground)
       suspendHidden: false,
       suspendDelayMs: 0,
-      keepBackgroundRunning: true,
+      keepBackgroundRunning: false,
       // Memória
       memoryLimitMb: 0,
       panelMemoryLimitMb: 0,
@@ -165,6 +165,8 @@ function migrate(parsed) {
       ? parsed.accounts.map((a) => ({
           ...a,
           pauseInBackground: !!(a && a.pauseInBackground),
+          // v1.2.0: opt-in keep-alive; existing accounts migrate to OFF
+          keepAliveInBackground: !!(a && a.keepAliveInBackground),
           privateHistory: !!(a && a.privateHistory),
           adblockEnabled: a && a.adblockEnabled === false ? false : true,
           zoomFactor:
@@ -214,7 +216,7 @@ function migrate(parsed) {
     next.windowBounds = base.windowBounds;
   }
   if (typeof next.settings.keepBackgroundRunning !== 'boolean') {
-    next.settings.keepBackgroundRunning = true;
+    next.settings.keepBackgroundRunning = false;
   }
   if (typeof next.settings.persistSessions !== 'boolean') {
     next.settings.persistSessions = true;

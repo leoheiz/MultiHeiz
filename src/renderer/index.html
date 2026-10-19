@@ -150,6 +150,10 @@
           <select name="workspaceId" id="account-ws-select"></select>
         </label>
         <label class="check">
+          <input type="checkbox" name="keepAliveInBackground" />
+          Manter ativa em segundo plano
+        </label>
+        <label class="check">
           <input type="checkbox" name="pauseInBackground" />
           Pausar em segundo plano
         </label>
@@ -215,7 +219,7 @@
             </label>
             <label class="check">
               <input type="checkbox" name="keepBackgroundRunning" />
-              Manter painéis rodando em segundo plano
+              Manter todos os painéis ativos em segundo plano
             </label>
             <label class="check">
               <input type="checkbox" name="suspendHidden" />

@@ -1,11 +1,12 @@
 'use strict';
 
 /**
- * Self-test MultiHeiz 1.2.0 Parte A
+ * Self-test MultiHeiz 1.2.0 Partes A+B
  * Uso: npm run selftest:v120
  *
- * Node checks: downloads setSavePath sync, DNR fail-closed, extension load coalescing.
- * Electron: loadQueue prune / no dup / tombstone vs layout:sync.
+ * Node: downloads sync, DNR fail-closed, extension coalesce, keepAlive default OFF,
+ *       adblock rebuild single-flight, snapshot size constants.
+ * Electron: loadQueue + keepAlive default + snapshot LRU/compress.
  */
 
 const { spawn } = require('node:child_process');
@@ -260,6 +261,71 @@ async function runNodeChecks() {
   assert(loadCalls === 1, 'loadExtension called once, got ' + loadCalls);
   assert(loader.inflightLoadCount() === 0, 'inflight cleared in finally');
   console.log('PASS: concurrent loadOne coalesces (no double load)');
+
+  // --- keepAliveInBackground default OFF + migration ---
+  clearModuleMatch(/\/src\/main\/(state|json-store)/);
+  installElectronStub({ tempDir: tempRoot, userData });
+  clearModuleMatch(/\/src\/main\/(state|json-store)/);
+  const statePath = path.join(userData, 'multiheiz-state.json');
+  fs.writeFileSync(
+    statePath,
+    JSON.stringify({
+      accounts: [
+        {
+          id: 'acc-legacy',
+          name: 'Legacy',
+          color: '#2bb8a6',
+          startUrl: 'https://example.com',
+          workspaceId: 'ws',
+          muted: false,
+        },
+      ],
+      workspaces: [{ id: 'ws', name: 'W' }],
+      activeWorkspaceId: 'ws',
+      settings: {},
+      ui: {},
+      appearance: {},
+    }),
+    'utf8'
+  );
+  const stateMod = require('../src/main/state');
+  stateMod.loadState();
+  const st = stateMod.getState();
+  assert(
+    st.accounts[0] && st.accounts[0].keepAliveInBackground === false,
+    'legacy account keepAliveInBackground defaults false'
+  );
+  assert(
+    st.settings.keepBackgroundRunning === false,
+    'keepBackgroundRunning defaults false when missing'
+  );
+  console.log('PASS: keepAliveInBackground / keepBackgroundRunning default OFF');
+
+  // --- adblock rebuild single-flight (parallel peak ≤ 1) ---
+  clearModuleMatch(/\/src\/main\/adblock/);
+  installElectronStub({ tempDir: tempRoot, userData });
+  // Minimal ipcMain for adblock module load
+  const ePath = require.resolve('electron');
+  const estub = require.cache[ePath].exports;
+  estub.ipcMain = {
+    handle() {},
+    on() {},
+    removeHandler() {},
+  };
+  estub.net = { fetch: async () => ({ ok: false }) };
+  clearModuleMatch(/\/src\/main\/adblock/);
+  process.env.MULTIHEIZ_SELFTEST = 'v120';
+  const adblock = require('../src/main/adblock');
+  adblock.resetRebuildDebug();
+  adblock.setFetchBlocked(true);
+  const b1 = adblock.buildEngine({ forceDownload: false, skipSerialize: true }, { immediate: true });
+  const b2 = adblock.buildEngine({ forceDownload: false, skipSerialize: true }, { immediate: true });
+  await Promise.all([b1, b2]);
+  const rd = adblock.getRebuildDebug();
+  assert(rd.parallelPeak <= 1, 'rebuild parallelPeak ≤ 1, got ' + rd.parallelPeak);
+  assert(rd.parallelNow === 0, 'no rebuild left active');
+  console.log('PASS: adblock rebuild serialized (parallelPeak≤1)');
+  assert(adblock.REBUILD_DEBOUNCE_MS >= 300 && adblock.REBUILD_DEBOUNCE_MS <= 500, 'debounce 300-500ms');
 
   try {
     fs.rmSync(tempRoot, { recursive: true, force: true });

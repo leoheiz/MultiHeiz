@@ -342,6 +342,7 @@ function initV16(ctx) {
         workspaceId: st.activeWorkspaceId,
         muted: false,
         pauseInBackground: false,
+        keepAliveInBackground: false,
         privateHistory: false,
         lastUrl: null,
       };

@@ -1,6 +1,6 @@
 'use strict';
 
-/** @typedef {{ id: string, name: string, color: string, startUrl: string, workspaceId: string, muted: boolean, pauseInBackground?: boolean, lastUrl?: string|null }} Account */
+/** @typedef {{ id: string, name: string, color: string, startUrl: string, workspaceId: string, muted: boolean, pauseInBackground?: boolean, keepAliveInBackground?: boolean, lastUrl?: string|null }} Account */
 /** @typedef {{ id: string, name: string }} Workspace */
 /** @typedef {{ c: number, r: number, w: number, h: number }} Tile */
 /** @typedef {{ workspaces: Workspace[], activeWorkspaceId: string, accounts: Account[], layout: string, page: number, maximizedAccountId: string|null, settings: object, ui: object, appearance: object, freeTiles: object }} AppState */
@@ -1303,6 +1303,7 @@ function openAccountDialog(account) {
   form.name.value = account ? account.name : '';
   form.color.value = account ? account.color : '#2bb8a6';
   form.startUrl.value = account ? account.startUrl : 'https://www.google.com';
+  form.keepAliveInBackground.checked = !!(account && account.keepAliveInBackground);
   form.pauseInBackground.checked = !!(account && account.pauseInBackground);
   el.accountWsSelect.innerHTML = '';
   for (const ws of state.workspaces) {
@@ -1636,6 +1637,7 @@ el.formAccount.addEventListener('submit', async (e) => {
     color: String(fd.get('color') || '#2bb8a6'),
     startUrl: String(fd.get('startUrl') || '').trim(),
     workspaceId: String(fd.get('workspaceId') || state.activeWorkspaceId),
+    keepAliveInBackground: el.formAccount.keepAliveInBackground.checked,
     pauseInBackground: el.formAccount.pauseInBackground.checked,
   };
   if (editingAccountId) {

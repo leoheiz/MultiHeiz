@@ -124,13 +124,13 @@ process.on('uncaughtException', (err) => {
 });
 
 /*
- * v1.3 - keep hidden / occluded panel renderers from being throttled by Chromium.
- * Applied before ready. Causes of frozen YouTube in hidden workspaces included:
- * setVisible(false) -> visibilityState "hidden", backgroundThrottling, FPS cap,
- * and Chromium occlusion / renderer-backgrounding.
+ * Occlusion / renderer-backgrounding switches (process-wide).
+ * Needed so per-window "Manter ativa em segundo plano" (park + setBackgroundThrottling(false))
+ * can keep media/timers alive when opted in — Win occlusion would freeze parked panels otherwise.
+ * Intentionally NOT setting disable-background-timer-throttling: without the per-window option,
+ * Chromium + webContents.setBackgroundThrottling(true) must be able to limit hidden panels.
  */
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling');
 
@@ -1323,6 +1323,7 @@ function registerIpc() {
       workspaceId: (data && data.workspaceId) || s.activeWorkspaceId,
       muted: false,
       pauseInBackground: !!(data && data.pauseInBackground),
+      keepAliveInBackground: !!(data && data.keepAliveInBackground),
       privateHistory: !!(data && data.privateHistory),
       adblockEnabled: data && data.adblockEnabled === false ? false : true,
       lastUrl: null,
@@ -1357,6 +1358,9 @@ function registerIpc() {
       if (typeof fields.muted === 'boolean') a.muted = fields.muted;
       if (typeof fields.pauseInBackground === 'boolean') {
         a.pauseInBackground = fields.pauseInBackground;
+      }
+      if (typeof fields.keepAliveInBackground === 'boolean') {
+        a.keepAliveInBackground = fields.keepAliveInBackground;
       }
       if (typeof fields.privateHistory === 'boolean') {
         a.privateHistory = fields.privateHistory;
@@ -2377,7 +2381,7 @@ async function runBgSelftest() {
       openLastPage: false,
       suspendHidden: false,
       suspendDelayMs: 0,
-      keepBackgroundRunning: true,
+      keepBackgroundRunning: false,
       memoryLimitMb: 0,
       panelMemoryLimitMb: 0,
       hardMemoryLimit: false,
@@ -2397,6 +2401,7 @@ async function runBgSelftest() {
         workspaceId: 'ws-1',
         muted: false,
         pauseInBackground: false,
+        keepAliveInBackground: true,
         lastUrl: null,
       },
       {
@@ -2407,6 +2412,7 @@ async function runBgSelftest() {
         workspaceId: 'ws-2',
         muted: false,
         pauseInBackground: false,
+        keepAliveInBackground: true,
         lastUrl: null,
       }
     );
@@ -2579,8 +2585,11 @@ async function runBgSelftest() {
   // Reset pause flag; prepare Liberar memória with 1 visible + 1 hidden
   updateState((s) => {
     const a = s.accounts.find((x) => x.id === 'acc-bg-a');
-    if (a) a.pauseInBackground = false;
-    s.settings.keepBackgroundRunning = true;
+    if (a) {
+      a.pauseInBackground = false;
+      a.keepAliveInBackground = true;
+    }
+    s.settings.keepBackgroundRunning = false;
     s.settings.suspendHidden = false;
   });
   // Ensure B exists then show A (B parked)
@@ -2851,6 +2860,19 @@ function popupAccountMenu(opts) {
         emitToRenderer({
           type: 'layout:recompute',
         });
+      },
+    },
+    {
+      type: 'checkbox',
+      label: 'Manter ativa em segundo plano',
+      checked: !!acc.keepAliveInBackground,
+      click: (item) => {
+        updateState((s) => {
+          const a = s.accounts.find((x) => x.id === accountId);
+          if (a) a.keepAliveInBackground = !!item.checked;
+        });
+        panels.applyThrottling();
+        emitToRenderer({ type: 'state:changed', state: publicState() });
       },
     },
     {
@@ -3318,6 +3340,7 @@ async function runInputSelftest() {
     'Recarregar',
     'Mudo',
     'Suspender',
+    'Manter ativa em segundo plano',
     'Pausar em segundo plano',
     'Maximizar',
     'Abrir DevTools',

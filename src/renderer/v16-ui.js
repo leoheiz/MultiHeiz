@@ -1939,7 +1939,7 @@
     form.openLastPage.checked = !!s.openLastPage;
     if (form.persistSessions) form.persistSessions.checked = s.persistSessions !== false;
     form.confirmOnRemove.checked = s.confirmOnRemove !== false;
-    form.keepBackgroundRunning.checked = s.keepBackgroundRunning !== false;
+    form.keepBackgroundRunning.checked = !!s.keepBackgroundRunning;
     form.suspendHidden.checked = !!s.suspendHidden;
     form.suspendDelayMs.value = Number(s.suspendDelayMs) || 0;
     form.homepage.value = s.homepage || 'https://www.google.com';
