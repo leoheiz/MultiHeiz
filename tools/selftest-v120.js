@@ -503,6 +503,80 @@ async function runNodeChecks() {
   assert(css.includes('scrollbar-width: none') || css.includes('.tabs::-webkit-scrollbar'), 'tabs scrollbar hidden');
   console.log('PASS: Parte C UX static checks');
 
+  // --- Phase 7: changelog 1.2.0, bg options exclusive, disabled lists ---
+  const changelog = JSON.parse(
+    fs.readFileSync(path.join(root, 'src/changelog.json'), 'utf8')
+  );
+  const v120Entry = (changelog.versions || []).find((v) => v.version === '1.2.0');
+  assert(v120Entry, 'changelog has 1.2.0 entry');
+  assert(Array.isArray(v120Entry.entries) && v120Entry.entries.length >= 5, '1.2.0 has entries');
+  assert(
+    v120Entry.entries.some((e) => /Manter ativa em segundo plano/.test(e.text)),
+    '1.2.0 mentions keep-alive option'
+  );
+  assert(
+    v120Entry.entries.some((e) => /Experimental \(em testes\)/.test(e.text)),
+    '1.2.0 mentions Experimental extensions'
+  );
+  // Mutual exclusion: both true → keepAlive cleared (pause wins)
+  clearModuleMatch(/\/src\/main\/(state|json-store)/);
+  const userDataExcl = path.join(tempRoot, 'userData-excl');
+  fs.mkdirSync(userDataExcl, { recursive: true });
+  installElectronStub({ tempDir: tempRoot, userData: userDataExcl });
+  clearModuleMatch(/\/src\/main\/(state|json-store)/);
+  fs.writeFileSync(
+    path.join(userDataExcl, 'multiheiz-state.json'),
+    JSON.stringify({
+      accounts: [
+        {
+          id: 'acc-both',
+          name: 'Both',
+          color: '#2bb8a6',
+          startUrl: 'https://example.com',
+          workspaceId: 'ws',
+          muted: false,
+          pauseInBackground: true,
+          keepAliveInBackground: true,
+        },
+      ],
+      workspaces: [{ id: 'ws', name: 'W' }],
+      activeWorkspaceId: 'ws',
+      settings: { migrations: { keepAlive120: true } },
+      ui: {},
+      appearance: {},
+    }),
+    'utf8'
+  );
+  const stateExcl = require('../src/main/state');
+  stateExcl.loadState();
+  const accExcl = stateExcl.getState().accounts[0];
+  assert(accExcl.pauseInBackground === true, 'pause kept when both set');
+  assert(accExcl.keepAliveInBackground === false, 'keepAlive cleared when both set');
+  assert(
+    appJs.includes("keepAliveInBackground.checked") &&
+      appJs.includes('pauseInBackground.checked = false'),
+    'account dialog exclusivity handlers present'
+  );
+  assert(
+    v16.includes("meta.textContent = 'desativada'") || v16.includes('desativada'),
+    'disabled adblock lists show desativada'
+  );
+  assert(v16.includes('item.enabled === false'), 'desativada gated on enabled===false');
+  const buildLinux = (pkg.build && pkg.build.linux) || {};
+  assert(
+    String(buildLinux.category || '').includes('WebBrowser'),
+    'linux.category includes WebBrowser'
+  );
+  assert(
+    pkg.build.deb && pkg.build.deb.packageCategory === 'web',
+    'deb.packageCategory is web'
+  );
+  assert(
+    buildLinux.description === buildLinux.synopsis,
+    'linux.description equals synopsis (Comment uses description)'
+  );
+  console.log('PASS: phase 7 changelog / bg exclusive / disabled lists / linux desktop');
+
   try {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   } catch {

@@ -1356,6 +1356,11 @@ function registerIpc() {
     const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
     const homepageFallback =
       (s.settings && s.settings.homepage) || 'https://www.google.com';
+    let pauseInBackground = !!(data && data.pauseInBackground);
+    let keepAliveInBackground = !!(data && data.keepAliveInBackground);
+    if (pauseInBackground && keepAliveInBackground) {
+      keepAliveInBackground = false;
+    }
     const account = {
       id,
       name: (data && data.name) || `Janela ${s.accounts.length + 1}`,
@@ -1366,8 +1371,8 @@ function registerIpc() {
       ),
       workspaceId: (data && data.workspaceId) || s.activeWorkspaceId,
       muted: false,
-      pauseInBackground: !!(data && data.pauseInBackground),
-      keepAliveInBackground: !!(data && data.keepAliveInBackground),
+      pauseInBackground,
+      keepAliveInBackground,
       privateHistory: !!(data && data.privateHistory),
       adblockEnabled: data && data.adblockEnabled === false ? false : true,
       lastUrl: null,
@@ -1402,9 +1407,14 @@ function registerIpc() {
       if (typeof fields.muted === 'boolean') a.muted = fields.muted;
       if (typeof fields.pauseInBackground === 'boolean') {
         a.pauseInBackground = fields.pauseInBackground;
+        if (a.pauseInBackground) a.keepAliveInBackground = false;
       }
       if (typeof fields.keepAliveInBackground === 'boolean') {
         a.keepAliveInBackground = fields.keepAliveInBackground;
+        if (a.keepAliveInBackground) a.pauseInBackground = false;
+      }
+      if (a.pauseInBackground && a.keepAliveInBackground) {
+        a.keepAliveInBackground = false;
       }
       if (typeof fields.privateHistory === 'boolean') {
         a.privateHistory = fields.privateHistory;
@@ -2911,7 +2921,9 @@ function popupAccountMenu(opts) {
       click: (item) => {
         updateState((s) => {
           const a = s.accounts.find((x) => x.id === accountId);
-          if (a) a.keepAliveInBackground = !!item.checked;
+          if (!a) return;
+          a.keepAliveInBackground = !!item.checked;
+          if (a.keepAliveInBackground) a.pauseInBackground = false;
         });
         panels.applyThrottling();
         emitToRenderer({ type: 'state:changed', state: publicState() });
@@ -2924,7 +2936,9 @@ function popupAccountMenu(opts) {
       click: (item) => {
         updateState((s) => {
           const a = s.accounts.find((x) => x.id === accountId);
-          if (a) a.pauseInBackground = !!item.checked;
+          if (!a) return;
+          a.pauseInBackground = !!item.checked;
+          if (a.pauseInBackground) a.keepAliveInBackground = false;
         });
         panels.applyThrottling();
         emitToRenderer({ type: 'state:changed', state: publicState() });

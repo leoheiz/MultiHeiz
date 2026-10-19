@@ -106,13 +106,38 @@ async function main() {
   const prevFile = process.env.PORTABLE_EXECUTABLE_FILE;
   delete process.env.PORTABLE_EXECUTABLE_DIR;
   delete process.env.PORTABLE_EXECUTABLE_FILE;
-  process.env.PORTABLE_EXECUTABLE_DIR = 'C:\\portable';
-  assert(updater.detectUpdateChannel() === 'portable', 'portable via DIR');
-  assert(!updater.isManualOnlyChannel('portable'), 'portable is NOT manual-only anymore');
-  delete process.env.PORTABLE_EXECUTABLE_DIR;
-  process.env.PORTABLE_EXECUTABLE_FILE = 'C:\\MultiHeiz-portable.exe';
-  assert(updater.detectUpdateChannel() === 'portable', 'portable via FILE');
-  delete process.env.PORTABLE_EXECUTABLE_FILE;
+  // Portable env is Windows-only (PowerShell helper). On Linux/mac, assert the
+  // platform-aware detectUpdateChannel ignores those env vars (or use opts).
+  if (process.platform === 'win32') {
+    process.env.PORTABLE_EXECUTABLE_DIR = 'C:\\portable';
+    assert(updater.detectUpdateChannel() === 'portable', 'portable via DIR');
+    assert(!updater.isManualOnlyChannel('portable'), 'portable is NOT manual-only anymore');
+    delete process.env.PORTABLE_EXECUTABLE_DIR;
+    process.env.PORTABLE_EXECUTABLE_FILE = 'C:\\MultiHeiz-portable.exe';
+    assert(updater.detectUpdateChannel() === 'portable', 'portable via FILE');
+    delete process.env.PORTABLE_EXECUTABLE_FILE;
+  } else {
+    process.env.PORTABLE_EXECUTABLE_DIR = 'C:\\portable';
+    assert(
+      updater.detectUpdateChannel({
+        platform: 'win32',
+        isPackaged: true,
+        env: { PORTABLE_EXECUTABLE_DIR: 'C:\\portable' },
+        execPath: 'C:\\portable\\MultiHeiz.exe',
+      }) === 'portable',
+      'portable via DIR (opts win32)'
+    );
+    assert(
+      updater.detectUpdateChannel({
+        platform: process.platform,
+        isPackaged: false,
+        env: { PORTABLE_EXECUTABLE_DIR: '/tmp/portable' },
+      }) !== 'portable',
+      'non-Windows ignores portable DIR env'
+    );
+    delete process.env.PORTABLE_EXECUTABLE_DIR;
+    assert(!updater.isManualOnlyChannel('portable'), 'portable is NOT manual-only anymore');
+  }
   if (prevDir !== undefined) process.env.PORTABLE_EXECUTABLE_DIR = prevDir;
   if (prevFile !== undefined) process.env.PORTABLE_EXECUTABLE_FILE = prevFile;
   console.log('PASS: portable detection (self-update channel)');

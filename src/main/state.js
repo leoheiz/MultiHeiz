@@ -171,18 +171,26 @@ function migrate(parsed) {
         ? parsed.workspaces
         : base.workspaces,
     accounts: Array.isArray(parsed.accounts)
-      ? parsed.accounts.map((a) => ({
-          ...a,
-          pauseInBackground: !!(a && a.pauseInBackground),
+      ? parsed.accounts.map((a) => {
+          let pauseInBackground = !!(a && a.pauseInBackground);
           // v1.2.0: opt-in keep-alive; existing accounts migrate to OFF
-          keepAliveInBackground: !!(a && a.keepAliveInBackground),
-          privateHistory: !!(a && a.privateHistory),
-          adblockEnabled: a && a.adblockEnabled === false ? false : true,
-          zoomFactor:
-            typeof (a && a.zoomFactor) === 'number' && a.zoomFactor >= 0.25 && a.zoomFactor <= 3
-              ? a.zoomFactor
-              : 1,
-        }))
+          let keepAliveInBackground = !!(a && a.keepAliveInBackground);
+          // Mutually exclusive: pause wins (matches panels.js throttling priority)
+          if (pauseInBackground && keepAliveInBackground) {
+            keepAliveInBackground = false;
+          }
+          return {
+            ...a,
+            pauseInBackground,
+            keepAliveInBackground,
+            privateHistory: !!(a && a.privateHistory),
+            adblockEnabled: a && a.adblockEnabled === false ? false : true,
+            zoomFactor:
+              typeof (a && a.zoomFactor) === 'number' && a.zoomFactor >= 0.25 && a.zoomFactor <= 3
+                ? a.zoomFactor
+                : 1,
+          };
+        })
       : [],
   };
   if (!next.settings.modules || typeof next.settings.modules !== 'object') {

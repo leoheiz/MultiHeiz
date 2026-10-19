@@ -1983,12 +1983,16 @@
           }
           const meta = document.createElement('div');
           meta.className = 'meta';
-          const when = item.lastUpdateAt
-            ? new Date(item.lastUpdateAt).toLocaleString('pt-BR')
-            : '—';
-          meta.textContent = `${item.ruleCount || 0} regras · ${item.status || '—'} · ${when}${
-            item.error ? ' · ' + item.error : ''
-          }`;
+          if (item.enabled === false) {
+            meta.textContent = 'desativada';
+          } else {
+            const when = item.lastUpdateAt
+              ? new Date(item.lastUpdateAt).toLocaleString('pt-BR')
+              : '—';
+            meta.textContent = `${item.ruleCount || 0} regras · ${item.status || '—'} · ${when}${
+              item.error ? ' · ' + item.error : ''
+            }`;
+          }
           box.appendChild(meta);
         }
         catalog.appendChild(box);

@@ -1354,8 +1354,11 @@ function openAccountDialog(account) {
   form.name.value = account ? account.name : '';
   form.color.value = account ? account.color : '#2bb8a6';
   form.startUrl.value = account ? account.startUrl : 'https://www.google.com';
-  form.keepAliveInBackground.checked = !!(account && account.keepAliveInBackground);
-  form.pauseInBackground.checked = !!(account && account.pauseInBackground);
+  const keepAlive = !!(account && account.keepAliveInBackground);
+  const pauseBg = !!(account && account.pauseInBackground);
+  // Mutually exclusive — pause wins if both were somehow set
+  form.keepAliveInBackground.checked = keepAlive && !pauseBg;
+  form.pauseInBackground.checked = pauseBg;
   el.accountWsSelect.innerHTML = '';
   for (const ws of state.workspaces) {
     const opt = document.createElement('option');
@@ -1704,16 +1707,35 @@ el.btnNext.addEventListener('click', async () => {
   applyState(await window.multiheiz.setPage((state.page || 0) + 1));
 });
 
+// Manter ativa / Pausar em segundo plano: mutually exclusive checkboxes
+if (el.formAccount && el.formAccount.keepAliveInBackground && el.formAccount.pauseInBackground) {
+  el.formAccount.keepAliveInBackground.addEventListener('change', () => {
+    if (el.formAccount.keepAliveInBackground.checked) {
+      el.formAccount.pauseInBackground.checked = false;
+    }
+  });
+  el.formAccount.pauseInBackground.addEventListener('change', () => {
+    if (el.formAccount.pauseInBackground.checked) {
+      el.formAccount.keepAliveInBackground.checked = false;
+    }
+  });
+}
+
 el.formAccount.addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(el.formAccount);
+  let keepAliveInBackground = el.formAccount.keepAliveInBackground.checked;
+  let pauseInBackground = el.formAccount.pauseInBackground.checked;
+  if (keepAliveInBackground && pauseInBackground) {
+    keepAliveInBackground = false;
+  }
   const data = {
     name: String(fd.get('name') || '').trim(),
     color: String(fd.get('color') || '#2bb8a6'),
     startUrl: String(fd.get('startUrl') || '').trim(),
     workspaceId: String(fd.get('workspaceId') || state.activeWorkspaceId),
-    keepAliveInBackground: el.formAccount.keepAliveInBackground.checked,
-    pauseInBackground: el.formAccount.pauseInBackground.checked,
+    keepAliveInBackground,
+    pauseInBackground,
   };
   if (editingAccountId) {
     applyState(await window.multiheiz.updateAccount({ id: editingAccountId, ...data }));

@@ -1,6 +1,41 @@
 {
   "versions": [
     {
+      "version": "1.2.0",
+      "date": "2026-10-19",
+      "title": "Electron 44, segurança, desempenho e Linux",
+      "entries": [
+        {
+          "tag": "Melhoria",
+          "text": "Bibliotecas atualizadas: Electron 44, electron-builder/updater e dependências de segurança (adm-zip, exceljs/uuid)."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Segurança reforçada: navegação só http/https, update portátil com hash obrigatório, OAuth com provedores conhecidos, permissões negadas por padrão e assinatura CRX."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Bugs e desempenho: fila de carregamento, downloads, extensões sem carga duplicada; janelas escondidas economizam CPU (opção \"Manter ativa em segundo plano\")."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Ajustes Linux: canal do updater (AppImage/.deb), metadados .desktop/deb e flags Chromium só no Windows."
+        },
+        {
+          "tag": "Novo",
+          "text": "Listas opcionais do AdBlocker Ultimate no bloqueador embutido (desligadas por padrão)."
+        },
+        {
+          "tag": "Novo",
+          "text": "Tela cheia F11 (modo foco): esconde barra superior e lateral; F11 ou Esc para sair."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Extensões de terceiros marcadas como Experimental (em testes)."
+        }
+      ]
+    },
+    {
       "version": "1.1.0",
       "date": "2026-10-19",
       "title": "Atualização portátil, extensões e organização",

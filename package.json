@@ -86,27 +86,23 @@
         "AppImage",
         "deb"
       ],
-      "category": "Network",
+      "category": "Network;WebBrowser",
       "icon": "build/icons",
       "synopsis": "Navegador multi-janela com painéis e sessões independentes",
-      "description": "MultiHeiz é um navegador multi-janela com painéis lado a lado e sessões independentes. Ideal para acompanhar várias páginas ao mesmo tempo sem misturar cookies nem logins.",
+      "description": "Navegador multi-janela com painéis e sessões independentes",
       "maintainer": "Leo <leoheiz@users.noreply.github.com>",
       "executableName": "multiheiz",
       "syncDesktopName": true,
       "mimeTypes": [
         "x-scheme-handler/http",
         "x-scheme-handler/https"
-      ],
-      "desktop": {
-        "entry": {
-          "Categories": "Network;WebBrowser;"
-        }
-      }
+      ]
     },
     "appImage": {
       "artifactName": "MultiHeiz-${version}.${ext}"
     },
     "deb": {
+      "packageCategory": "web",
       "maintainer": "Leo <leoheiz@users.noreply.github.com>",
       "artifactName": "multiheiz_${version}_amd64.${ext}"
     },
