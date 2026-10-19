@@ -137,6 +137,27 @@ Relative to (a): (b) ≈ **+183 MB RSS** / **+0.5 s**; (c) ≈ **+430 MB R
 **`abu_privacy` stays default OFF** with the existing size warning. All ABU lists remain
 opt-in (`defaultOn: false`).
 
+### npm audit — sprintf-js via @adguard/agtree (accepted)
+
+`npm audit --omit=dev` reports 2 moderate findings for `sprintf-js` (GHSA-hp3w-g68c-fv3c:
+unbounded precision DoS). Path: `@adguard/agtree@4.3.0` → `sprintf-js@1.1.3`.
+All published sprintf-js versions are flagged; there is no patched release.
+`npm audit fix --force` would downgrade agtree to 1.x (breaking) — **not applied**.
+
+**Where sprintf is used:** only to format human-readable error / validation strings
+inside agtree parsers and converters (`AdblockSyntaxError`, `RuleConversionError`,
+validator messages). It does **not** interpolate filter-list content into executable
+code; downloaded ABU list text is parsed as rules, and sprintf receives fixed message
+templates plus token/name fragments when throwing parse errors.
+
+**Exposure:** agtree is loaded on demand (`await import`) and only when an ABU list is
+enabled. Impact if a malicious list line triggered a pathological format string: DoS
+during preprocess/rebuild (main-process work), not remote code execution in page
+sessions.
+
+**Decision (1.2.0 phase 7-prep):** keep current dependency; accepted risk. Revisit if
+agtree drops sprintf-js or a patched sprintf fork appears.
+
 
 ## v1.8 early MAIN WORLD scriptlets (phase 1)
 
