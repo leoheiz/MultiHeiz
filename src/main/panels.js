@@ -9,6 +9,7 @@ const {
   isNavigableUrl,
   allowInternalDataUrls,
   isKnownIdentityProviderUrl,
+  isAboutBlank,
 } = require('./url-policy');
 const history = require('./history');
 const downloads = require('./downloads');
@@ -19,6 +20,10 @@ const permissions = require('./permissions');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
+
+/** Accounts being removed (clear session / state); layout:sync must not recreate them. */
+/** @type {Set<string>} */
+const removingAccounts = new Set();
 
 /** @type {Map<string, ReturnType<typeof setTimeout>>} */
 const suspendTimers = new Map();
@@ -536,8 +541,21 @@ function getMainUiProcessId() {
   }
 }
 
+function isAccountRemoving(accountId) {
+  return removingAccounts.has(accountId);
+}
+
+function markAccountRemoving(accountId) {
+  if (accountId) removingAccounts.add(accountId);
+}
+
+function unmarkAccountRemoving(accountId) {
+  if (accountId) removingAccounts.delete(accountId);
+}
+
 function createPanel(accountId) {
   if (!mainWindow || panels.has(accountId)) return panels.get(accountId) || null;
+  if (isAccountRemoving(accountId)) return null;
   const account = getAccount(accountId);
   if (!account) return null;
 
@@ -651,7 +669,10 @@ function createPanel(accountId) {
     const retryable =
       RETRYABLE_ERRORS.has(errorCode) ||
       [...RETRYABLE_CODES].some((c) => codeStr.includes(c));
-    if (!retryable) return;
+    if (!retryable) {
+      signalLoadCommitted(accountId, { force: true });
+      return;
+    }
     const n = loadRetries.get(accountId) || 0;
     if (n >= 1) {
       loadRetries.delete(accountId);
@@ -661,6 +682,7 @@ function createPanel(accountId) {
         status: 'error',
         message: `Falha de rede (${codeStr || errorCode})`,
       });
+      signalLoadCommitted(accountId, { force: true });
       return;
     }
     loadRetries.set(accountId, n + 1);
@@ -888,6 +910,7 @@ function getOverlaySnapshotMap() {
 
 function destroyPanel(accountId, { keepLastUrl = true } = {}) {
   clearSuspendTimer(accountId);
+  pruneLoadQueueAccount(accountId);
   const entry = panels.get(accountId);
   if (!entry) return;
   const { view } = entry;
@@ -1058,6 +1081,7 @@ function applySlotBounds(slots, opts = {}) {
   const hideForOverlay = !forceShow && areOverlaysActive();
 
   for (const slot of slots) {
+    if (isAccountRemoving(slot.accountId)) continue;
     clearSuspendTimer(slot.accountId);
     touchAccount(slot.accountId);
 
@@ -1067,6 +1091,17 @@ function applySlotBounds(slots, opts = {}) {
     }
 
     let entry = panels.get(slot.accountId);
+    if (entry) {
+      try {
+        if (entry.view.webContents.isDestroyed()) {
+          panels.delete(slot.accountId);
+          entry = null;
+        }
+      } catch {
+        panels.delete(slot.accountId);
+        entry = null;
+      }
+    }
     if (!entry) entry = createPanel(slot.accountId);
     if (!entry) continue;
 
@@ -1126,21 +1161,65 @@ function applySlotBounds(slots, opts = {}) {
 /**
  * @param {Array<{ accountId: string, x: number, y: number, width: number, height: number }>} slots
  */
-function signalLoadCommitted(accountId) {
+/**
+ * Advance load queue only for real navigations (not about:blank from deferred create).
+ * @param {string} accountId
+ * @param {{ force?: boolean }} [opts]
+ */
+function signalLoadCommitted(accountId, opts = {}) {
   if (!loadQueuePending.has(accountId)) return;
+  if (!opts.force) {
+    const entry = panels.get(accountId);
+    if (entry) {
+      try {
+        const u = entry.view.webContents.getURL();
+        if (!u || isAboutBlank(u)) return;
+      } catch {
+        /* destroyed — treat as committed */
+      }
+    }
+  }
   loadQueuePending.delete(accountId);
-  // Continue staggered queue
+  loadQueueRunning = false;
   setImmediate(() => pumpLoadQueue());
+}
+
+/**
+ * Remove destroyed/removed accounts from the stagger queue and unblock if needed.
+ * @param {string} accountId
+ */
+function pruneLoadQueueAccount(accountId) {
+  const before = loadQueue.length;
+  loadQueue = loadQueue.filter((id) => id !== accountId);
+  const wasPending = loadQueuePending.delete(accountId);
+  if (wasPending || before !== loadQueue.length) {
+    if (wasPending) loadQueueRunning = false;
+    setImmediate(() => pumpLoadQueue());
+  }
+}
+
+function pruneStaleLoadQueue() {
+  loadQueue = loadQueue.filter((id) => {
+    if (!id || isAccountRemoving(id)) return false;
+    if (!getAccount(id)) return false;
+    return true;
+  });
+  for (const id of [...loadQueuePending]) {
+    if (isAccountRemoving(id) || !getAccount(id)) {
+      loadQueuePending.delete(id);
+      loadQueueRunning = false;
+    }
+  }
 }
 
 function pumpLoadQueue() {
   if (loadQueueRunning) return;
-  const nextId = loadQueue.find((id) => !panels.has(id) || loadQueuePending.has(id));
+  pruneStaleLoadQueue();
   // Find next that still needs create+load
   let id = null;
   while (loadQueue.length) {
     const candidate = loadQueue.shift();
-    if (!candidate) continue;
+    if (!candidate || isAccountRemoving(candidate)) continue;
     const existing = panels.get(candidate);
     if (existing && !loadQueuePending.has(candidate)) {
       let cur = '';
@@ -1150,7 +1229,7 @@ function pumpLoadQueue() {
         cur = '';
       }
       // Only skip if the panel already navigated (deferred creates stay about:blank)
-      if (cur && cur !== 'about:blank') continue;
+      if (cur && !isAboutBlank(cur)) continue;
     }
     id = candidate;
     break;
@@ -1161,69 +1240,54 @@ function pumpLoadQueue() {
   }
   loadQueueRunning = true;
   loadQueuePending.add(id);
-  let entry = panels.get(id);
-  if (!entry) {
-    entry = createPanelDeferred(id);
-  }
-  if (!entry) {
-    loadQueuePending.delete(id);
-    loadQueueRunning = false;
-    setImmediate(() => pumpLoadQueue());
-    return;
-  }
-  const account = getAccount(id);
-  let url = account ? startUrlFor(account) : 'https://www.google.com';
-  const dataOpts = { allowData: allowInternalDataUrls() };
-  if (!isNavigableUrl(url, dataOpts)) {
-    url = normalizeUrl(url) || 'https://www.google.com';
-  }
-  const wc = entry.view.webContents;
-  const current = (() => {
-    try {
-      return wc.getURL();
-    } catch {
-      return '';
+  let waitingForLoad = false;
+  try {
+    let entry = panels.get(id);
+    if (!entry) {
+      entry = createPanelDeferred(id);
     }
-  })();
-  if (!current || current === 'about:blank') {
-    if (isNavigableUrl(url, dataOpts)) {
-      wc.loadURL(url).catch(() => {});
-    } else {
+    if (!entry) {
+      return;
+    }
+    const account = getAccount(id);
+    let url = account ? startUrlFor(account) : 'https://www.google.com';
+    const dataOpts = { allowData: allowInternalDataUrls() };
+    if (!isNavigableUrl(url, dataOpts)) {
+      url = normalizeUrl(url) || 'https://www.google.com';
+    }
+    const wc = entry.view.webContents;
+    const current = (() => {
+      try {
+        return wc.getURL();
+      } catch {
+        return '';
+      }
+    })();
+    if (!current || isAboutBlank(current)) {
+      if (isNavigableUrl(url, dataOpts)) {
+        waitingForLoad = true;
+        wc.loadURL(url).catch(() => {
+          signalLoadCommitted(id, { force: true });
+        });
+      }
+    }
+    if (waitingForLoad) {
+      const watchdog = setTimeout(() => {
+        if (loadQueuePending.has(id)) {
+          signalLoadCommitted(id, { force: true });
+        }
+      }, STAGGER_MAX_MS);
+      if (typeof watchdog.unref === 'function') watchdog.unref();
+    }
+  } catch (err) {
+    console.error('[panels] pumpLoadQueue', id, err && err.message ? err.message : err);
+  } finally {
+    if (!waitingForLoad) {
       loadQueuePending.delete(id);
       loadQueueRunning = false;
       setImmediate(() => pumpLoadQueue());
-      return;
     }
-  } else {
-    loadQueuePending.delete(id);
-    loadQueueRunning = false;
-    setImmediate(() => pumpLoadQueue());
-    return;
   }
-  const watchdog = setTimeout(() => {
-    if (loadQueuePending.has(id)) {
-      loadQueuePending.delete(id);
-      loadQueueRunning = false;
-      pumpLoadQueue();
-    }
-  }, STAGGER_MAX_MS);
-  if (typeof watchdog.unref === 'function') watchdog.unref();
-
-  const finish = () => {
-    if (!loadQueuePending.has(id)) {
-      clearTimeout(watchdog);
-      loadQueueRunning = false;
-      pumpLoadQueue();
-    }
-  };
-  // finish when committed (signalLoadCommitted clears pending)
-  const check = setInterval(() => {
-    if (!loadQueuePending.has(id)) {
-      clearInterval(check);
-      finish();
-    }
-  }, 50);
-  if (typeof check.unref === 'function') check.unref();
 }
 
 /**
@@ -1232,17 +1296,37 @@ function pumpLoadQueue() {
 function createPanelDeferred(accountId) {
   if (panels.has(accountId)) return panels.get(accountId);
   deferNextCreateLoad = true;
-  const entry = createPanel(accountId);
-  deferNextCreateLoad = false;
-  return entry;
+  try {
+    return createPanel(accountId);
+  } finally {
+    deferNextCreateLoad = false;
+  }
 }
 
 function enqueueVisibleLoads(accountIds) {
   const ordered = Array.isArray(accountIds) ? accountIds.slice() : [];
+  const next = [];
   for (const id of ordered) {
-    if (!loadQueue.includes(id)) loadQueue.push(id);
+    if (!id || isAccountRemoving(id)) continue;
+    if (!next.includes(id)) next.push(id);
+  }
+  // Substitute queue (drop stale workspace ids); keep in-flight pending if still needed
+  loadQueue = next;
+  for (const id of [...loadQueuePending]) {
+    if (!next.includes(id)) {
+      loadQueuePending.delete(id);
+      loadQueueRunning = false;
+    }
   }
   pumpLoadQueue();
+}
+
+function getLoadQueueDebug() {
+  return {
+    queue: loadQueue.slice(),
+    pending: [...loadQueuePending],
+    running: loadQueueRunning,
+  };
 }
 
 function syncVisiblePanels(slots) {
@@ -1256,6 +1340,7 @@ function syncVisiblePanels(slots) {
   }));
 
   visibleAccountIds = new Set(lastSlots.map((s) => s.accountId));
+  pruneStaleLoadQueue();
 
   for (const id of [...panels.keys()]) {
     if (!visibleAccountIds.has(id)) {
@@ -1277,13 +1362,16 @@ function syncVisiblePanels(slots) {
   const needCreate = lastSlots
     .filter((s) => Number(s.width) > 1 && Number(s.height) > 1)
     .map((s) => s.accountId)
-    .filter((id) => !panels.has(id));
+    .filter((id) => !panels.has(id) && !isAccountRemoving(id));
   if (needCreate.length > 1) {
     // Create first with bounds via applySlotBounds path that uses queue
     for (const id of needCreate) {
       deferNextCreateLoad = true;
-      createPanel(id);
-      deferNextCreateLoad = false;
+      try {
+        createPanel(id);
+      } finally {
+        deferNextCreateLoad = false;
+      }
     }
     applySlotBounds(lastSlots);
     enqueueVisibleLoads(needCreate);
@@ -1631,17 +1719,24 @@ function applyThrottling() {
 }
 
 async function clearAccountSession(accountId) {
-  destroyPanel(accountId, { keepLastUrl: false });
-  forceSuspended.delete(accountId);
-  lastUsedAt.delete(accountId);
-  const ses = session.fromPartition(partitionFor(accountId));
-  await ses.clearStorageData();
+  const alreadyMarked = isAccountRemoving(accountId);
+  if (!alreadyMarked) markAccountRemoving(accountId);
   try {
-    await ses.clearCache();
-  } catch {
-    /* ignore */
+    destroyPanel(accountId, { keepLastUrl: false });
+    forceSuspended.delete(accountId);
+    lastUsedAt.delete(accountId);
+    const ses = session.fromPartition(partitionFor(accountId));
+    await ses.clearStorageData();
+    try {
+      await ses.clearCache();
+    } catch {
+      /* ignore */
+    }
+    emitSuspendedState();
+  } finally {
+    // If caller pre-marked (account:remove), keep tombstone until state is updated.
+    if (!alreadyMarked) unmarkAccountRemoving(accountId);
   }
-  emitSuspendedState();
 }
 
 async function clearAllPartitionCaches() {
@@ -1764,6 +1859,11 @@ module.exports = {
   panelCanGoForward,
   panelSetMuted,
   clearAccountSession,
+  markAccountRemoving,
+  unmarkAccountRemoving,
+  isAccountRemoving,
+  getLoadQueueDebug,
+  enqueueVisibleLoads,
   getPanelCapture,
   destroyAllPanels,
   listActivePanelIds,

@@ -10,6 +10,10 @@ const { readManifestForDnr } = require('./dnr-prepare');
 /** @type {Map<string, Map<string, string>>} accountId -> extId -> electronExtensionId */
 const loadedByAccount = new Map();
 
+/** In-flight loadOne promises: `${accountId}::${installId}` -> Promise */
+/** @type {Map<string, Promise<string|null>>} */
+const inflightLoads = new Map();
+
 /**
  * @param {object} record
  */
@@ -89,7 +93,6 @@ function getSession(accountId) {
  */
 async function loadOne(accountId, record) {
   if (!appliesToAccount(record, accountId)) return null;
-  const ses = getSession(accountId);
   let map = loadedByAccount.get(accountId);
   if (!map) {
     map = new Map();
@@ -97,31 +100,48 @@ async function loadOne(accountId, record) {
   }
   if (map.has(record.id)) return map.get(record.id);
 
-  try {
-    ensureDnrLoaded(record);
-    // allowFileAccess: false — extensions must not read arbitrary file:// pages.
-    // Content scripts / DNR on http(s) panels do not need file access.
-    const ext = await ses.extensions.loadExtension(record.path, {
-      allowFileAccess: false,
-    });
-    const eid = ext && ext.id ? ext.id : record.id;
-    map.set(record.id, eid);
-    syncDnrForAccount(accountId);
-    if (Array.isArray(record.warnings) && record.warnings.length) {
+  const inflightKey = `${accountId}::${record.id}`;
+  const existing = inflightLoads.get(inflightKey);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    // Re-check after winning the inflight slot (another caller may have finished).
+    map = loadedByAccount.get(accountId) || map;
+    if (map.has(record.id)) return map.get(record.id);
+    const ses = getSession(accountId);
+    try {
+      ensureDnrLoaded(record);
+      // allowFileAccess: false — extensions must not read arbitrary file:// pages.
+      // Content scripts / DNR on http(s) panels do not need file access.
+      const ext = await ses.extensions.loadExtension(record.path, {
+        allowFileAccess: false,
+      });
+      const eid = ext && ext.id ? ext.id : record.id;
+      map.set(record.id, eid);
+      syncDnrForAccount(accountId);
+      if (Array.isArray(record.warnings) && record.warnings.length) {
+        console.warn(
+          `[extensions] ${record.name} (${record.id}) warnings:`,
+          record.warnings.join('; ')
+        );
+      }
+      return eid;
+    } catch (err) {
       console.warn(
-        `[extensions] ${record.name} (${record.id}) warnings:`,
-        record.warnings.join('; ')
+        '[extensions] load failed',
+        record.id,
+        accountId,
+        err && err.message ? err.message : err
       );
+      return null;
     }
-    return eid;
-  } catch (err) {
-    console.warn(
-      '[extensions] load failed',
-      record.id,
-      accountId,
-      err && err.message ? err.message : err
-    );
-    return null;
+  })();
+
+  inflightLoads.set(inflightKey, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightLoads.delete(inflightKey);
   }
 }
 
@@ -222,6 +242,12 @@ function listLoaded(accountId) {
 
 function resetLoadedState() {
   loadedByAccount.clear();
+  inflightLoads.clear();
+}
+
+/** @returns {number} */
+function inflightLoadCount() {
+  return inflightLoads.size;
 }
 
 module.exports = {
@@ -235,6 +261,7 @@ module.exports = {
   runtimeId,
   listLoaded,
   resetLoadedState,
+  inflightLoadCount,
   partitionFor,
   ensureDnrLoaded,
   syncDnrForAccount,

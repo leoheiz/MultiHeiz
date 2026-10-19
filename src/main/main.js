@@ -163,6 +163,7 @@ const SELFTEST_ADBLOCK_PACKAGED = selftestMode === 'adblock-packaged';
 const SELFTEST_V18 = selftestMode === 'v18';
 const SELFTEST_V19 = selftestMode === 'v19';
 const SELFTEST_V110 = selftestMode === 'v110';
+const SELFTEST_V120 = selftestMode === 'v120';
 const SELFTEST_TITLEBAR = selftestMode === 'titlebar';
 const SELFTEST_EXT = selftestMode === 'ext';
 const SELFTEST_ABU = selftestMode === 'abu';
@@ -181,6 +182,7 @@ const ANY_SELFTEST =
   SELFTEST_V18 ||
   SELFTEST_V19 ||
   SELFTEST_V110 ||
+  SELFTEST_V120 ||
   SELFTEST_TITLEBAR ||
   SELFTEST_EXT ||
   SELFTEST_ABU ||
@@ -438,6 +440,7 @@ function createWindow() {
     SELFTEST_V16 ||
     SELFTEST_V19 ||
     SELFTEST_V110 ||
+    SELFTEST_V120 ||
     SELFTEST_TITLEBAR
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
@@ -495,6 +498,7 @@ function createWindow() {
       SELFTEST_V18 ||
       SELFTEST_V19 ||
       SELFTEST_V110 ||
+      SELFTEST_V120 ||
       SELFTEST_TITLEBAR ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT,
@@ -883,6 +887,29 @@ function createWindow() {
             popupAccountMenu,
             waitForLayoutSettle,
             waitForPanels,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_V120) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runV120Selftest } = require('./selftest-v120');
+          runV120Selftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -1346,18 +1373,23 @@ function registerIpc() {
   });
 
   ipcMain.handle('account:remove', async (_e, id) => {
-    await panels.clearAccountSession(id);
-    updateState((s) => {
-      s.accounts = s.accounts.filter((a) => a.id !== id);
-      if (s.maximizedAccountId === id) s.maximizedAccountId = null;
-      if (s.freeTiles && typeof s.freeTiles === 'object') {
-        for (const wsId of Object.keys(s.freeTiles)) {
-          if (s.freeTiles[wsId] && s.freeTiles[wsId][id]) {
-            delete s.freeTiles[wsId][id];
+    panels.markAccountRemoving(id);
+    try {
+      await panels.clearAccountSession(id);
+      updateState((s) => {
+        s.accounts = s.accounts.filter((a) => a.id !== id);
+        if (s.maximizedAccountId === id) s.maximizedAccountId = null;
+        if (s.freeTiles && typeof s.freeTiles === 'object') {
+          for (const wsId of Object.keys(s.freeTiles)) {
+            if (s.freeTiles[wsId] && s.freeTiles[wsId][id]) {
+              delete s.freeTiles[wsId][id];
+            }
           }
         }
-      }
-    });
+      });
+    } finally {
+      panels.unmarkAccountRemoving(id);
+    }
     return publicState();
   });
 

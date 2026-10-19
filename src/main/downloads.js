@@ -101,22 +101,44 @@ function hookSession(ses, getSourceMeta) {
   if (hookedSessions.has(key)) return;
   hookedSessions.add(key);
 
-  ses.on('will-download', async (event, item, webContents) => {
+  // Must decide save path / dialog synchronously in this turn (Electron DownloadItem).
+  ses.on('will-download', (event, item, webContents) => {
     const id = makeId();
     const meta = typeof getSourceMeta === 'function' ? getSourceMeta(webContents) || {} : {};
     const settings = getSettings();
     let savePath = path.join(settings.defaultFolder, item.getFilename());
+    let askDialog = false;
 
     if (settings.askWhereToSave) {
-      const win = BrowserWindow.fromWebContents(webContents) || BrowserWindow.getFocusedWindow();
-      const result = await dialog.showSaveDialog(win || undefined, {
-        defaultPath: savePath,
-      });
-      if (result.canceled || !result.filePath) {
-        item.cancel();
-        return;
+      askDialog = true;
+      // Electron shows the save dialog; no await before controlling the item.
+      if (typeof item.setSaveDialogOptions === 'function') {
+        item.setSaveDialogOptions({ defaultPath: savePath });
+      } else {
+        // Fallback: pause until path chosen (still no await before pause).
+        item.pause();
+        const win = BrowserWindow.fromWebContents(webContents) || BrowserWindow.getFocusedWindow();
+        Promise.resolve(
+          dialog.showSaveDialog(win || undefined, {
+            defaultPath: savePath,
+          })
+        )
+          .then((result) => {
+            if (result.canceled || !result.filePath) {
+              item.cancel();
+              return;
+            }
+            item.setSavePath(result.filePath);
+            item.resume();
+          })
+          .catch(() => {
+            try {
+              item.cancel();
+            } catch {
+              /* ignore */
+            }
+          });
       }
-      savePath = result.filePath;
     } else {
       try {
         fs.mkdirSync(path.dirname(savePath), { recursive: true });
@@ -132,15 +154,15 @@ function hookSession(ses, getSourceMeta) {
         while (fs.existsSync(path.join(dir, `${base} (${n})${ext}`))) n += 1;
         savePath = path.join(dir, `${base} (${n})${ext}`);
       }
+      item.setSavePath(savePath);
     }
 
-    item.setSavePath(savePath);
     activeItems.set(id, item);
 
     const record = {
       id,
       filename: path.basename(savePath),
-      savePath,
+      savePath: askDialog ? '' : savePath,
       url: item.getURL(),
       mimeType: item.getMimeType(),
       totalBytes: item.getTotalBytes(),
@@ -158,6 +180,21 @@ function hookSession(ses, getSourceMeta) {
     let lastBytes = 0;
     let lastAt = Date.now();
 
+    const syncPathFromItem = () => {
+      try {
+        const p = item.getSavePath && item.getSavePath();
+        if (p) {
+          const cur = findItem(id) || record;
+          cur.savePath = p;
+          cur.filename = path.basename(p);
+          return cur;
+        }
+      } catch {
+        /* ignore */
+      }
+      return findItem(id) || record;
+    };
+
     item.on('updated', (_e, state) => {
       const now = Date.now();
       const received = item.getReceivedBytes();
@@ -165,7 +202,7 @@ function hookSession(ses, getSourceMeta) {
       const speed = Math.round(((received - lastBytes) * 1000) / dt);
       lastBytes = received;
       lastAt = now;
-      const cur = findItem(id) || record;
+      const cur = syncPathFromItem();
       cur.receivedBytes = received;
       cur.totalBytes = item.getTotalBytes();
       cur.speed = speed;
@@ -176,7 +213,7 @@ function hookSession(ses, getSourceMeta) {
 
     item.once('done', (_e, state) => {
       activeItems.delete(id);
-      const cur = findItem(id) || record;
+      const cur = syncPathFromItem();
       cur.receivedBytes = item.getReceivedBytes();
       cur.totalBytes = item.getTotalBytes();
       cur.endedAt = Date.now();

@@ -26,6 +26,10 @@ const enginesByInstall = new Map();
 /** @type {Map<string, Set<string>>} accountId -> Set<installId> */
 const applyMap = new Map();
 
+/** Accounts already warned for missing applyMap (fail-closed). */
+/** @type {Set<string>} */
+const missingApplyLogged = new Set();
+
 /** webContentsId -> allow-all until next mainFrame */
 /** @type {Set<number>} */
 const allowAllWc = new Set();
@@ -588,10 +592,24 @@ function evaluate(accountId, details) {
   const firstParty = sameSite(host, initiatorHost);
   const ctx = { url, host, initiatorHost, resourceType, firstParty };
 
-  const installIds =
-    (accountId && applyMap.get(accountId)) ||
-    applyMap.get('*') ||
-    null;
+  // Fail-closed: only apply engines explicitly mapped for this account (or '*').
+  // Missing map must NOT fall back to all engines (cross-account leak).
+  let installIds = null;
+  if (accountId && applyMap.has(accountId)) {
+    installIds = applyMap.get(accountId);
+  } else if (applyMap.has('*')) {
+    installIds = applyMap.get('*');
+  } else {
+    const key = accountId || '(null)';
+    if (!missingApplyLogged.has(key)) {
+      missingApplyLogged.add(key);
+      console.warn(
+        '[dnr-shim] applyMap missing for account — denying all DNR rules (fail-closed)',
+        key
+      );
+    }
+    return {};
+  }
 
   /** @type {CompiledRule[]} */
   const winners = [];
@@ -599,13 +617,6 @@ function evaluate(accountId, details) {
     for (const id of installIds) {
       const eng = enginesByInstall.get(id);
       if (!eng || !eng.ruleCount) continue;
-      const w = matchEngine(eng, ctx);
-      if (w) winners.push(w);
-    }
-  } else {
-    // No per-account map: match all loaded engines (tests / early attach)
-    for (const eng of enginesByInstall.values()) {
-      if (!eng.ruleCount) continue;
       const w = matchEngine(eng, ctx);
       if (w) winners.push(w);
     }
