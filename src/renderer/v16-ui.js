@@ -1511,6 +1511,43 @@
 
   /* ---------- Atualizações (electron-updater) ---------- */
 
+  /**
+   * Mirror of main computeUpdateActionButtons (renderer cannot require updater.js).
+   * Baixar only when available; Cancelar only while downloading; Reiniciar only when ready.
+   * Manual-only channels: all three hidden + disabled.
+   */
+  function computeUpdateActionButtons(st) {
+    const s = st || {};
+    const channel = s.channel || 'unknown';
+    const manual =
+      !!s.manualDownload ||
+      s.status === 'available-manual' ||
+      channel === 'deb' ||
+      channel === 'unknown';
+    const downloading = s.status === 'downloading';
+    const ready = s.status === 'ready' || !!s.canInstall;
+    const available =
+      !ready && !downloading && (s.status === 'available' || !!s.canDownload);
+    if (manual) {
+      return {
+        download: { visible: false, enabled: false },
+        cancel: { visible: false, enabled: false },
+        install: { visible: false, enabled: false },
+      };
+    }
+    return {
+      download: { visible: available, enabled: available },
+      cancel: { visible: downloading, enabled: downloading },
+      install: { visible: ready, enabled: ready },
+    };
+  }
+
+  function applyUpdateButton(btn, state) {
+    if (!btn || !state) return;
+    btn.classList.toggle('hidden', !state.visible);
+    btn.disabled = !state.enabled;
+  }
+
   function applyUpdatesStatus(st) {
     if (!st) return;
     const el = document.getElementById('updates-status');
@@ -1528,15 +1565,16 @@
         ? new Date(st.lastCheckAt).toLocaleString('pt-BR')
         : '—';
     }
-    const btnDl = document.getElementById('btn-download-update');
-    const btnInst = document.getElementById('btn-install-update');
-    const btnCancel = document.getElementById('btn-cancel-update');
+    const buttons = st.buttons || computeUpdateActionButtons(st);
+    applyUpdateButton(document.getElementById('btn-download-update'), buttons.download);
+    applyUpdateButton(document.getElementById('btn-cancel-update'), buttons.cancel);
+    applyUpdateButton(document.getElementById('btn-install-update'), buttons.install);
     const btnFolder = document.getElementById('btn-open-download-folder');
-    const showDl = !!(st.canDownload || (st.status === 'available' && !st.canInstall));
-    if (btnDl) btnDl.classList.toggle('hidden', !showDl);
-    if (btnInst) btnInst.classList.toggle('hidden', !st.canInstall);
-    if (btnCancel) btnCancel.classList.toggle('hidden', st.status !== 'downloading');
-    const showFolder = !!(st.notWritable || (st.status === 'error' && st.downloadPath));
+    // Portable download folder is Windows-only; never show on Linux.
+    const showFolder =
+      typeof navigator !== 'undefined' &&
+      /Win/i.test(navigator.platform || '') &&
+      !!(st.notWritable || (st.status === 'error' && st.downloadPath));
     if (btnFolder) btnFolder.classList.toggle('hidden', !showFolder);
     // btn-open-releases permanece sempre visível
   }
@@ -1590,8 +1628,8 @@
             ? await window.multiheiz.updatesDownload()
             : await window.multiheiz.updatesCheck();
           applyUpdatesStatus(r);
-        } finally {
-          btnDl.disabled = false;
+        } catch {
+          /* applyUpdatesStatus below if we have no r — leave disabled until refresh */
         }
       });
     }
@@ -1604,8 +1642,8 @@
             const r = await window.multiheiz.updatesCancel();
             applyUpdatesStatus(r);
           }
-        } finally {
-          btnCancel.disabled = false;
+        } catch {
+          /* keep disabled until next status */
         }
       });
     }

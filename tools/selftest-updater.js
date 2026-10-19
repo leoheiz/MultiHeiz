@@ -28,6 +28,7 @@ function installElectronStub(opts = {}) {
     app: {
       isPackaged: !!opts.isPackaged,
       getVersion: () => opts.version || '1.0.1',
+      getAppPath: () => opts.appPath || opts.tempDir || os.tmpdir(),
       getPath: (name) => {
         if (name === 'temp') return opts.tempDir || os.tmpdir();
         return opts.tempDir || os.tmpdir();
@@ -117,9 +118,145 @@ async function main() {
   console.log('PASS: portable detection (self-update channel)');
 
   assert(updater.isManualOnlyChannel('deb'), 'deb is manual');
+  assert(updater.isManualOnlyChannel('unknown'), 'unknown is manual (Releases page)');
   assert(!updater.isManualOnlyChannel('nsis'), 'nsis not manual');
   assert(!updater.isManualOnlyChannel('appimage'), 'appimage not manual');
-  console.log('PASS: portable/deb channel logic');
+  assert(!updater.isManualOnlyChannel('portable'), 'portable not manual');
+  console.log('PASS: portable/deb/unknown channel logic');
+
+  /* ---- Linux channel detection (opts overrides; no real platform switch) ---- */
+  assert(
+    updater.detectUpdateChannel({
+      platform: 'linux',
+      isPackaged: true,
+      env: { APPIMAGE: '/tmp/MultiHeiz.AppImage' },
+      execPath: '/tmp/squashfs-root/multiheiz',
+      appPath: '/tmp/squashfs-root/resources/app.asar',
+    }) === 'appimage',
+    'linux APPIMAGE -> appimage'
+  );
+  assert(
+    updater.detectUpdateChannel({
+      platform: 'linux',
+      isPackaged: true,
+      env: {},
+      execPath: '/opt/MultiHeiz/multiheiz',
+      appPath: '/opt/MultiHeiz/resources/app.asar',
+    }) === 'deb',
+    'linux /opt packaged -> deb'
+  );
+  assert(
+    updater.detectUpdateChannel({
+      platform: 'linux',
+      isPackaged: true,
+      env: {},
+      execPath: '/usr/lib/multiheiz/multiheiz',
+      appPath: '/usr/lib/multiheiz/resources/app.asar',
+    }) === 'deb',
+    'linux /usr/lib packaged -> deb'
+  );
+  assert(
+    updater.detectUpdateChannel({
+      platform: 'linux',
+      isPackaged: true,
+      env: {},
+      execPath: '/home/user/MultiHeiz/multiheiz',
+      appPath: '/home/user/MultiHeiz/resources/app.asar',
+    }) === 'unknown',
+    'linux packaged extracted dir -> unknown (not .deb)'
+  );
+  assert(
+    updater.detectUpdateChannel({
+      platform: 'linux',
+      isPackaged: false,
+      env: {},
+      execPath: '/home/user/dev/node_modules/electron/dist/electron',
+      appPath: '/home/user/dev',
+    }) === 'unknown',
+    'linux unpackaged -> unknown'
+  );
+  assert(
+    updater.channelLabel('unknown', { platform: 'linux' }) === updater.LINUX_UNKNOWN_LABEL,
+    'linux unknown label'
+  );
+  assert(
+    !/\.deb/i.test(updater.channelLabel('unknown', { platform: 'linux' })),
+    'linux unknown label must not say .deb'
+  );
+  assert(
+    updater.detectUpdateChannel({
+      platform: 'linux',
+      isPackaged: true,
+      env: { PORTABLE_EXECUTABLE_DIR: '/tmp/portable' },
+      execPath: '/home/user/extracted/multiheiz',
+      appPath: '/home/user/extracted/resources/app.asar',
+    }) === 'unknown',
+    'linux ignores Windows portable env -> unknown'
+  );
+  console.log('PASS: Linux channel detect (appimage / deb /opt /usr/lib / unknown)');
+
+  /* ---- Update action button state ---- */
+  const btnsIdle = updater.computeUpdateActionButtons({
+    status: 'up-to-date',
+    channel: 'nsis',
+    canDownload: false,
+    canInstall: false,
+  });
+  assert(!btnsIdle.download.visible && !btnsIdle.download.enabled, 'up-to-date: Baixar off');
+  assert(!btnsIdle.cancel.visible && !btnsIdle.cancel.enabled, 'up-to-date: Cancelar off');
+  assert(!btnsIdle.install.visible && !btnsIdle.install.enabled, 'up-to-date: Reiniciar off');
+
+  const btnsAvail = updater.computeUpdateActionButtons({
+    status: 'available',
+    channel: 'appimage',
+    canDownload: true,
+    canInstall: false,
+  });
+  assert(btnsAvail.download.visible && btnsAvail.download.enabled, 'available: Baixar on');
+  assert(!btnsAvail.cancel.enabled, 'available: Cancelar off');
+  assert(!btnsAvail.install.enabled, 'available: Reiniciar off');
+
+  const btnsDl = updater.computeUpdateActionButtons({
+    status: 'downloading',
+    channel: 'nsis',
+    canDownload: false,
+    canInstall: false,
+  });
+  assert(!btnsDl.download.enabled, 'downloading: Baixar off');
+  assert(btnsDl.cancel.visible && btnsDl.cancel.enabled, 'downloading: Cancelar on');
+  assert(!btnsDl.install.enabled, 'downloading: Reiniciar off');
+
+  const btnsReady = updater.computeUpdateActionButtons({
+    status: 'ready',
+    channel: 'nsis',
+    canDownload: false,
+    canInstall: true,
+  });
+  assert(!btnsReady.download.enabled, 'ready: Baixar off');
+  assert(!btnsReady.cancel.enabled, 'ready: Cancelar off');
+  assert(btnsReady.install.visible && btnsReady.install.enabled, 'ready: Reiniciar on');
+
+  const btnsDeb = updater.computeUpdateActionButtons({
+    status: 'available-manual',
+    channel: 'deb',
+    canDownload: false,
+    canInstall: false,
+    manualDownload: true,
+  });
+  assert(!btnsDeb.download.visible && !btnsDeb.cancel.visible && !btnsDeb.install.visible, 'deb: all hidden');
+
+  const btnsUnk = updater.computeUpdateActionButtons({
+    status: 'available-manual',
+    channel: 'unknown',
+    canDownload: true,
+    canInstall: true,
+    manualDownload: true,
+  });
+  assert(
+    !btnsUnk.download.enabled && !btnsUnk.cancel.enabled && !btnsUnk.install.enabled,
+    'unknown Linux: buttons disabled even if flags set'
+  );
+  console.log('PASS: update action button state logic');
 
   assert(updater.compareSemver('1.0.10', '1.0.9') > 0, '1.0.10 > 1.0.9');
   assert(updater.compareSemver('1.0.1', '1.1.0') < 0, '1.0.1 < 1.1.0');

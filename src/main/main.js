@@ -129,24 +129,31 @@ process.on('uncaughtException', (err) => {
  * can keep media/timers alive when opted in — Win occlusion would freeze parked panels otherwise.
  * Intentionally NOT setting disable-background-timer-throttling: without the per-window option,
  * Chromium + webContents.setBackgroundThrottling(true) must be able to limit hidden panels.
+ * CalculateNativeWinOcclusion and force_high_performance_gpu are Windows-only.
  */
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling');
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling');
+} else {
+  app.commandLine.appendSwitch('disable-features', 'IntensiveWakeUpThrottling');
+}
 
-// Prefer high-performance GPU when enabled (needs restart to take effect)
-try {
-  const fsEarly = require('node:fs');
-  const stateFile = path.join(app.getPath('userData'), 'multiheiz-state.json');
-  if (fsEarly.existsSync(stateFile)) {
-    const raw = fsEarly.readFileSync(stateFile, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.settings && parsed.settings.preferHighPerfGpu) {
-      app.commandLine.appendSwitch('force_high_performance_gpu');
+// Prefer high-performance GPU when enabled (needs restart to take effect) — Windows only
+if (process.platform === 'win32') {
+  try {
+    const fsEarly = require('node:fs');
+    const stateFile = path.join(app.getPath('userData'), 'multiheiz-state.json');
+    if (fsEarly.existsSync(stateFile)) {
+      const raw = fsEarly.readFileSync(stateFile, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.settings && parsed.settings.preferHighPerfGpu) {
+        app.commandLine.appendSwitch('force_high_performance_gpu');
+      }
     }
+  } catch {
+    /* ignore */
   }
-} catch {
-  /* ignore */
 }
 
 const selftestMode = envGet('MULTIHEIZ_SELFTEST') || '';

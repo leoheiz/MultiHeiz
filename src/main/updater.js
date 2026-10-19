@@ -23,6 +23,9 @@ const CHANNEL_LABELS = {
   dev: 'Desenvolvimento',
 };
 
+/** Label for Linux unpackaged / extracted / non-dpkg installs (never ".deb"). */
+const LINUX_UNKNOWN_LABEL = 'Linux (não instalado / dev)';
+
 /** @type {{
  *   status: string,
  *   message: string,
@@ -66,19 +69,69 @@ let autoCheckTimer = null;
 let handlersBound = false;
 
 /**
- * Portable Windows exe or Linux .deb cannot use electron-updater install.
- * AppImage sets process.env.APPIMAGE; NSIS is the default win installed case.
+ * True when path looks like a dpkg-installed Electron app (/opt/… or /usr/lib/…).
+ * @param {string} p
  */
-function detectUpdateChannel() {
-  if (process.env.MULTIHEIZ_FAKE_PORTABLE_FILE || process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE) {
-    return 'portable';
+function isLinuxDebInstallPath(p) {
+  const norm = String(p || '').replace(/\\/g, '/');
+  if (!norm) return false;
+  return (
+    norm.startsWith('/opt/') ||
+    norm === '/opt' ||
+    norm.startsWith('/usr/lib/') ||
+    norm === '/usr/lib' ||
+    norm.includes('/usr/lib/')
+  );
+}
+
+/**
+ * Portable Windows exe, Linux AppImage / .deb / unknown.
+ * AppImage sets process.env.APPIMAGE; .deb only when packaged under /opt or /usr/lib.
+ * Portable env vars are Windows-only (PowerShell helper must never run on Linux).
+ *
+ * @param {{
+ *   platform?: string,
+ *   isPackaged?: boolean,
+ *   env?: NodeJS.ProcessEnv,
+ *   execPath?: string,
+ *   appPath?: string,
+ * }} [opts]  Optional overrides for selftests.
+ */
+function detectUpdateChannel(opts) {
+  const o = opts || {};
+  const platform = o.platform != null ? o.platform : process.platform;
+  const env = o.env || process.env;
+  const isPackaged = o.isPackaged != null ? o.isPackaged : !!(app && app.isPackaged);
+  const execPath = o.execPath != null ? o.execPath : process.execPath || '';
+  let appPath = o.appPath;
+  if (appPath == null) {
+    try {
+      appPath = app && typeof app.getAppPath === 'function' ? app.getAppPath() : '';
+    } catch {
+      appPath = '';
+    }
   }
-  if (process.platform === 'linux') {
-    if (process.env.APPIMAGE) return 'appimage';
-    if (app.isPackaged) return 'deb';
+
+  // Portable self-update is Windows-only (PowerShell).
+  if (platform === 'win32') {
+    if (env.MULTIHEIZ_FAKE_PORTABLE_FILE || env.PORTABLE_EXECUTABLE_DIR || env.PORTABLE_EXECUTABLE_FILE) {
+      return 'portable';
+    }
+  }
+
+  if (platform === 'linux') {
+    if (env.APPIMAGE) return 'appimage';
+    if (isPackaged) {
+      if (isLinuxDebInstallPath(execPath) || isLinuxDebInstallPath(appPath)) {
+        return 'deb';
+      }
+      // Packaged but extracted AppImage / loose dir — not a dpkg install.
+      return 'unknown';
+    }
     return 'unknown';
   }
-  if (process.platform === 'win32' && app.isPackaged) {
+
+  if (platform === 'win32' && isPackaged) {
     return 'nsis';
   }
   return 'unknown';
@@ -86,11 +139,63 @@ function detectUpdateChannel() {
 
 /** Channels that only open the Releases page (no in-app download). */
 function isManualOnlyChannel(channel) {
-  return channel === 'deb';
+  return channel === 'deb' || channel === 'unknown';
 }
 
-function channelLabel(channel) {
+/**
+ * @param {string} channel
+ * @param {{ platform?: string }} [opts]
+ */
+function channelLabel(channel, opts) {
+  const platform = (opts && opts.platform) || process.platform;
+  if (channel === 'unknown' && platform === 'linux') {
+    return LINUX_UNKNOWN_LABEL;
+  }
   return CHANNEL_LABELS[channel] || CHANNEL_LABELS.unknown;
+}
+
+/**
+ * Visibility / enabled state for Settings → Atualizações action buttons.
+ * Baixar: only when update available and not downloading.
+ * Cancelar: only while downloading.
+ * Reiniciar: only when downloaded (ready).
+ * Manual-only channels: all three hidden + disabled.
+ *
+ * @param {object} st  updater status payload
+ * @returns {{
+ *   download: { visible: boolean, enabled: boolean },
+ *   cancel: { visible: boolean, enabled: boolean },
+ *   install: { visible: boolean, enabled: boolean },
+ * }}
+ */
+function computeUpdateActionButtons(st) {
+  const s = st || {};
+  const channel = s.channel || 'unknown';
+  const manual =
+    !!s.manualDownload ||
+    s.status === 'available-manual' ||
+    isManualOnlyChannel(channel);
+
+  const downloading = s.status === 'downloading';
+  const ready = s.status === 'ready' || !!s.canInstall;
+  const available =
+    !ready &&
+    !downloading &&
+    (s.status === 'available' || !!s.canDownload);
+
+  if (manual) {
+    return {
+      download: { visible: false, enabled: false },
+      cancel: { visible: false, enabled: false },
+      install: { visible: false, enabled: false },
+    };
+  }
+
+  return {
+    download: { visible: available, enabled: available },
+    cancel: { visible: downloading, enabled: downloading },
+    install: { visible: ready, enabled: ready },
+  };
 }
 
 function setStatus(partial) {
@@ -107,6 +212,7 @@ function setStatus(partial) {
     channelLabel: channelLabel(ch),
     currentVersion: app.getVersion(),
   };
+  lastStatus.buttons = computeUpdateActionButtons(lastStatus);
   if (typeof emitFn === 'function') {
     emitFn({ type: 'updates:status', ...lastStatus });
   }
@@ -114,12 +220,15 @@ function setStatus(partial) {
 }
 
 function getStatus() {
-  return {
+  const channel = lastStatus.channel || detectUpdateChannel();
+  const base = {
     ...lastStatus,
-    channel: lastStatus.channel || detectUpdateChannel(),
-    channelLabel: channelLabel(lastStatus.channel || detectUpdateChannel()),
+    channel,
+    channelLabel: channelLabel(channel),
     currentVersion: app.getVersion(),
   };
+  base.buttons = computeUpdateActionButtons(base);
+  return base;
 }
 
 function getAutoCheckEnabled(getState) {
@@ -253,6 +362,19 @@ async function checkForUpdates(opts) {
   logger.info('updates:check', { channel });
 
   if (channel === 'portable') {
+    if (process.platform !== 'win32') {
+      return setStatus({
+        status: 'error',
+        message: 'Atualização portátil só está disponível no Windows',
+        version: null,
+        percent: null,
+        canInstall: false,
+        canDownload: false,
+        manualDownload: true,
+        channel: 'unknown',
+        lastCheckAt: Date.now(),
+      });
+    }
     const r = await portable.checkPortableUpdate({ logger });
     const checkedAt = Date.now();
     if (!r.ok) {
@@ -437,6 +559,16 @@ async function checkForUpdates(opts) {
 async function downloadUpdate() {
   const channel = detectUpdateChannel();
   if (channel === 'portable') {
+    if (process.platform !== 'win32') {
+      return setStatus({
+        status: 'error',
+        message: 'Atualização portátil só está disponível no Windows',
+        canDownload: false,
+        canInstall: false,
+        manualDownload: true,
+        channel: 'unknown',
+      });
+    }
     let asset = portable.getPendingAsset();
     if (!asset) {
       const checked = await portable.checkPortableUpdate({ logger });
@@ -615,6 +747,9 @@ function bindAutoUpdaterEvents(autoUpdater) {
 function quitAndInstall() {
   const channel = detectUpdateChannel();
   if (channel === 'portable') {
+    if (process.platform !== 'win32') {
+      return { ok: false, error: 'Atualização portátil só está disponível no Windows' };
+    }
     const r = portable.applyPortableAndRelaunch({ logger });
     if (!r.ok) {
       logger.error('updates:portable apply failed', { error: r.error });
@@ -667,7 +802,7 @@ function initUpdater(ctx) {
     status: lastStatus.status || 'idle',
   });
 
-  if (channel === 'portable') {
+  if (channel === 'portable' && process.platform === 'win32') {
     portable.cleanupPortableLeftovers(logger);
   }
 
@@ -697,24 +832,40 @@ function initUpdater(ctx) {
     return { ok: st.status !== 'error', ...st };
   });
   ipcMain.handle('updates:cancel', () => {
-    portable.cancelDownload();
     const ch = detectUpdateChannel();
-    if (ch === 'portable' && lastStatus.version) {
-      setStatus({
-        status: 'available',
-        message: `Nova versão ${lastStatus.version} disponível`,
-        canDownload: true,
-        canInstall: false,
-        percent: null,
-        bytesPerSecond: null,
-        channel: ch,
-      });
+    if (ch === 'portable' && process.platform === 'win32') {
+      portable.cancelDownload();
+      if (lastStatus.version) {
+        setStatus({
+          status: 'available',
+          message: `Nova versão ${lastStatus.version} disponível`,
+          canDownload: true,
+          canInstall: false,
+          percent: null,
+          bytesPerSecond: null,
+          channel: ch,
+        });
+      }
+    } else {
+      try {
+        const autoUpdater = getAutoUpdater();
+        if (autoUpdater && typeof autoUpdater.cancel === 'function') {
+          autoUpdater.cancel();
+        }
+      } catch {
+        /* ignore */
+      }
     }
     return { ok: true, ...getStatus() };
   });
   ipcMain.handle('updates:install', () => quitAndInstall());
   ipcMain.handle('updates:open-releases', () => openReleasesPage());
-  ipcMain.handle('updates:open-download', () => portable.openDownloadedFolder());
+  ipcMain.handle('updates:open-download', () => {
+    if (process.platform !== 'win32') {
+      return { ok: false, error: 'Pasta de download portátil só no Windows' };
+    }
+    return portable.openDownloadedFolder();
+  });
   ipcMain.handle('updates:get-channel', () => {
     const ch = detectUpdateChannel();
     return {
@@ -798,6 +949,8 @@ module.exports = {
   getStatus,
   detectUpdateChannel,
   isManualOnlyChannel,
+  isLinuxDebInstallPath,
+  computeUpdateActionButtons,
   quitAndInstall,
   openReleasesPage,
   getAutoCheckEnabled,
@@ -807,6 +960,7 @@ module.exports = {
   resetStatusForTest,
   channelLabel,
   CHANNEL_LABELS,
+  LINUX_UNKNOWN_LABEL,
   GITHUB_OWNER,
   GITHUB_REPO,
   RELEASES_URL,
