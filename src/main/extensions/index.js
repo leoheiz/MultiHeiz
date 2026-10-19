@@ -12,7 +12,7 @@ const path = require('node:path');
 const { app, ipcMain, dialog } = require('electron');
 const store = require('./store');
 const { buildRecord } = require('./manifest');
-const { unpackCrxToDir, packDirAsCrx3 } = require('./crx');
+const { unpackCrxToDir, packDirAsCrx3, buildCrx3TestFixtures } = require('./crx');
 const { parseStoreInput, downloadCrx } = require('./download');
 const loader = require('./loader');
 const popup = require('./popup');
@@ -173,11 +173,14 @@ async function installFromCrxBuffer(buf, opts = {}) {
   const tmpRoot = path.join(app.getPath('temp'), 'multiheiz-crx-' + Date.now());
   fs.mkdirSync(tmpRoot, { recursive: true });
   try {
-    unpackCrxToDir(buf, tmpRoot);
+    const unpacked = unpackCrxToDir(buf, tmpRoot, {
+      expectedId: opts.storeId || null,
+    });
+    const preferredId = opts.storeId || unpacked.extensionId;
     return await installFromUnpacked(tmpRoot, {
       source: opts.source || 'crx',
       storeId: opts.storeId,
-      preferredId: opts.storeId,
+      preferredId,
       applyTo: opts.applyTo,
     });
   } finally {
@@ -425,23 +428,25 @@ function registerIpc() {
     };
   });
 
-  // Selftest helpers (always registered; harmless in production)
-  ipcMain.handle('extensions:selftest-install-unpacked', async (_e, dirPath) => {
-    try {
-      const rec = await installFromUnpacked(String(dirPath));
-      return { ok: true, extension: rec };
-    } catch (err) {
-      return { ok: false, error: err && err.message ? err.message : String(err) };
-    }
-  });
-  ipcMain.handle('extensions:selftest-install-crx', async (_e, crxPath) => {
-    try {
-      const rec = await installFromCrxFile(String(crxPath));
-      return { ok: true, extension: rec };
-    } catch (err) {
-      return { ok: false, error: err && err.message ? err.message : String(err) };
-    }
-  });
+  // Path-based install helpers — only when MULTIHEIZ_SELFTEST is set
+  if (process.env.MULTIHEIZ_SELFTEST) {
+    ipcMain.handle('extensions:selftest-install-unpacked', async (_e, dirPath) => {
+      try {
+        const rec = await installFromUnpacked(String(dirPath));
+        return { ok: true, extension: rec };
+      } catch (err) {
+        return { ok: false, error: err && err.message ? err.message : String(err) };
+      }
+    });
+    ipcMain.handle('extensions:selftest-install-crx', async (_e, crxPath) => {
+      try {
+        const rec = await installFromCrxFile(String(crxPath));
+        return { ok: true, extension: rec };
+      } catch (err) {
+        return { ok: false, error: err && err.message ? err.message : String(err) };
+      }
+    });
+  }
   ipcMain.handle('extensions:selftest-loaded', (_e, accountId) => {
     return loader.listLoaded(accountId);
   });
@@ -490,6 +495,7 @@ module.exports = {
   openOptionsPage: (...args) => popup.openOptionsPage(...args),
   packDirAsCrx3,
   unpackCrxToDir,
+  buildCrx3TestFixtures,
   parseStoreInput,
   coexistenceHint,
   activeNetworkBlockers,

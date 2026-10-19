@@ -71,6 +71,7 @@ function clearUpdaterModules() {
 
 async function main() {
   console.log('MultiHeiz selftest:updater');
+  process.env.MULTIHEIZ_SELFTEST = 'updater';
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-upd-'));
   const stub = installElectronStub({
     isPackaged: false,
@@ -207,6 +208,22 @@ async function main() {
       res.end(body);
       return;
     }
+    if (url === '/no-hash') {
+      const body = JSON.stringify({
+        tag_name: 'v' + remoteVer,
+        assets: [
+          {
+            name: assetName,
+            size: fakeBytes.length,
+            browser_download_url: `http://127.0.0.1:${serverPort}/download/${assetName}`,
+            url: `http://127.0.0.1:${serverPort}/download/${assetName}`,
+          },
+        ],
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(body);
+      return;
+    }
     if (url.startsWith('/download/')) {
       res.writeHead(200, {
         'Content-Type': 'application/octet-stream',
@@ -292,6 +309,14 @@ async function main() {
   assert(/Hash|SHA/i.test(bad.error || ''), 'hash error message: ' + bad.error);
   console.log('PASS: hash mismatch -> error');
 
+  /* No cryptographic hash => refuse */
+  updater.portable.resetPortableStateForTest();
+  process.env.MULTIHEIZ_UPDATE_FEED_URL = `http://127.0.0.1:${serverPort}/no-hash`;
+  const noHash = await updater.portable.checkPortableUpdate({ logger: null });
+  assert(!noHash.ok, 'no-hash feed should be refused');
+  assert(/hash|SHA/i.test(noHash.error || ''), 'no-hash message: ' + noHash.error);
+  console.log('PASS: missing hash -> refuse');
+
   await new Promise((resolve) => server.close(resolve));
 
   delete process.env.MULTIHEIZ_UPDATE_FEED_URL;
@@ -299,6 +324,7 @@ async function main() {
   delete process.env.MULTIHEIZ_FORCE_PACKAGED;
   delete process.env.MULTIHEIZ_PORTABLE_SKIP_PID_WAIT;
   delete process.env.MULTIHEIZ_PORTABLE_RELAUNCH_CMD;
+  delete process.env.MULTIHEIZ_SELFTEST;
 
   try {
     fs.rmSync(tempRoot, { recursive: true, force: true });

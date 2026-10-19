@@ -1,0 +1,355 @@
+'use strict';
+
+/**
+ * Security selftest (phase 1.2.0-c).
+ * Node unit checks + Electron spawn (MULTIHEIZ_SELFTEST=security).
+ * Uso: npm run selftest:security
+ */
+
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const Module = require('node:module');
+
+const root = path.join(__dirname, '..');
+const electronBin = require('electron');
+
+function assert(cond, msg) {
+  if (!cond) {
+    console.log('FAIL:', msg);
+    process.exit(1);
+  }
+}
+
+function installElectronStub(opts = {}) {
+  const electronPath = require.resolve('electron');
+  const handled = [];
+  const stub = {
+    app: {
+      isPackaged: !!opts.isPackaged,
+      getVersion: () => opts.version || '1.2.0',
+      getPath: (name) => {
+        if (name === 'userData') return opts.userData || opts.tempDir || os.tmpdir();
+        if (name === 'temp') return opts.tempDir || os.tmpdir();
+        if (name === 'downloads') return path.join(opts.tempDir || os.tmpdir(), 'Downloads');
+        return opts.tempDir || os.tmpdir();
+      },
+      on() {},
+      quit() {},
+    },
+    ipcMain: {
+      handle(ch) {
+        handled.push(ch);
+      },
+      on() {},
+      removeHandler() {},
+    },
+    shell: {
+      openExternal() {},
+      showItemInFolder() {},
+      openPath: async () => '',
+    },
+    dialog: {
+      showMessageBox: async () => ({ response: 1 }),
+      showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
+    },
+    session: {
+      defaultSession: {
+        setPermissionRequestHandler() {},
+        setPermissionCheckHandler() {},
+      },
+      fromPartition() {
+        return {
+          setPermissionRequestHandler() {},
+          setPermissionCheckHandler() {},
+        };
+      },
+    },
+    BrowserWindow: function BrowserWindow() {},
+    WebContentsView: function WebContentsView() {},
+    _handled: handled,
+  };
+  require.cache[electronPath] = {
+    id: electronPath,
+    filename: electronPath,
+    loaded: true,
+    exports: stub,
+  };
+  const orig = Module._resolveFilename;
+  Module._resolveFilename = function (request, parent, isMain, options) {
+    if (request === 'electron') return electronPath;
+    return orig.call(this, request, parent, isMain, options);
+  };
+  return stub;
+}
+
+function clearModuleMatch(re) {
+  for (const key of Object.keys(require.cache)) {
+    if (re.test(key.replace(/\\/g, '/'))) delete require.cache[key];
+  }
+}
+
+async function runNodeChecks() {
+  console.log('MultiHeiz selftest:security (node)');
+  process.env.MULTIHEIZ_SELFTEST = 'security';
+
+  const urlPolicy = require('../src/main/url-policy');
+  for (const bad of [
+    'file:///C:/Windows',
+    'javascript:alert(1)',
+    'data:text/html,x',
+    'chrome://settings',
+    'view-source:https://example.com',
+    'myapp:foo',
+  ]) {
+    assert(urlPolicy.classifyScheme(bad) === 'blocked', 'blocked: ' + bad);
+    assert(!urlPolicy.isNavigableUrl(bad), 'not navigable: ' + bad);
+  }
+  assert(urlPolicy.classifyScheme('mailto:a@b.com') === 'external', 'mailto external');
+  assert(urlPolicy.classifyScheme('https://example.com') === 'web', 'https web');
+  assert(urlPolicy.classifyScheme('http://example.com') === 'web', 'http web');
+  console.log('PASS: url-policy schemes');
+
+  const searchUrl = require('../src/main/search-url');
+  const settings = { searchEngine: 'google' };
+  const fileNav = searchUrl.resolveNavigateUrl('file:///C:/Windows', settings);
+  assert(fileNav && !fileNav.startsWith('file:'), 'file becomes search not navigate');
+  assert(/google|search|q=/i.test(fileNav) || fileNav.includes('%'), 'file search url: ' + fileNav);
+  const jsNav = searchUrl.resolveNavigateUrl('javascript:alert(1)', settings);
+  assert(jsNav && !jsNav.startsWith('javascript:'), 'javascript becomes search');
+  console.log('PASS: address bar file/javascript -> search');
+
+  assert(!urlPolicy.isKnownIdentityProviderUrl('https://evil.example/oauth'), 'evil oauth');
+  assert(!urlPolicy.isKnownIdentityProviderUrl('https://accounts.evil.example/'), 'evil accounts');
+  assert(
+    urlPolicy.isKnownIdentityProviderUrl('https://accounts.google.com/o/oauth2/v2/auth'),
+    'google oauth'
+  );
+  console.log('PASS: OAuth IdP allowlist');
+
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-sec-'));
+  const userData = path.join(tempRoot, 'userData');
+  fs.mkdirSync(userData, { recursive: true });
+  installElectronStub({ tempDir: tempRoot, userData });
+  clearModuleMatch(/\/src\/main\/safe-open-path/);
+  const safeOpen = require('../src/main/safe-open-path');
+  assert(!safeOpen.assertAllowedPath('C:\\Windows\\System32').ok, 'System32 rejected');
+  assert(
+    !safeOpen.assertAllowedPath(path.join(userData, '..', '..', 'Windows')).ok,
+    '.. rejected'
+  );
+  assert(safeOpen.assertAllowedPath(userData).ok, 'userData allowed');
+  console.log('PASS: app:open-path rejects System32 and ..');
+
+  delete process.env.MULTIHEIZ_SELFTEST;
+  clearModuleMatch(/\/src\/main\/extensions/);
+  const stub2 = installElectronStub({ tempDir: tempRoot, userData });
+  try {
+    const extensions = require('../src/main/extensions');
+    extensions.init({
+      emit() {},
+      getAccountIds: () => [],
+      getMainWindow: () => null,
+    });
+    const handled = stub2._handled || [];
+    assert(!handled.includes('extensions:selftest-install-unpacked'), 'no unpacked selftest ipc');
+    assert(!handled.includes('extensions:selftest-install-crx'), 'no crx selftest ipc');
+    console.log('PASS: extensions selftest-install-* absent without SELFTEST');
+  } catch (err) {
+    const extSrc = fs.readFileSync(path.join(root, 'src', 'main', 'extensions', 'index.js'), 'utf8');
+    assert(
+      /if\s*\(\s*process\.env\.MULTIHEIZ_SELFTEST\s*\)[\s\S]*?selftest-install-unpacked/.test(extSrc),
+      'source gate extensions: ' + (err && err.message)
+    );
+    console.log('PASS: extensions selftest-install gated (source)');
+  }
+  const mainSrc = fs.readFileSync(path.join(root, 'src', 'main', 'main.js'), 'utf8');
+  assert(
+    /if\s*\(\s*process\.env\.MULTIHEIZ_SELFTEST\s*\)\s*\{[\s\S]{0,240}?selftest:renderer/.test(mainSrc),
+    'selftest:renderer gated'
+  );
+  console.log('PASS: selftest:renderer gated on MULTIHEIZ_SELFTEST');
+  process.env.MULTIHEIZ_SELFTEST = 'security';
+
+  clearModuleMatch(/\/src\/main\/ipc-guard/);
+  installElectronStub({ tempDir: tempRoot, userData });
+  clearModuleMatch(/\/src\/main\/ipc-guard/);
+  const ipcGuard = require('../src/main/ipc-guard');
+  const indexUrl = ipcGuard.getAppRendererFileUrl();
+  const uiWc = { id: 1 };
+  const panelWc = { id: 99 };
+  ipcGuard.configure({
+    getMainWindow: () => ({ isDestroyed: () => false, webContents: uiWc }),
+    isPanelWebContents: (wc) => wc === panelWc,
+  });
+  assert(
+    ipcGuard.isAllowedIpc({ sender: uiWc, senderFrame: { url: indexUrl } }, 'state:get'),
+    'UI allowed'
+  );
+  assert(
+    !ipcGuard.isAllowedIpc(
+      { sender: panelWc, senderFrame: { url: 'https://x.com/' } },
+      'state:get'
+    ),
+    'panel UI rejected'
+  );
+  assert(
+    !ipcGuard.isAllowedIpc({ sender: panelWc, senderFrame: null }, 'state:get'),
+    'null frame rejected'
+  );
+  console.log('PASS: IPC guard rejects unknown frames');
+
+  clearModuleMatch(/\/src\/main\/permissions/);
+  installElectronStub({ tempDir: tempRoot, userData });
+  clearModuleMatch(/\/src\/main\/permissions/);
+  const permissions = require('../src/main/permissions');
+  permissions.clearDecisionsForTest();
+  assert(permissions.checkPermission('a', 'geolocation', 'https://a.com') === false, 'geo');
+  assert(permissions.checkPermission('a', 'media', 'https://a.com') === false, 'media');
+  assert(permissions.checkPermission('a', 'usb', 'https://a.com') === false, 'usb');
+  assert(permissions.checkPermission('a', 'hid', 'https://a.com') === false, 'hid');
+  assert(permissions.checkPermission('a', 'serial', 'https://a.com') === false, 'serial');
+  console.log('PASS: permissions geo/media not auto, usb/hid/serial deny');
+
+  clearModuleMatch(/\/src\/main\/portable-update/);
+  installElectronStub({ tempDir: tempRoot, userData, isPackaged: true });
+  clearModuleMatch(/\/src\/main\/portable-update/);
+  const portable = require('../src/main/portable-update');
+  assert(!portable.verifyAssetHash(Buffer.from('x'), { size: 1 }).ok, 'manifest without hash');
+  const payload = Buffer.from('portable-bytes');
+  const sha256 = crypto.createHash('sha256').update(payload).digest('hex');
+  assert(
+    !portable.verifyAssetHash(payload, { digest: 'sha256:' + '00'.repeat(32) }).ok,
+    'wrong hash'
+  );
+  assert(portable.verifyAssetHash(payload, { digest: 'sha256:' + sha256 }).ok, 'correct hash');
+  let hostFail = false;
+  try {
+    portable.assertAllowedUpdateUrl('https://evil.example/x');
+  } catch {
+    hostFail = true;
+  }
+  assert(hostFail, 'host outside allowlist');
+  let httpFail = false;
+  try {
+    portable.assertAllowedUpdateUrl('http://objects.githubusercontent.com/x');
+  } catch {
+    httpFail = true;
+  }
+  assert(httpFail, 'https->http (http download host) refused');
+
+  const server = http.createServer((req, res) => {
+    if ((req.url || '').startsWith('/start')) {
+      res.writeHead(302, { Location: 'http://evil.example/payload' });
+      res.end();
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  let redirectFail = false;
+  try {
+    await portable.httpGetBuffer(`http://127.0.0.1:${port}/start`);
+  } catch {
+    redirectFail = true;
+  }
+  assert(redirectFail, 'redirect to non-allowlisted host refused');
+  await new Promise((r) => server.close(r));
+  console.log('PASS: portable-update hash/redirect/host');
+
+  const crx = require('../src/main/extensions/crx');
+  const fixtures = crx.buildCrx3TestFixtures();
+  assert(
+    !!crx.verifyAndStripCrx3(fixtures.valid.buffer, { expectedId: fixtures.valid.extensionId }).zip,
+    'valid CRX3'
+  );
+  let t = false;
+  try {
+    crx.verifyAndStripCrx3(fixtures.tampered.buffer, { expectedId: fixtures.tampered.extensionId });
+  } catch {
+    t = true;
+  }
+  assert(t, 'tampered CRX3');
+  let w = false;
+  try {
+    crx.verifyAndStripCrx3(fixtures.wrongId.buffer, { expectedId: fixtures.wrongId.expectedId });
+  } catch {
+    w = true;
+  }
+  assert(w, 'wrong id CRX3');
+  let c2 = false;
+  try {
+    crx.verifyAndStripCrx3(fixtures.crx2.buffer);
+  } catch {
+    c2 = true;
+  }
+  assert(c2, 'CRX2 refused');
+  console.log('PASS: CRX3 fixtures');
+
+  try {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+}
+
+function runElectronPhase() {
+  return new Promise((resolve, reject) => {
+    const userdata = fs.mkdtempSync(path.join(os.tmpdir(), 'multiheiz-sec-'));
+    const env = {
+      ...process.env,
+      MULTIHEIZ_USERDATA: userdata,
+      MULTIHEIZ_SELFTEST: 'security',
+      ELECTRON_ENABLE_LOGGING: '1',
+    };
+    console.log('\n=== selftest:security electron ===');
+    const child = spawn(electronBin, ['.'], {
+      cwd: root,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    const onData = (buf) => {
+      const s = buf.toString();
+      out += s;
+      process.stdout.write(s);
+    };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('security electron selftest timed out'));
+    }, 180000);
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      try {
+        fs.rmSync(userdata, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+      if (code === 0) resolve(out);
+      else reject(new Error('security electron exited with code ' + code));
+    });
+  });
+}
+
+async function main() {
+  await runNodeChecks();
+  await runElectronPhase();
+  console.log('PASS: selftest:security complete');
+  process.exit(0);
+}
+
+main().catch((err) => {
+  console.error('FAIL:', err && err.message ? err.message : err);
+  process.exit(1);
+});

@@ -1,11 +1,12 @@
 'use strict';
 
 const https = require('node:https');
-const http = require('node:http');
 const { URL } = require('node:url');
 
 const CHROME_ID_RE = /^[a-p]{32}$/i;
 const EDGE_ID_RE = /^[a-z0-9]{32}$/i;
+const MAX_REDIRECTS = 5;
+const MAX_CRX_BYTES = 100 * 1024 * 1024; // 100 MB
 
 /**
  * @param {string} input
@@ -67,12 +68,12 @@ function edgeUpdateUrl(id) {
 }
 
 /**
- * Follow redirects and return body buffer.
+ * Follow HTTPS-only redirects and return body buffer (size-capped).
  * @param {string} url
  * @param {number} [maxRedirects]
  * @returns {Promise<Buffer>}
  */
-function fetchBuffer(url, maxRedirects = 8) {
+function fetchBuffer(url, maxRedirects = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
     const go = (u, left) => {
       let parsed;
@@ -82,8 +83,11 @@ function fetchBuffer(url, maxRedirects = 8) {
         reject(err);
         return;
       }
-      const lib = parsed.protocol === 'http:' ? http : https;
-      const req = lib.get(
+      if (parsed.protocol !== 'https:') {
+        reject(new Error('Download CRX exige HTTPS (redirect HTTP rejeitado)'));
+        return;
+      }
+      const req = https.get(
         u,
         {
           headers: {
@@ -100,8 +104,18 @@ function fetchBuffer(url, maxRedirects = 8) {
               reject(new Error('Muitos redirecionamentos no download CRX'));
               return;
             }
-            const next = new URL(res.headers.location, u).href;
-            go(next, left - 1);
+            let next;
+            try {
+              next = new URL(res.headers.location, u);
+            } catch (err) {
+              reject(err);
+              return;
+            }
+            if (next.protocol !== 'https:') {
+              reject(new Error('Download CRX exige HTTPS (redirect HTTP rejeitado)'));
+              return;
+            }
+            go(next.href, left - 1);
             return;
           }
           if (code < 200 || code >= 300) {
@@ -109,9 +123,24 @@ function fetchBuffer(url, maxRedirects = 8) {
             reject(new Error(`Download CRX falhou HTTP ${code}`));
             return;
           }
+          const declared = Number(res.headers['content-length']) || 0;
+          if (declared > MAX_CRX_BYTES) {
+            res.resume();
+            reject(new Error('Download CRX excede limite de 100 MB'));
+            return;
+          }
           /** @type {Buffer[]} */
           const chunks = [];
-          res.on('data', (c) => chunks.push(c));
+          let total = 0;
+          res.on('data', (c) => {
+            total += c.length;
+            if (total > MAX_CRX_BYTES) {
+              req.destroy();
+              reject(new Error('Download CRX excede limite de 100 MB'));
+              return;
+            }
+            chunks.push(c);
+          });
           res.on('end', () => resolve(Buffer.concat(chunks)));
           res.on('error', reject);
         }
@@ -145,4 +174,6 @@ module.exports = {
   downloadCrx,
   fetchBuffer,
   CHROME_ID_RE,
+  MAX_CRX_BYTES,
+  MAX_REDIRECTS,
 };

@@ -1,14 +1,20 @@
 'use strict';
 
 const path = require('node:path');
-const { WebContentsView, BrowserWindow, session, shell } = require('electron');
+const { WebContentsView, BrowserWindow, session, shell, dialog } = require('electron');
 const { getState, updateState } = require('./state');
 const { resolveNavigateUrl } = require('./search-url');
+const {
+  classifyScheme,
+  isNavigableUrl,
+  isKnownIdentityProviderUrl,
+} = require('./url-policy');
 const history = require('./history');
 const downloads = require('./downloads');
 const adblock = require('./adblock');
 const userAgent = require('./user-agent');
 const sessionPersist = require('./session-persist');
+const permissions = require('./permissions');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
@@ -324,18 +330,70 @@ function chromeUserAgent() {
 }
 
 function isOauthOrLoginUrl(url) {
+  return isKnownIdentityProviderUrl(url);
+}
+
+/**
+ * Ask the user before opening a known external scheme via the OS handler.
+ * @param {string} url
+ */
+async function confirmOpenExternal(url) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const display = String(url || '').slice(0, 500);
+  let result;
   try {
-    const u = new URL(url);
-    const h = u.hostname.toLowerCase();
-    if (h === 'accounts.google.com') return true;
-    if (h.endsWith('.google.com') && /\/(o\/oauth2|signin|ServiceLogin)/i.test(u.pathname)) {
-      return true;
-    }
-    if (/oauth|openid|accounts\./i.test(h) || /\/oauth/i.test(u.pathname)) return true;
+    result = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: ['Abrir', 'Cancelar'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Abrir link externo',
+      message: 'Abrir este link com o aplicativo do sistema?',
+      detail: display,
+      noLink: true,
+    });
+  } catch {
+    return;
+  }
+  if (result.response !== 0) return;
+  try {
+    await shell.openExternal(url);
   } catch {
     /* ignore */
   }
-  return false;
+}
+
+/**
+ * Handle window.open / target=_blank according to URL policy.
+ * @param {string} accountId
+ * @param {string} url
+ * @param {Electron.Session} ses
+ * @param {import('electron').WebContents} wc
+ */
+function handlePanelWindowOpen(accountId, url, ses, wc) {
+  const kind = classifyScheme(url);
+  if (kind === 'blocked') {
+    return { action: 'deny' };
+  }
+  if (kind === 'external') {
+    confirmOpenExternal(url).catch(() => {});
+    return { action: 'deny' };
+  }
+  // web (http/https/about:blank)
+  if (isOauthOrLoginUrl(url)) {
+    openLoginPopup(accountId, url, ses);
+    return { action: 'deny' };
+  }
+  if (!isNavigableUrl(url)) {
+    return { action: 'deny' };
+  }
+  const settings = getState().settings || {};
+  if (settings.blankLinkMode === 'new-panel') {
+    emitToRenderer({ type: 'ui:open-url-new-panel', url, fromAccountId: accountId });
+    return { action: 'deny' };
+  }
+  wc.loadURL(url).catch(() => {});
+  return { action: 'deny' };
 }
 
 /**
@@ -374,7 +432,9 @@ function openLoginPopup(accountId, url, ses) {
     childPopups.delete(child);
     emitToRenderer({ type: 'toast', message: 'Login fechado — voltando ao painel' });
   });
-  child.loadURL(url).catch(() => {});
+  if (isNavigableUrl(url)) {
+    child.loadURL(url).catch(() => {});
+  }
   return child;
 }
 
@@ -485,6 +545,7 @@ function createPanel(accountId) {
   touchAccount(accountId);
 
   const ses = session.fromPartition(partitionFor(accountId));
+  permissions.attachToSession(ses, accountId);
   hookDownloadsForAccount(accountId, ses);
   userAgent.applySessionUserAgent(ses);
   sessionPersist.hookSessionCookies(ses);
@@ -613,7 +674,7 @@ function createPanel(accountId) {
       const entry2 = panels.get(accountId);
       if (!entry2 || entry2.view.webContents.isDestroyed()) return;
       const target = validatedURL || entry2.view.webContents.getURL();
-      if (target) {
+      if (target && isNavigableUrl(target, { allowData: true })) {
         entry2.view.webContents.loadURL(target).catch(() => {});
       }
     }, delay);
@@ -661,19 +722,20 @@ function createPanel(accountId) {
   } catch {
     /* older Electron without input-event */
   }
-  view.webContents.setWindowOpenHandler(({ url }) => {
-    if (isOauthOrLoginUrl(url)) {
-      openLoginPopup(accountId, url, ses);
-      return { action: 'deny' };
+  // Block in-page navigations to non-http(s) schemes (defense in depth)
+  view.webContents.on('will-navigate', (e, url) => {
+    if (!isNavigableUrl(url, { allowData: true })) {
+      e.preventDefault();
     }
-    const settings = getState().settings || {};
-    if (settings.blankLinkMode === 'new-panel') {
-      emitToRenderer({ type: 'ui:open-url-new-panel', url, fromAccountId: accountId });
-      return { action: 'deny' };
-    }
-    view.webContents.loadURL(url).catch(() => {});
-    return { action: 'deny' };
   });
+  view.webContents.on('will-redirect', (e, url) => {
+    if (!isNavigableUrl(url, { allowData: true })) {
+      e.preventDefault();
+    }
+  });
+  view.webContents.setWindowOpenHandler(({ url }) =>
+    handlePanelWindowOpen(accountId, url, ses, view.webContents)
+  );
 
   mainWindow.contentView.addChildView(view);
   const entry = {
@@ -691,10 +753,16 @@ function createPanel(accountId) {
 
   // Actual navigation may be deferred by staggered load queue
   if (!deferNextCreateLoad) {
-    const url = startUrlFor(account);
-    view.webContents.loadURL(url).catch((err) => {
-      console.error('loadURL failed', accountId, err);
-    });
+    let url = startUrlFor(account);
+    // data: allowed only for trusted account startUrl (selftest probes); never from window.open
+    if (!isNavigableUrl(url, { allowData: true })) {
+      url = normalizeUrl(url) || 'https://www.google.com';
+    }
+    if (isNavigableUrl(url, { allowData: true })) {
+      view.webContents.loadURL(url).catch((err) => {
+        console.error('loadURL failed', accountId, err);
+      });
+    }
   }
 
   applyThrottlingTo(accountId);
@@ -1109,7 +1177,14 @@ function pumpLoadQueue() {
     }
   })();
   if (!current || current === 'about:blank') {
-    wc.loadURL(url).catch(() => {});
+    if (isNavigableUrl(url, { allowData: true })) {
+      wc.loadURL(url).catch(() => {});
+    } else {
+      loadQueuePending.delete(id);
+      loadQueueRunning = false;
+      setImmediate(() => pumpLoadQueue());
+      return;
+    }
   } else {
     loadQueuePending.delete(id);
     loadQueueRunning = false;
@@ -1357,7 +1432,7 @@ function getAccountSessions() {
 
 function panelNavigate(accountId, url) {
   const normalized = normalizeUrl(url);
-  if (!normalized) return;
+  if (!normalized || !isNavigableUrl(normalized)) return;
   forceSuspended.delete(accountId);
   touchAccount(accountId);
   setFocusedAccount(accountId);
@@ -1618,6 +1693,47 @@ function listActivePanelIds() {
   return [...panels.keys()];
 }
 
+/**
+ * True if webContents belongs to a panel, login popup, or same account session
+ * (extension action/options windows share persist:acc-* partitions).
+ * @param {import('electron').WebContents | null | undefined} wc
+ */
+function isPanelWebContents(wc) {
+  if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) return false;
+  for (const entry of panels.values()) {
+    try {
+      if (entry.view && entry.view.webContents === wc) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  for (const win of childPopups) {
+    try {
+      if (win && !win.isDestroyed() && win.webContents === wc) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    const ses = wc.session;
+    if (!ses) return false;
+    const ids = new Set(panels.keys());
+    for (const acc of getState().accounts || []) {
+      if (acc && acc.id) ids.add(acc.id);
+    }
+    for (const id of ids) {
+      try {
+        if (session.fromPartition(partitionFor(id)) === ses) return true;
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 module.exports = {
   initPanels,
   createPanel,
@@ -1642,6 +1758,7 @@ module.exports = {
   getPanelCapture,
   destroyAllPanels,
   listActivePanelIds,
+  isPanelWebContents,
   partitionFor,
   normalizeUrl,
   chromeUserAgent,

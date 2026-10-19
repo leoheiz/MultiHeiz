@@ -33,6 +33,8 @@ const changelog = require('./changelog');
 const updater = require('./updater');
 const { clampBoundsToDisplays, ensureWindowOnDisplay } = require('./window-bounds');
 const windowChrome = require('./window-chrome');
+const ipcGuard = require('./ipc-guard');
+const permissions = require('./permissions');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -163,6 +165,7 @@ const SELFTEST_V110 = selftestMode === 'v110';
 const SELFTEST_TITLEBAR = selftestMode === 'titlebar';
 const SELFTEST_EXT = selftestMode === 'ext';
 const SELFTEST_ABU = selftestMode === 'abu';
+const SELFTEST_SECURITY = selftestMode === 'security';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -179,7 +182,8 @@ const ANY_SELFTEST =
   SELFTEST_V110 ||
   SELFTEST_TITLEBAR ||
   SELFTEST_EXT ||
-  SELFTEST_ABU;
+  SELFTEST_ABU ||
+  SELFTEST_SECURITY;
 
 /** @type {object|null} recorded BrowserWindow chrome options for selftests / diagnostics */
 let recordedWindowChrome = null;
@@ -535,6 +539,23 @@ function createWindow() {
 
   panels.initPanels(mainWindow, emitToRenderer);
   memory.initMemory(emitToRenderer);
+
+  // Harden main UI: stay on local index.html; no webviews / window.open
+  try {
+    const allowMainNav = (url) => ipcGuard.isAppRendererUrl(url);
+    mainWindow.webContents.on('will-navigate', (e, url) => {
+      if (!allowMainNav(url)) e.preventDefault();
+    });
+    mainWindow.webContents.on('will-redirect', (e, url) => {
+      if (!allowMainNav(url)) e.preventDefault();
+    });
+    mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    mainWindow.webContents.on('will-attach-webview', (e) => {
+      e.preventDefault();
+    });
+  } catch (err) {
+    console.warn('[main] ui navigation guards', err && err.message);
+  }
 
   mainWindow.webContents.setZoomFactor(1);
   try {
@@ -916,6 +937,31 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_SECURITY) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runSecuritySelftest } = require('./selftest-security');
+          runSecuritySelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            ipcGuard,
+            permissions,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   }
 
   return mainWindow;
@@ -1106,9 +1152,8 @@ function registerIpc() {
     return panels.openLoginInSystemBrowser(accountId);
   });
   ipcMain.handle('app:open-path', async (_e, target) => {
-    const { shell } = require('electron');
-    if (target) await shell.openPath(String(target));
-    return { ok: true };
+    const { openAllowedPath } = require('./safe-open-path');
+    return openAllowedPath(target);
   });
 
   ipcMain.handle('ui:update', (_e, partial) => {
@@ -1393,10 +1438,13 @@ function registerIpc() {
     return { width, height };
   });
 
-  ipcMain.handle('selftest:renderer', async (_e, code) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return null;
-    return mainWindow.webContents.executeJavaScript(code, true);
-  });
+  // Arbitrary renderer JS — only when MULTIHEIZ_SELFTEST is set (never in normal / packaged use)
+  if (process.env.MULTIHEIZ_SELFTEST) {
+    ipcMain.handle('selftest:renderer', async (_e, code) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return null;
+      return mainWindow.webContents.executeJavaScript(code, true);
+    });
+  }
 }
 
 /* ---------- Self-test runner (in-process) ---------- */
@@ -3580,6 +3628,12 @@ async function runV14Selftest() {
 
 app.whenReady().then(() => {
   loadState();
+  // IPC frame guard must wrap ipcMain before any handle/on registration
+  ipcGuard.install({
+    getMainWindow: () => mainWindow,
+    isPanelWebContents: (wc) => panels.isPanelWebContents(wc),
+  });
+  permissions.initPermissions({ getMainWindow: () => mainWindow });
   userAgent.applyAppUserAgentFallback();
   sessionPersist.startPeriodicFlush(() => panels.getAccountSessions());
   v16 = initV16({

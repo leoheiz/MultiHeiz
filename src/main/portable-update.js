@@ -2,7 +2,7 @@
 
 /**
  * Portable Windows self-update: download MultiHeiz-*-portable.exe from GitHub
- * releases, verify size/hash, replace PORTABLE_EXECUTABLE_FILE via helper script.
+ * releases, verify cryptographic hash, replace PORTABLE_EXECUTABLE_FILE via helper script.
  */
 
 const crypto = require('node:crypto');
@@ -14,11 +14,26 @@ const { spawn } = require('node:child_process');
 const { app, shell } = require('electron');
 
 const PORTABLE_ASSET_RE = /^MultiHeiz-(\d+\.\d+\.\d+)-portable\.exe$/i;
+const MAX_REDIRECTS = 5;
+const NO_HASH_MSG =
+  'Atualização sem hash criptográfico (SHA-256 ou SHA-512) — instalação recusada';
+
+/** Exact hosts allowed for update feed / asset downloads (production). */
+const GITHUB_UPDATE_HOSTS = new Set([
+  'github.com',
+  'api.github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'github-releases.githubusercontent.com',
+  'codeload.github.com',
+]);
 
 /** @type {AbortController | null} */
 let activeAbort = null;
 /** @type {string | null} */
 let downloadedExePath = null;
+/** @type {string | null} unique mkdtemp dir for current/last download */
+let activeTempDir = null;
 /** @type {{ version: string, size: number, digest?: string, sha512?: string } | null} */
 let pendingAsset = null;
 
@@ -30,8 +45,66 @@ function log(logger, level, msg, meta) {
   }
 }
 
+function isSelftest() {
+  return !!process.env.MULTIHEIZ_SELFTEST;
+}
+
+/**
+ * @param {string} hostname
+ */
+function isAllowedUpdateHost(hostname) {
+  const h = String(hostname || '')
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  if (GITHUB_UPDATE_HOSTS.has(h)) return true;
+  if (isSelftest() && (h === '127.0.0.1' || h === 'localhost' || h === '::1')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Validate URL for feed/download: https + allowlisted host, or http to loopback only in selftest.
+ * @param {string} urlStr
+ * @param {{ forFeed?: boolean }} [opts]
+ */
+function assertAllowedUpdateUrl(urlStr, opts = {}) {
+  let u;
+  try {
+    u = new URL(urlStr);
+  } catch {
+    throw new Error('URL de atualização inválida');
+  }
+  const host = u.hostname.toLowerCase();
+  const isLoopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+
+  if (u.protocol === 'https:') {
+    if (!isAllowedUpdateHost(host)) {
+      throw new Error('Host de atualização não permitido: ' + host);
+    }
+    return u.href;
+  }
+  if (u.protocol === 'http:') {
+    if (opts.forFeed && isSelftest() && isLoopback) {
+      return u.href;
+    }
+    if (!opts.forFeed && isSelftest() && isLoopback && isAllowedUpdateHost(host)) {
+      return u.href;
+    }
+    throw new Error('Atualização exige HTTPS (HTTP só permitido em selftest local)');
+  }
+  throw new Error('Esquema de URL de atualização não permitido: ' + u.protocol);
+}
+
 function tempUpdateDir() {
+  if (activeTempDir && fs.existsSync(activeTempDir)) return activeTempDir;
   return path.join(app.getPath('temp'), 'MultiHeiz-update');
+}
+
+function ensureUniqueTempDir() {
+  if (activeTempDir && fs.existsSync(activeTempDir)) return activeTempDir;
+  activeTempDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'MultiHeiz-update-'));
+  return activeTempDir;
 }
 
 function portableTargetPath() {
@@ -43,10 +116,10 @@ function portableTargetPath() {
 }
 
 function feedUrl() {
-  return (
+  const raw =
     process.env.MULTIHEIZ_UPDATE_FEED_URL ||
-    'https://api.github.com/repos/leoheiz/MultiHeiz/releases/latest'
-  );
+    'https://api.github.com/repos/leoheiz/MultiHeiz/releases/latest';
+  return assertAllowedUpdateUrl(raw, { forFeed: true });
 }
 
 /**
@@ -69,15 +142,64 @@ function compareSemver(a, b) {
 }
 
 /**
+ * @param {object} asset
+ * @returns {boolean}
+ */
+function assetHasCryptoHash(asset) {
+  if (!asset) return false;
+  if (asset.sha512 && String(asset.sha512).trim()) return true;
+  if (asset.digest && /^sha256:/i.test(String(asset.digest))) return true;
+  return false;
+}
+
+/**
+ * @param {Buffer|string} fileData
+ * @param {object} asset
+ * @returns {{ ok: true } | { ok: false, error: string }}
+ */
+function verifyAssetHash(fileData, asset) {
+  if (!assetHasCryptoHash(asset)) {
+    return { ok: false, error: NO_HASH_MSG };
+  }
+  const fileBuf = Buffer.isBuffer(fileData) ? fileData : fs.readFileSync(fileData);
+  if (asset.digest && /^sha256:/i.test(String(asset.digest))) {
+    const expected = String(asset.digest)
+      .replace(/^sha256:/i, '')
+      .toLowerCase()
+      .trim();
+    const actual = crypto.createHash('sha256').update(fileBuf).digest('hex');
+    if (actual !== expected) {
+      return { ok: false, error: 'Hash SHA-256 não confere' };
+    }
+    return { ok: true };
+  }
+  if (asset.sha512) {
+    const actual = crypto.createHash('sha512').update(fileBuf).digest('base64');
+    if (actual !== String(asset.sha512).trim()) {
+      return { ok: false, error: 'Hash SHA-512 não confere' };
+    }
+    return { ok: true };
+  }
+  return { ok: false, error: NO_HASH_MSG };
+}
+
+/**
  * @param {string} url
  * @param {Record<string, string>} [headers]
  * @returns {Promise<{ status: number, headers: object, body: Buffer }>}
  */
-function httpGetBuffer(url, headers = {}, redirectLeft = 8) {
+function httpGetBuffer(url, headers = {}, redirectLeft = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
-    const mod = url.startsWith('http://') ? http : https;
+    let safeUrl;
+    try {
+      safeUrl = assertAllowedUpdateUrl(url, { forFeed: true });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const mod = safeUrl.startsWith('http://') ? http : https;
     const req = mod.get(
-      url,
+      safeUrl,
       {
         headers: {
           'User-Agent': `MultiHeiz/${app.getVersion()}`,
@@ -87,13 +209,22 @@ function httpGetBuffer(url, headers = {}, redirectLeft = 8) {
       },
       (res) => {
         const status = res.statusCode || 0;
-        if (
-          status >= 300 &&
-          status < 400 &&
-          res.headers.location &&
-          redirectLeft > 0
-        ) {
-          const next = new URL(res.headers.location, url).href;
+        if (status >= 300 && status < 400 && res.headers.location) {
+          if (redirectLeft <= 0) {
+            res.resume();
+            reject(new Error('Muitos redirecionamentos na atualização'));
+            return;
+          }
+          let next;
+          try {
+            next = assertAllowedUpdateUrl(new URL(res.headers.location, safeUrl).href, {
+              forFeed: true,
+            });
+          } catch (err) {
+            res.resume();
+            reject(err);
+            return;
+          }
           res.resume();
           httpGetBuffer(next, headers, redirectLeft - 1).then(resolve, reject);
           return;
@@ -122,7 +253,6 @@ function httpGetBuffer(url, headers = {}, redirectLeft = 8) {
 function sha512FromLatestYml(yml, fileName) {
   if (!yml || !fileName) return null;
   const text = String(yml);
-  // electron-builder latest.yml: path / url + sha512 under files: or top-level
   const escaped = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const blockRe = new RegExp(
     `(?:^|\\n)\\s*-\\s*url:\\s*${escaped}[\\s\\S]*?sha512:\\s*(\\S+)`,
@@ -136,7 +266,6 @@ function sha512FromLatestYml(yml, fileName) {
   );
   const m2 = text.match(pathRe);
   if (m2) return m2[1];
-  // Top-level only if path matches portable
   if (new RegExp(`(?:^|\\n)path:\\s*${escaped}\\s*\\n`, 'i').test(text)) {
     const m3 = text.match(/(?:^|\n)sha512:\s*(\S+)/i);
     if (m3) return m3[1];
@@ -146,7 +275,7 @@ function sha512FromLatestYml(yml, fileName) {
 
 /**
  * @param {object} release GitHub release JSON
- * @param {string} version
+ * @param {object} asset
  */
 async function enrichPortableHashes(release, asset) {
   const assets = (release && release.assets) || [];
@@ -161,7 +290,7 @@ async function enrichPortableHashes(release, asset) {
         sha512 = sha512FromLatestYml(r.body.toString('utf8'), asset.name);
       }
     } catch {
-      /* ignore */
+      /* ignore — hash may still come from digest */
     }
   }
   const digest = asset.digest ? String(asset.digest) : null;
@@ -204,7 +333,12 @@ function findPortableAsset(release) {
 async function checkPortableUpdate(opts = {}) {
   const { logger } = opts;
   const current = app.getVersion();
-  const url = feedUrl();
+  let url;
+  try {
+    url = feedUrl();
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || 'Feed de atualização inválido' };
+  }
   log(logger, 'info', 'portable check', { url, current });
   try {
     const r = await httpGetBuffer(url, {
@@ -242,6 +376,13 @@ async function checkPortableUpdate(opts = {}) {
       };
     }
     const asset = await enrichPortableHashes(data, rawAsset);
+    if (!assetHasCryptoHash(asset)) {
+      return {
+        ok: false,
+        error: NO_HASH_MSG,
+        version: tag,
+      };
+    }
     pendingAsset = asset;
     return { ok: true, upToDate: false, version: tag, asset };
   } catch (err) {
@@ -263,12 +404,14 @@ async function downloadPortableAsset(asset, opts = {}) {
   if (!asset || !asset.url) {
     return { ok: false, error: 'Asset inválido' };
   }
+  if (!assetHasCryptoHash(asset)) {
+    return { ok: false, error: NO_HASH_MSG };
+  }
   cancelDownload();
   const controller = new AbortController();
   activeAbort = controller;
 
-  const dir = tempUpdateDir();
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = ensureUniqueTempDir();
   const finalName = asset.name || `MultiHeiz-${asset.version}-portable.exe`;
   const partPath = path.join(dir, finalName + '.part');
   const finalPath = path.join(dir, finalName);
@@ -285,7 +428,15 @@ async function downloadPortableAsset(asset, opts = {}) {
     dest: finalPath,
   });
 
-  const result = await downloadToFile(asset.url, partPath, {
+  let downloadUrl;
+  try {
+    downloadUrl = assertAllowedUpdateUrl(asset.url);
+  } catch (err) {
+    activeAbort = null;
+    return { ok: false, error: (err && err.message) || 'URL de download inválida' };
+  }
+
+  const result = await downloadToFile(downloadUrl, partPath, {
     expectedSize: asset.size,
     signal: controller.signal,
     onProgress,
@@ -301,7 +452,6 @@ async function downloadPortableAsset(asset, opts = {}) {
     return result;
   }
 
-  // Verify size
   let st;
   try {
     st = fs.statSync(partPath);
@@ -324,34 +474,15 @@ async function downloadPortableAsset(asset, opts = {}) {
     };
   }
 
-  const fileBuf = fs.readFileSync(partPath);
-  if (asset.digest && /^sha256:/i.test(asset.digest)) {
-    const expected = asset.digest.replace(/^sha256:/i, '').toLowerCase();
-    const actual = crypto.createHash('sha256').update(fileBuf).digest('hex');
-    if (actual !== expected) {
-      log(logger, 'error', 'portable sha256 mismatch', { expected, actual });
-      try {
-        fs.unlinkSync(partPath);
-      } catch {
-        /* ignore */
-      }
-      return { ok: false, error: 'Hash SHA-256 não confere' };
+  const hashCheck = verifyAssetHash(partPath, asset);
+  if (!hashCheck.ok) {
+    log(logger, 'error', 'portable hash verify failed', { error: hashCheck.error });
+    try {
+      fs.unlinkSync(partPath);
+    } catch {
+      /* ignore */
     }
-  } else if (asset.sha512) {
-    const actual = crypto.createHash('sha512').update(fileBuf).digest('base64');
-    if (actual !== asset.sha512) {
-      log(logger, 'error', 'portable sha512 mismatch');
-      try {
-        fs.unlinkSync(partPath);
-      } catch {
-        /* ignore */
-      }
-      return { ok: false, error: 'Hash SHA-512 não confere' };
-    }
-  } else {
-    log(logger, 'warn', 'portable download: size check only (no hash)', {
-      size: st.size,
-    });
+    return hashCheck;
   }
 
   try {
@@ -387,9 +518,16 @@ function downloadToFile(url, destPath, opts = {}) {
         finish({ ok: false, error: 'Download cancelado', cancelled: true });
         return;
       }
-      const mod = currentUrl.startsWith('http://') ? http : https;
+      let safeUrl;
+      try {
+        safeUrl = assertAllowedUpdateUrl(currentUrl);
+      } catch (err) {
+        finish({ ok: false, error: (err && err.message) || 'URL não permitida' });
+        return;
+      }
+      const mod = safeUrl.startsWith('http://') ? http : https;
       const req = mod.get(
-        currentUrl,
+        safeUrl,
         {
           headers: {
             'User-Agent': `MultiHeiz/${app.getVersion()}`,
@@ -398,9 +536,22 @@ function downloadToFile(url, destPath, opts = {}) {
         },
         (res) => {
           const status = res.statusCode || 0;
-          if (status >= 300 && status < 400 && res.headers.location && redirectsLeft > 0) {
+          if (status >= 300 && status < 400 && res.headers.location) {
+            if (redirectsLeft <= 0) {
+              res.resume();
+              finish({ ok: false, error: 'Muitos redirecionamentos na atualização' });
+              return;
+            }
+            let next;
+            try {
+              next = assertAllowedUpdateUrl(new URL(res.headers.location, safeUrl).href);
+            } catch (err) {
+              res.resume();
+              finish({ ok: false, error: (err && err.message) || 'Redirect não permitido' });
+              return;
+            }
             res.resume();
-            follow(new URL(res.headers.location, currentUrl).href, redirectsLeft - 1);
+            follow(next, redirectsLeft - 1);
             return;
           }
           if (status === 403) {
@@ -411,10 +562,7 @@ function downloadToFile(url, destPath, opts = {}) {
             finish({ ok: false, error: `Download HTTP ${status}` });
             return;
           }
-          const total =
-            expectedSize ||
-            Number(res.headers['content-length']) ||
-            0;
+          const total = expectedSize || Number(res.headers['content-length']) || 0;
           const out = fs.createWriteStream(destPath);
           let transferred = 0;
           let lastT = Date.now();
@@ -489,7 +637,7 @@ function downloadToFile(url, destPath, opts = {}) {
       });
     };
 
-    follow(url, 8);
+    follow(url, MAX_REDIRECTS);
   });
 }
 
@@ -517,7 +665,24 @@ function canWriteDir(dirPath) {
 }
 
 /**
- * Write helper .cmd and spawn detached. On success quits the app.
+ * Delete downloaded file and clear state after failed verify.
+ * @param {string} [filePath]
+ */
+function wipeDownloaded(filePath) {
+  const p = filePath || downloadedExePath;
+  if (p) {
+    try {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    } catch {
+      /* ignore */
+    }
+  }
+  downloadedExePath = null;
+}
+
+/**
+ * Write helper .ps1 and spawn detached. On success quits the app.
+ * Re-verifies hash immediately before writing/running the helper.
  * @param {{ logger?: object, skipQuit?: boolean }} [opts]
  */
 function applyPortableAndRelaunch(opts = {}) {
@@ -531,6 +696,20 @@ function applyPortableAndRelaunch(opts = {}) {
     return { ok: false, error: 'Caminho do executável portátil desconhecido' };
   }
 
+  const asset = pendingAsset;
+  if (!asset || !assetHasCryptoHash(asset)) {
+    wipeDownloaded(source);
+    return { ok: false, error: NO_HASH_MSG };
+  }
+  const recheck = verifyAssetHash(source, asset);
+  if (!recheck.ok) {
+    log(logger, 'error', 'portable hash re-check failed before apply', {
+      error: recheck.error,
+    });
+    wipeDownloaded(source);
+    return recheck;
+  }
+
   const targetDir = path.dirname(target);
   if (!canWriteDir(targetDir)) {
     return {
@@ -542,13 +721,16 @@ function applyPortableAndRelaunch(opts = {}) {
     };
   }
 
-  const dir = tempUpdateDir();
+  const dir = path.dirname(source);
   fs.mkdirSync(dir, { recursive: true });
   const helperPath = path.join(dir, `apply-update-${process.pid}.ps1`);
   const backupPath = target + '.old';
   const skipPidWait = process.env.MULTIHEIZ_PORTABLE_SKIP_PID_WAIT === '1';
   const pid = skipPidWait ? -1 : process.pid;
-  const relaunchCmd = process.env.MULTIHEIZ_PORTABLE_RELAUNCH_CMD;
+  const relaunchCmd =
+    isSelftest() && process.env.MULTIHEIZ_PORTABLE_RELAUNCH_CMD
+      ? process.env.MULTIHEIZ_PORTABLE_RELAUNCH_CMD
+      : null;
 
   const psEscape = (p) => String(p).replace(/'/g, "''");
   const logPath = path.join(dir, `apply-update-${process.pid}.log`);
@@ -620,7 +802,6 @@ function applyPortableAndRelaunch(opts = {}) {
     }
   );
   if (waitForHelper) {
-    // Selftest: wait for helper exit so assertions can run
     child.on('error', (err) => {
       log(logger, 'error', 'portable helper spawn error', { error: err && err.message });
     });
@@ -665,6 +846,7 @@ function resetPortableStateForTest() {
   cancelDownload();
   downloadedExePath = null;
   pendingAsset = null;
+  activeTempDir = null;
 }
 
 /**
@@ -680,12 +862,11 @@ function cleanupPortableLeftovers(logger) {
         log(logger, 'info', 'removed portable .old backup', { old });
       }
     }
-    const dir = tempUpdateDir();
-    if (fs.existsSync(dir)) {
-      for (const name of fs.readdirSync(dir)) {
+    if (activeTempDir && fs.existsSync(activeTempDir)) {
+      for (const name of fs.readdirSync(activeTempDir)) {
         if (name.endsWith('.part') || /^apply-update-.*\.cmd$/i.test(name)) {
           try {
-            fs.unlinkSync(path.join(dir, name));
+            fs.unlinkSync(path.join(activeTempDir, name));
           } catch {
             /* ignore */
           }
@@ -716,4 +897,11 @@ module.exports = {
   canWriteDir,
   tempUpdateDir,
   httpGetBuffer,
+  assertAllowedUpdateUrl,
+  isAllowedUpdateHost,
+  assetHasCryptoHash,
+  verifyAssetHash,
+  NO_HASH_MSG,
+  GITHUB_UPDATE_HOSTS,
+  MAX_REDIRECTS,
 };

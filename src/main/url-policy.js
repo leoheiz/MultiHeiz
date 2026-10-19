@@ -1,0 +1,221 @@
+'use strict';
+
+/**
+ * URL / scheme policy for panel navigation and window.open.
+ * classifyScheme => 'web' | 'external' | 'blocked'
+ */
+
+const EXTERNAL_SCHEMES = new Set([
+  'mailto',
+  'tel',
+  'sms',
+  'smsto',
+  'mms',
+  'mmsto',
+  'magnet',
+  'callto',
+  'facetime',
+  'facetime-audio',
+  'geo',
+  'maps',
+  'webcal',
+  'news',
+  'feed',
+  'steam',
+  'spotify',
+  'zoommtg',
+  'zoomus',
+  'slack',
+  'discord',
+  'tg',
+  'telegram',
+  'whatsapp',
+  'viber',
+  'skype',
+  'market',
+  'intent',
+  'itms',
+  'itms-apps',
+  'ms-windows-store',
+  'ms-settings',
+  'outlook',
+]);
+
+/**
+ * Known identity providers. Match by parsed URL (https + hostname + pathname).
+ * Generic hosts require expected path prefixes/patterns.
+ * @type {Array<{
+ *   hosts?: string[],
+ *   hostSuffixes?: string[],
+ *   pathPrefixes?: string[],
+ *   pathPatterns?: RegExp[],
+ * }>}
+ */
+const IDP_RULES = [
+  { hosts: ['accounts.google.com'] },
+  {
+    hosts: ['www.google.com', 'google.com'],
+    pathPrefixes: ['/o/oauth2', '/accounts/oauth'],
+    pathPatterns: [/^\/signin/i, /^\/ServiceLogin/i],
+  },
+  {
+    hostSuffixes: ['.google.com'],
+    pathPrefixes: ['/o/oauth2', '/signin', '/ServiceLogin'],
+  },
+  { hosts: ['login.microsoftonline.com', 'login.live.com', 'login.microsoft.com'] },
+  { hosts: ['appleid.apple.com'] },
+  { hosts: ['github.com'], pathPrefixes: ['/login/oauth'] },
+  {
+    hosts: ['www.facebook.com', 'facebook.com', 'm.facebook.com'],
+    pathPrefixes: ['/dialog/oauth'],
+    pathPatterns: [/^\/v\d+(?:\.\d+)?\/dialog\/oauth/i],
+  },
+  { hosts: ['api.twitter.com'], pathPrefixes: ['/oauth'] },
+  { hosts: ['x.com', 'twitter.com'], pathPrefixes: ['/i/oauth2', '/oauth'] },
+  { hosts: ['discord.com', 'discordapp.com'], pathPrefixes: ['/oauth2'] },
+  { hosts: ['id.twitch.tv'] },
+  { hosts: ['accounts.spotify.com'] },
+  { hosts: ['login.yahoo.com'] },
+  { hosts: ['auth0.com'], hostSuffixes: ['.auth0.com'] },
+  { hosts: ['okta.com'], hostSuffixes: ['.okta.com'] },
+  { hosts: ['login.salesforce.com'] },
+  { hosts: ['slack.com', 'www.slack.com'], pathPrefixes: ['/oauth'] },
+  { hosts: ['oauth.telegram.org'] },
+  { hosts: ['account.battle.net'] },
+  { hosts: ['auth.riotgames.com'] },
+];
+
+/**
+ * @param {string} url
+ * @returns {URL|null}
+ */
+function parseUrl(url) {
+  try {
+    return new URL(String(url || ''));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isAboutBlank(url) {
+  const s = String(url || '').trim().toLowerCase();
+  return s === 'about:blank' || s === 'about:blank/';
+}
+
+/**
+ * Only http(s) (and about:blank when needed internally) may load in a panel.
+ * Optional allowData: trusted internal loads (selftest probe startUrl) — never from window.open.
+ * @param {string} url
+ * @param {{ allowData?: boolean }} [opts]
+ * @returns {boolean}
+ */
+function isNavigableUrl(url, opts = {}) {
+  if (isAboutBlank(url)) return true;
+  const u = parseUrl(url);
+  if (!u) return false;
+  if (u.protocol === 'http:' || u.protocol === 'https:') return true;
+  if (opts.allowData && u.protocol === 'data:') return true;
+  return false;
+}
+
+/**
+ * @param {string} url
+ * @returns {'web'|'external'|'blocked'}
+ */
+function classifyScheme(url) {
+  if (isAboutBlank(url)) return 'web';
+  const u = parseUrl(url);
+  if (!u) return 'blocked';
+  const scheme = String(u.protocol || '')
+    .replace(/:$/, '')
+    .toLowerCase();
+  if (scheme === 'http' || scheme === 'https') return 'web';
+  if (EXTERNAL_SCHEMES.has(scheme)) return 'external';
+  return 'blocked';
+}
+
+/**
+ * @param {string} hostname
+ * @param {string} expected
+ */
+function hostEquals(hostname, expected) {
+  return String(hostname || '').toLowerCase() === String(expected || '').toLowerCase();
+}
+
+/**
+ * Suffix match with leading-dot semantics: foo.auth0.com matches .auth0.com; auth0.com does not.
+ * @param {string} hostname
+ * @param {string} suffix  e.g. ".auth0.com"
+ */
+function hostHasSuffix(hostname, suffix) {
+  const h = String(hostname || '').toLowerCase();
+  const s = String(suffix || '').toLowerCase();
+  if (!s.startsWith('.')) return false;
+  return h.endsWith(s) && h.length > s.length;
+}
+
+/**
+ * @param {string} pathname
+ * @param {{ pathPrefixes?: string[], pathPatterns?: RegExp[] }} rule
+ */
+function pathMatches(pathname, rule) {
+  const p = String(pathname || '') || '/';
+  const prefixes = rule.pathPrefixes || [];
+  const patterns = rule.pathPatterns || [];
+  if (!prefixes.length && !patterns.length) return true;
+  for (const pref of prefixes) {
+    if (p === pref || p.startsWith(pref + '/') || p.startsWith(pref + '?')) return true;
+    if (p.startsWith(pref)) return true;
+  }
+  for (const re of patterns) {
+    if (re.test(p)) return true;
+  }
+  return false;
+}
+
+/**
+ * Strict IdP allowlist (replaces broad /oauth heuristics).
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isKnownIdentityProviderUrl(url) {
+  const u = parseUrl(url);
+  if (!u) return false;
+  if (u.protocol !== 'https:') return false;
+  const hostname = u.hostname.toLowerCase();
+  const pathname = u.pathname || '/';
+
+  for (const rule of IDP_RULES) {
+    let hostOk = false;
+    for (const h of rule.hosts || []) {
+      if (hostEquals(hostname, h)) {
+        hostOk = true;
+        break;
+      }
+    }
+    if (!hostOk) {
+      for (const suf of rule.hostSuffixes || []) {
+        if (hostHasSuffix(hostname, suf) || hostEquals(hostname, suf.replace(/^\./, ''))) {
+          hostOk = true;
+          break;
+        }
+      }
+    }
+    if (!hostOk) continue;
+    if (pathMatches(pathname, rule)) return true;
+  }
+  return false;
+}
+
+module.exports = {
+  classifyScheme,
+  isNavigableUrl,
+  isKnownIdentityProviderUrl,
+  isAboutBlank,
+  EXTERNAL_SCHEMES,
+  IDP_RULES,
+};

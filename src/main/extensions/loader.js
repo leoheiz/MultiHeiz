@@ -99,8 +99,10 @@ async function loadOne(accountId, record) {
 
   try {
     ensureDnrLoaded(record);
+    // allowFileAccess: false — extensions must not read arbitrary file:// pages.
+    // Content scripts / DNR on http(s) panels do not need file access.
     const ext = await ses.extensions.loadExtension(record.path, {
-      allowFileAccess: true,
+      allowFileAccess: false,
     });
     const eid = ext && ext.id ? ext.id : record.id;
     map.set(record.id, eid);
