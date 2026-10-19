@@ -11,6 +11,9 @@ const zlib = require('node:zlib');
 
 const SIZE = 256;
 const OUT_DIR = path.join(__dirname, '..', 'build');
+const ICONS_DIR = path.join(OUT_DIR, 'icons');
+/** Tamanhos Linux (electron-builder: NxN.png em build/icons). */
+const LINUX_SIZES = [16, 24, 32, 48, 64, 128, 256, 512];
 
 function crc32(buf) {
   let c = ~0;
@@ -145,8 +148,19 @@ function createIco(pngBuf) {
 }
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
+fs.mkdirSync(ICONS_DIR, { recursive: true });
+
 const rgba = paintIcon(SIZE);
 const png = createPngRGBA(SIZE, SIZE, rgba);
 fs.writeFileSync(path.join(OUT_DIR, 'icon.png'), png);
 fs.writeFileSync(path.join(OUT_DIR, 'icon.ico'), createIco(png));
-console.log('Ícones gerados em build/icon.png e build/icon.ico');
+
+for (const n of LINUX_SIZES) {
+  const rgbaN = n === SIZE ? rgba : paintIcon(n);
+  const pngN = n === SIZE ? png : createPngRGBA(n, n, rgbaN);
+  fs.writeFileSync(path.join(ICONS_DIR, `${n}x${n}.png`), pngN);
+}
+
+console.log(
+  'Ícones gerados em build/icon.png, build/icon.ico e build/icons/{16..512}x{16..512}.png'
+);
