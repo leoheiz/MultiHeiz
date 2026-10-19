@@ -1,0 +1,15 @@
+node_modules/
+dist/
+releases/
+out/
+*.exe
+*.log
+logs/
+_local/
+.DS_Store
+Thumbs.db
+
+# Local userData / selftest leftovers
+*.sqlite
+userData/
+profiles/

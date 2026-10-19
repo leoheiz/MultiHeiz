@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="escuro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; object-src 'none'; base-uri 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MultiHeiz</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar" aria-label="Janelas">
+        <div class="sidebar-head">
+          <span class="brand">MultiHeiz</span>
+          <button type="button" id="btn-sidebar-toggle" class="btn icon ghost" title="Recolher barra lateral">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+          </button>
+        </div>
+        <div id="sidebar-list" class="sidebar-list"></div>
+        <div id="sidebar-modules" class="sidebar-modules">
+          <div class="sidebar-modules-label">Módulos</div>
+          <div id="sidebar-modules-list" class="sidebar-modules-list"></div>
+        </div>
+      </aside>
+
+      <div id="main-col">
+        <header id="topbar">
+          <img id="app-icon" class="app-icon" src="../../build/icon.png" alt="" width="18" height="18" draggable="false" />
+          <div id="workspace-tabs" class="tabs" role="tablist"></div>
+          <button type="button" id="btn-ws-add" class="btn icon ghost" title="Nova categoria">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <div class="spacer" data-drag-region="1"></div>
+          <label class="layout-label">
+            Layout
+            <select id="layout-select" aria-label="Layout">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="6">6</option>
+              <option value="auto">Auto</option>
+              <option value="livre">Livre</option>
+            </select>
+          </label>
+          <button type="button" id="btn-layout-lock" class="btn icon ghost" title="Travar layout">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>
+          </button>
+          <div id="pager" class="pager hidden">
+            <button type="button" id="btn-prev" class="btn icon ghost" title="Página anterior">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+            </button>
+            <span id="page-label">1</span>
+            <button type="button" id="btn-next" class="btn icon ghost" title="Próxima página">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <button type="button" id="btn-free-mem" class="btn ghost" title="Liberar memória">
+            Liberar memória
+          </button>
+          <button type="button" id="btn-favorites" class="btn icon ghost" title="Favoritos (Ctrl+D)">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.5 6.5L21 10l-5 4.2L17.5 21 12 17.3 6.5 21 8 14.2 3 10l6.5-.5L12 3z"/></svg>
+          </button>
+          <button type="button" id="btn-history" class="btn icon ghost" title="Histórico (Ctrl+H)">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          </button>
+          <button type="button" id="btn-downloads" class="btn icon ghost" title="Downloads (Ctrl+J)">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg>
+            <span id="downloads-badge" class="top-badge hidden">0</span>
+          </button>
+          <div id="zoom-control" class="zoom-control" title="Zoom do painel focado" hidden>
+            <span class="zoom-chip" id="zoom-chip" aria-hidden="true"></span>
+            <span class="zoom-label" id="zoom-label">Zoom</span>
+            <button type="button" id="btn-zoom-out" class="btn icon ghost tiny" title="Diminuir zoom" aria-label="Diminuir zoom">−</button>
+            <button type="button" id="btn-zoom-reset" class="btn ghost tiny" title="Zoom 100%" aria-label="Zoom 100%">100%</button>
+            <button type="button" id="btn-zoom-in" class="btn icon ghost tiny" title="Aumentar zoom" aria-label="Aumentar zoom">+</button>
+          </div>
+          <button type="button" id="btn-add-account" class="btn primary">+ Nova janela</button>
+          <button type="button" id="btn-overflow" class="btn icon ghost" title="Mais opções" aria-label="Mais opções">
+            <span class="overflow-glyph" aria-hidden="true">›</span>
+          </button>
+          <button type="button" id="btn-settings" class="btn icon ghost" title="Configurações" aria-label="Configurações">
+            <!-- Lucide icons: settings (ISC) — https://lucide.dev -->
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+          <!-- Linux / frameless: custom window controls (hidden on Windows titleBarOverlay) -->
+          <div id="win-controls" class="win-controls" hidden>
+            <button type="button" id="btn-win-min" class="btn icon ghost win-btn" title="Minimizar" aria-label="Minimizar">
+              <svg class="ico" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+            </button>
+            <button type="button" id="btn-win-max" class="btn icon ghost win-btn" title="Maximizar" aria-label="Maximizar">
+              <svg class="ico win-max-icon" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7" rx="0.5" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+            </button>
+            <button type="button" id="btn-win-close" class="btn icon ghost win-btn win-btn-close" title="Fechar" aria-label="Fechar">
+              <svg class="ico" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <div id="layout-edit-banner" class="layout-edit-banner hidden" role="status">
+          <span>Editando layout — arraste para mover/redimensionar</span>
+          <button type="button" id="btn-banner-lock" class="btn ghost">Travar</button>
+        </div>
+
+        <div id="clock-skew-banner" class="clock-skew-banner hidden" role="alert">
+          <span>Relógio do sistema incorreto — logins e certificados podem falhar</span>
+          <button type="button" id="btn-clock-skew-dismiss" class="btn ghost" title="Dispensar">Fechar</button>
+        </div>
+
+        <main id="grid" aria-label="Painéis"></main>
+        <section id="module-host" class="module-host hidden" aria-label="Módulo"></section>
+        <section id="manager-host" class="manager-host hidden" aria-label="Gerenciador"></section>
+
+        <footer id="statusbar">
+          <span id="stat-cpu" title="CPU total">CPU —</span>
+          <span id="stat-ram" title="RAM total">RAM —</span>
+          <span id="stat-fps" title="FPS do painel focado (melhor esforço via rAF)">FPS —</span>
+          <span id="stat-uptime" title="Tempo ligado">Uptime —</span>
+          <span class="spacer"></span>
+          <button type="button" id="btn-kofi-status" class="btn icon ghost kofi-heart hidden" title="Apoiar no Ko-fi">
+            <svg class="ico kofi-heart-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21C12 21 3.5 15.2 2.2 10.4 1.2 6.8 3.6 4 6.8 4c1.8 0 3.3 1 4.2 2.4C12 5 13.4 4 15.2 4c3.2 0 5.6 2.8 4.6 6.4C18.5 15.2 12 21 12 21z"/></svg>
+          </button>
+          <button type="button" id="btn-mem-total" class="btn ghost mem-total" title="Monitor de memória">
+            — MB
+          </button>
+          <span id="stat-version">v—</span>
+        </footer>
+      </div>
+    </div>
+
+    <div id="mem-popover" class="mem-popover hidden" role="dialog" aria-label="Monitor de memória">
+      <div class="mem-popover-head">
+        <strong>Monitor de memória</strong>
+        <button type="button" id="btn-mem-close" class="btn icon ghost" title="Fechar">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div id="mem-popover-total" class="mem-popover-total"></div>
+      <div id="mem-popover-list" class="mem-popover-list"></div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status"></div>
+
+    <dialog id="dlg-account">
+      <form method="dialog" id="form-account">
+        <h2 id="dlg-account-title">Nova janela</h2>
+        <label>Nome <input name="name" required maxlength="64" /></label>
+        <label>Cor <input name="color" type="color" value="#2bb8a6" /></label>
+        <label>URL inicial <input name="startUrl" type="url" placeholder="https://..." required /></label>
+        <label
+          >Categoria
+          <select name="workspaceId" id="account-ws-select"></select>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="pauseInBackground" />
+          Pausar em segundo plano
+        </label>
+        <div class="dlg-actions">
+          <button type="submit" class="btn primary" value="ok">Salvar</button>
+          <button type="button" class="btn ghost" id="btn-account-cancel">Cancelar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-workspace">
+      <form method="dialog" id="form-workspace">
+        <h2>Categoria</h2>
+        <label>Nome <input name="name" required maxlength="48" /></label>
+        <div class="dlg-actions">
+          <button type="submit" class="btn primary" value="ok">Salvar</button>
+          <button type="button" class="btn ghost" id="btn-ws-cancel">Cancelar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-settings" class="dlg-settings-wide">
+      <div class="settings-shell">
+        <aside class="settings-nav" aria-label="Seções">
+          <button type="button" class="settings-nav-btn active" data-section="geral">Geral</button>
+          <button type="button" class="settings-nav-btn" data-section="navegacao">Navegação</button>
+          <button type="button" class="settings-nav-btn" data-section="downloads">Downloads</button>
+          <button type="button" class="settings-nav-btn" data-section="adblock">Bloqueador de anúncios</button>
+          <button type="button" class="settings-nav-btn" data-section="extensoes">Extensões</button>
+          <button type="button" class="settings-nav-btn" data-section="aparencia">Aparência</button>
+          <button type="button" class="settings-nav-btn" data-section="memoria">Memória</button>
+          <button type="button" class="settings-nav-btn" data-section="desempenho">Desempenho</button>
+          <button type="button" class="settings-nav-btn" data-section="modulos">Módulos</button>
+          <button type="button" class="settings-nav-btn" data-section="atualizacoes">Atualizações</button>
+          <button type="button" class="settings-nav-btn" data-section="diagnosticos">Diagnósticos</button>
+          <button type="button" class="settings-nav-btn" data-section="sobre">Sobre</button>
+        </aside>
+        <form id="form-settings" class="settings-body">
+          <div class="settings-head">
+            <h2>Configurações</h2>
+            <span id="settings-saved" class="settings-saved hidden" aria-live="polite">Salvo</span>
+            <button type="button" class="btn ghost" id="btn-settings-cancel">Fechar</button>
+          </div>
+
+          <section class="settings-pane active" data-pane="geral">
+            <label class="check">
+              <input type="checkbox" name="openLastPage" />
+              Continuar de onde parou (última página)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="persistSessions" />
+              Manter sessões ativas (30 dias)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="confirmOnRemove" />
+              Confirmar ao remover janela
+            </label>
+            <label
+              >Idioma
+              <select name="language" disabled>
+                <option value="pt-BR">Português (Brasil)</option>
+              </select>
+            </label>
+            <label class="check">
+              <input type="checkbox" name="keepBackgroundRunning" />
+              Manter painéis rodando em segundo plano
+            </label>
+            <label class="check">
+              <input type="checkbox" name="suspendHidden" />
+              Suspender painéis ocultos (economiza memória)
+            </label>
+            <label
+              >Atraso ao suspender (ms)
+              <input name="suspendDelayMs" type="number" min="0" step="100" value="0" />
+            </label>
+          </section>
+
+          <section class="settings-pane" data-pane="navegacao">
+            <label
+              >Página inicial (novas janelas / Início)
+              <input name="homepage" type="url" placeholder="https://..." />
+            </label>
+            <label
+              >Identificar como
+              <select name="uaIdentity" id="ua-identity">
+                <option value="chrome">Chrome</option>
+                <option value="edge">Edge</option>
+              </select>
+            </label>
+            <label
+              >Links em nova aba (target=_blank)
+              <select name="blankLinkMode" id="blank-link-mode">
+                <option value="same">Mesmo painel</option>
+                <option value="new-panel">Nova janela</option>
+              </select>
+            </label>
+            <label
+              >Mecanismo de busca
+              <select name="searchEngine" id="search-engine">
+                <option value="google">Google</option>
+                <option value="duckduckgo">DuckDuckGo</option>
+                <option value="bing">Bing</option>
+                <option value="custom">Personalizado (%s)</option>
+              </select>
+            </label>
+            <label
+              >Modelo personalizado
+              <input name="searchTemplate" id="search-template" placeholder="https://...?q=%s" />
+            </label>
+          </section>
+
+          <section class="settings-pane" data-pane="downloads">
+            <label
+              >Pasta padrão
+              <div class="row-inline">
+                <input name="downloadFolder" id="download-folder" readonly />
+                <button type="button" class="btn ghost" id="btn-pick-download-folder">Escolher…</button>
+              </div>
+            </label>
+            <label class="check">
+              <input type="checkbox" name="askWhereToSave" id="ask-where-save" />
+              Perguntar onde salvar cada arquivo
+            </label>
+          </section>
+
+          <section class="settings-pane" data-pane="adblock" id="adblock-section">
+            <p class="muted-note" id="adblock-coexistence-hint" hidden></p>
+            <label class="check">
+              <input type="checkbox" name="adblockEnabled" id="adblock-enabled" />
+              Usar bloqueador embutido (global)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="adblockAntiTracking" id="adblock-antitracking" />
+              Anti-rastreamento
+            </label>
+            <label class="check">
+              <input type="checkbox" name="adblockCosmetic" id="adblock-cosmetic" />
+              Filtragem cosmética (ocultar elementos)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="adblockYoutube" id="adblock-youtube" />
+              Bloquear anúncios do YouTube (experimental)
+            </label>
+            <p class="muted-note">
+              Regras ativas: <strong id="adblock-total-rules">—</strong>
+              · Última atualização: <span id="adblock-last-update">—</span>
+            </p>
+            <p class="muted-note" id="adblock-status-msg"></p>
+            <p class="muted-note" id="adblock-progress"></p>
+            <div id="adblock-catalog" class="adblock-catalog"></div>
+            <h3>Adicionar lista por URL</h3>
+            <div class="row-inline">
+              <input id="adblock-custom-url" placeholder="https://…" />
+              <button type="button" class="btn ghost" id="btn-adblock-custom-add">Adicionar</button>
+            </div>
+            <ul id="adblock-custom-lists" class="adblock-allowlist"></ul>
+            <h3>Regras personalizadas</h3>
+            <textarea id="adblock-user-rules" class="adblock-user-rules" rows="5" spellcheck="false" placeholder="||ads.example.com^&#10;##.ad-banner"></textarea>
+            <button type="button" class="btn ghost" id="btn-adblock-user-rules">Aplicar regras</button>
+            <h3>Atualização automática</h3>
+            <label
+              >Intervalo
+              <select name="adblockUpdateInterval" id="adblock-update-interval">
+                <option value="6">6 h</option>
+                <option value="12">12 h</option>
+                <option value="24" selected>24 h</option>
+                <option value="48">48 h</option>
+              </select>
+            </label>
+            <button type="button" class="btn ghost" id="btn-adblock-update">Atualizar agora</button>
+            <h3>Permitir anúncios em</h3>
+            <div class="row-inline">
+              <input id="adblock-allow-input" placeholder="dominio.com" />
+              <button type="button" class="btn ghost" id="btn-adblock-allow-add">Adicionar</button>
+            </div>
+            <ul id="adblock-allowlist" class="adblock-allowlist"></ul>
+          </section>
+
+          <section class="settings-pane" data-pane="extensoes" id="extensoes-section">
+            <p class="muted-note">
+              Extensões Chrome/Edge (MV2/MV3) por pasta, arquivo .crx ou ID/URL da loja.
+              Regras DNR estáticas são aplicadas pelo shim do MultiHeiz (rede).
+            </p>
+            <p class="muted-note" id="ext-coexistence-hint" hidden></p>
+            <div class="row-inline ext-install-row">
+              <button type="button" class="btn ghost" id="btn-ext-unpacked">Pasta descompactada…</button>
+              <button type="button" class="btn ghost" id="btn-ext-crx">Arquivo .crx…</button>
+            </div>
+            <h3>Chrome Web Store / Edge Add-ons</h3>
+            <div class="row-inline">
+              <input id="ext-store-input" placeholder="URL ou ID da extensão" />
+              <button type="button" class="btn ghost" id="btn-ext-store">Instalar</button>
+            </div>
+            <p class="muted-note" id="ext-status"></p>
+            <h3>Instaladas</h3>
+            <ul id="ext-list" class="ext-list"></ul>
+            <p class="muted-note">
+              Licença: camada própria (MIT). Não usamos electron-chrome-extensions (GPL-3) —
+              ver Sobre e docs/TASK-v1.9.notes.md.
+            </p>
+          </section>
+
+          <section class="settings-pane" data-pane="aparencia" id="appearance-section">
+            <label
+              >Tema
+              <select name="themePreset" id="theme-preset">
+                <option value="escuro">Escuro</option>
+                <option value="claro">Claro</option>
+                <option value="grafite">Grafite</option>
+                <option value="custom">Personalizado</option>
+              </select>
+            </label>
+            <div class="theme-colors">
+              <label>Destaque <input name="accent" type="color" id="theme-accent" /></label>
+              <label>Fundo <input name="background" type="color" id="theme-bg" /></label>
+              <label>Superfície <input name="surface" type="color" id="theme-surface" /></label>
+              <label>Texto <input name="text" type="color" id="theme-text" /></label>
+              <label>Cabeçalho do painel <input name="panelHeader" type="color" id="theme-header" /></label>
+              <label>Barra lateral <input name="sidebar" type="color" id="theme-sidebar" /></label>
+            </div>
+            <button type="button" id="btn-theme-reset" class="btn ghost">Restaurar padrão</button>
+          </section>
+
+          <section class="settings-pane" data-pane="memoria">
+            <label
+              >Limite global de RAM (MB, 0 = desligado)
+              <input name="memoryLimitMb" type="number" min="0" step="50" value="0" />
+            </label>
+            <label
+              >Limite por painel (MB, 0 = desligado)
+              <input name="panelMemoryLimitMb" type="number" min="0" step="25" value="0" />
+            </label>
+            <label class="check">
+              <input type="checkbox" name="hardMemoryLimit" />
+              Limite rígido (suspende também painéis visíveis menos usados, exceto o focado)
+            </label>
+            <label class="check">
+              <input type="checkbox" name="backgroundThrottling" />
+              Throttling de FPS em painéis não focados
+            </label>
+            <label
+              >FPS em segundo plano
+              <select name="backgroundFps">
+                <option value="1">1</option>
+                <option value="5">5</option>
+                <option value="15">15</option>
+                <option value="30">30</option>
+                <option value="60">60</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="settings-pane" data-pane="desempenho">
+            <label
+              >Predefinição de segundo plano
+              <select name="backgroundPreset" id="background-preset">
+                <option value="balanced">Equilibrado (padrão)</option>
+                <option value="always">Todas as janelas sempre ativas</option>
+                <option value="max-save">Economizar o máximo</option>
+              </select>
+            </label>
+            <label class="check">
+              <input type="checkbox" name="lightMode" id="light-mode" />
+              Modo leve (reduzir animações/transições CSS)
+            </label>
+            <label
+              >Limite de FPS em painéis ocultos
+              <select name="frameCapHidden">
+                <option value="20">20</option>
+                <option value="30" selected>30</option>
+                <option value="60">60</option>
+              </select>
+            </label>
+            <label
+              >Limite de FPS em todos os painéis (0 = off)
+              <select name="frameCapAll">
+                <option value="0" selected>0 (desligado)</option>
+                <option value="20">20</option>
+                <option value="30">30</option>
+              </select>
+            </label>
+            <label class="check">
+              <input type="checkbox" name="preferHighPerfGpu" id="prefer-gpu" />
+              Preferir GPU de alto desempenho (Windows — exige reinício)
+            </label>
+            <p class="muted-note">
+              Escala por painel via zoom é possível; fator de escala do dispositivo por painel não é
+              suportado pelo Electron — documentado em Desempenho.
+            </p>
+          </section>
+
+          <section class="settings-pane" data-pane="modulos">
+            <label class="check">
+              <input type="checkbox" name="modPlanilha" />
+              Planilha
+            </label>
+            <label class="check">
+              <input type="checkbox" name="modAlarmes" />
+              Alarmes e lembretes
+            </label>
+            <label class="check">
+              <input type="checkbox" name="modNotas" />
+              Notas
+            </label>
+          </section>
+
+          <section class="settings-pane" data-pane="atualizacoes">
+            <p>Versão atual: <strong id="settings-version">—</strong></p>
+            <label class="check-row">
+              <input type="checkbox" id="chk-auto-check-updates" checked />
+              Verificar automaticamente ao iniciar
+            </label>
+            <div class="updates-actions">
+              <button type="button" class="btn primary" id="btn-check-updates">Verificar atualizações</button>
+              <button type="button" class="btn ghost hidden" id="btn-download-update">Baixar</button>
+              <button type="button" class="btn primary hidden" id="btn-install-update">Reiniciar para atualizar</button>
+              <button type="button" class="btn ghost hidden" id="btn-open-releases">Abrir página de downloads</button>
+              <button type="button" class="btn ghost" id="btn-open-novidades">Ver novidades</button>
+            </div>
+            <p id="updates-status" class="muted-note"></p>
+            <p class="muted-note">Configurações e sessões são preservadas nas atualizações (pasta de dados intacta).</p>
+          </section>
+
+          <section class="settings-pane" data-pane="diagnosticos">
+            <div class="diag-actions">
+              <button type="button" class="btn ghost" id="btn-open-data">Abrir pasta de dados</button>
+              <button type="button" class="btn ghost" id="btn-export-diag">Exportar diagnóstico</button>
+            </div>
+            <pre id="diag-process" class="diag-box"></pre>
+            <h3>Painel em foco</h3>
+            <pre id="diag-adblock-focus" class="diag-box"></pre>
+            <h3>Bloqueador</h3>
+            <pre id="diag-adblock" class="diag-box"></pre>
+            <h3>Logs recentes</h3>
+            <pre id="diag-logs" class="diag-box tall"></pre>
+          </section>
+
+          <section class="settings-pane" data-pane="sobre">
+            <p><strong id="about-name">MultiHeiz</strong> <span id="about-version"></span></p>
+            <p class="muted-note">Electron <span id="about-electron"></span> · Chromium <span id="about-chrome"></span></p>
+            <p class="muted-note">Tudo gratuito — sem licenças, ativação ou paywall.</p>
+            <button type="button" class="btn ghost" id="btn-about-novidades">Novidades / Log de atualizações</button>
+            <button type="button" class="btn primary hidden" id="btn-kofi">Apoiar no Ko-fi</button>
+            <h3>Licenças de terceiros</h3>
+            <ul id="about-licenses" class="license-list">
+              <li>Electron — MIT</li>
+              <li>exceljs — MIT</li>
+              <li>@ghostery/adblocker-electron — MPL-2.0</li>
+              <li>electron-updater — MIT</li>
+              <li>adm-zip — MIT (unpack CRX)</li>
+              <li>Lucide icons — ISC (https://lucide.dev)</li>
+              <li>EasyList / EasyPrivacy / EasyList Portuguese — GPL-3.0+ / CC BY-SA 3.0+</li>
+              <li>uBlock Origin uAssets — GPL-3.0+</li>
+              <li>AdGuard filters — GPL-3.0+</li>
+              <li>Peter Lowe’s list — ver yoyo.org</li>
+              <li>
+                Extensões de terceiros: camada própria MIT em src/main/extensions/
+                (não empacota electron-chrome-extensions GPL-3; se no futuro for adotado,
+                o app distribuído precisaria ser GPL-3 ou licença proprietária do autor)
+              </li>
+            </ul>
+          </section>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog id="dlg-novidades" class="dlg-novidades">
+      <div class="novidades-shell">
+        <div class="novidades-head">
+          <h2>Novidades</h2>
+          <button type="button" class="btn ghost" id="btn-novidades-close">Fechar</button>
+        </div>
+        <p class="muted-note" id="novidades-intro">Log de atualizações do MultiHeiz</p>
+        <div id="novidades-list" class="novidades-list"></div>
+      </div>
+    </dialog>
+
+    <dialog id="dlg-favorite">
+      <form method="dialog" id="form-favorite">
+        <h2>Favorito</h2>
+        <label>Nome <input name="name" required maxlength="120" /></label>
+        <label>URL <input name="url" required /></label>
+        <label
+          >Pasta
+          <select name="folderId" id="fav-folder-select"></select>
+        </label>
+        <label
+          >Janela padrão
+          <select name="defaultWindowId" id="fav-window-select">
+            <option value="">Nenhuma</option>
+          </select>
+        </label>
+        <div class="dlg-actions">
+          <button type="submit" class="btn primary" value="ok">Salvar</button>
+          <button type="button" class="btn ghost" id="btn-fav-cancel">Cancelar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-open-target">
+      <form method="dialog" id="form-open-target">
+        <h2>Abrir em</h2>
+        <div class="dlg-actions stacked">
+          <button type="submit" class="btn primary" data-mode="current" value="ok">Janela atual</button>
+          <button type="button" class="btn ghost" data-mode="new" id="btn-open-new">Nova janela</button>
+        </div>
+        <label
+          >Janela específica
+          <select id="open-target-window"></select>
+        </label>
+        <div class="dlg-actions">
+          <button type="button" class="btn primary" id="btn-open-specific">Abrir</button>
+          <button type="button" class="btn ghost" id="btn-open-cancel">Cancelar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-snooze">
+      <form method="dialog" id="form-snooze">
+        <h2>Adiar lembrete</h2>
+        <p id="snooze-message"></p>
+        <div class="dlg-actions">
+          <button type="button" class="btn ghost" data-min="5">5 min</button>
+          <button type="button" class="btn ghost" data-min="10">10 min</button>
+          <button type="button" class="btn ghost" data-min="30">30 min</button>
+          <button type="button" class="btn ghost" id="btn-snooze-close">Fechar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-missed">
+      <form method="dialog" id="form-missed">
+        <h2 id="missed-title">Lembretes perdidos</h2>
+        <ul id="missed-list" class="missed-list"></ul>
+        <div class="dlg-actions">
+          <button type="button" class="btn primary" id="btn-missed-close">OK</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-pick-window">
+      <form method="dialog" id="form-pick-window">
+        <h2>Escolher janela</h2>
+        <p id="pick-window-message">A janela vinculada foi removida. Escolha outra:</p>
+        <label class="field">
+          <span>Janela</span>
+          <select id="pick-window-select"></select>
+        </label>
+        <div class="dlg-actions">
+          <button type="submit" class="btn primary" id="btn-pick-window-ok">Vincular</button>
+          <button type="button" class="btn ghost" id="btn-pick-window-cancel">Cancelar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-confirm">
+      <form method="dialog" id="form-confirm">
+        <p id="confirm-message"></p>
+        <div class="dlg-actions">
+          <button type="submit" class="btn danger" value="ok" id="confirm-ok">Remover</button>
+          <button type="button" class="btn ghost" id="confirm-cancel">Cancelar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="v16-ui.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

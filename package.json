@@ -1,0 +1,117 @@
+{
+  "name": "multiheiz",
+  "productName": "MultiHeiz",
+  "version": "1.0.0",
+  "description": "Navegador multi-janela com painéis e sessões independentes",
+  "homepage": "https://github.com/leoheiz/MultiHeiz",
+  "repository": "github:leoheiz/MultiHeiz",
+  "desktopName": "multiheiz.desktop",
+  "main": "src/main/main.js",
+  "author": {
+    "name": "Leo (leoheiz)",
+    "email": "leoheiz@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "selftest": "node tools/selftest.js",
+    "selftest:mem": "node tools/selftest-mem.js",
+    "selftest:ui": "node tools/selftest-ui.js",
+    "selftest:bg": "node tools/selftest-bg.js",
+    "selftest:v14": "node tools/selftest-v14.js",
+    "selftest:input": "node tools/selftest-input.js",
+    "selftest:v16": "node tools/selftest-v16.js",
+    "selftest:adblock": "node tools/selftest-adblock.js",
+    "selftest:packaged": "node tools/selftest-packaged.js",
+    "selftest:v18": "node tools/selftest-v18.js",
+    "selftest:v19": "node tools/selftest-v19.js",
+    "selftest:titlebar": "node tools/selftest-titlebar.js",
+    "selftest:ext": "node tools/selftest-ext.js",
+    "selftest:updater": "node tools/selftest-updater.js",
+    "check:adblock-real": "node tools/check-adblock-real.js",
+    "check:encoding": "node tools/check-encoding.js",
+    "clean": "node tools/clean-dist.js",
+    "predist": "npm run check:encoding && npm run clean",
+    "predist:win": "npm run check:encoding && npm run clean",
+    "predist:linux": "npm run check:encoding && npm run clean",
+    "dist": "electron-builder --win --linux",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "postdist": "node tools/release.js",
+    "postdist:win": "node tools/release.js",
+    "postdist:linux": "node tools/release.js",
+    "make-icon": "node tools/make-icon.js"
+  },
+  "build": {
+    "appId": "com.leo.multiheiz",
+    "productName": "MultiHeiz",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "!src/main/selftest-*.js",
+      "!tools",
+      "!tools/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/src/main/adblock/cosmetic-preload.js",
+      "**/src/preload/panel-preload.js"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "leoheiz",
+        "repo": "MultiHeiz",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Network",
+      "icon": "build/icon.png",
+      "maintainer": "Leo <leoheiz@users.noreply.github.com>",
+      "executableName": "multiheiz",
+      "syncDesktopName": true
+    },
+    "appImage": {
+      "artifactName": "MultiHeiz-${version}.${ext}"
+    },
+    "deb": {
+      "maintainer": "Leo <leoheiz@users.noreply.github.com>",
+      "artifactName": "multiheiz_${version}_amd64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "MultiHeiz",
+      "artifactName": "MultiHeiz-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "MultiHeiz-${version}-portable.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.1",
+    "adm-zip": "^0.5.18",
+    "electron-updater": "^6.6.2",
+    "exceljs": "^4.4.0"
+  }
+}

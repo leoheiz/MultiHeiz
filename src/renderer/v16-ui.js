@@ -1,0 +1,2330 @@
+'use strict';
+
+/**
+ * MultiHeiz v1.6 UI: managers (favorites/history/downloads), modules, settings helpers.
+ * Depends on hooks provided by app.js via window.__mhV16Hooks.
+ */
+(function () {
+  /** @type {any} */
+  const api = (window.MultiHeizV16 = {});
+
+  let activeManager = null;
+  let activeModule = null;
+  let pendingOpenUrl = null;
+  let pendingFavEdit = null;
+  let pendingSnoozeId = null;
+  let pendingPickReminderId = null;
+  let alarmesView = 'hoje';
+  let downloadsActive = 0;
+  let saveIndicatorTimer = null;
+
+  const ICO = {
+    star: 'M12 3l2.5 6.5L21 10l-5 4.2L17.5 21 12 17.3 6.5 21 8 14.2 3 10l6.5-.5L12 3z',
+    back: 'M15 6l-6 6 6 6',
+    // Lucide ISC — table / bell / sticky-note
+    table: 'M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18',
+    bell: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9',
+    bellClapper: 'M10.3 21a1.94 1.94 0 0 0 3.4 0',
+    sticky: 'M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3z',
+    stickyFold: 'M15 3v6h6',
+  };
+
+  function moduleIcon(id) {
+    if (id === 'planilha') {
+      return h('span', { className: 'mod-ico', html: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICO.table}"/></svg>` });
+    }
+    if (id === 'alarmes') {
+      return h('span', {
+        className: 'mod-ico',
+        html: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICO.bell}"/><path d="${ICO.bellClapper}"/></svg>`,
+      });
+    }
+    if (id === 'notas') {
+      return h('span', {
+        className: 'mod-ico',
+        html: `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICO.sticky}"/><path d="${ICO.stickyFold}"/></svg>`,
+      });
+    }
+    return null;
+  }
+
+  function hooks() {
+    return window.__mhV16Hooks || {};
+  }
+
+  function h(tag, attrs, ...children) {
+    const el = document.createElement(tag);
+    if (attrs) {
+      for (const [k, v] of Object.entries(attrs)) {
+        if (k === 'className') el.className = v;
+        else if (k === 'text') el.textContent = v;
+        else if (k === 'html') el.innerHTML = v;
+        else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+        else if (v === false || v == null) continue;
+        else el.setAttribute(k, v === true ? '' : String(v));
+      }
+    }
+    for (const c of children.flat()) {
+      if (c == null || c === false) continue;
+      el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    }
+    return el;
+  }
+
+  function pushOverlay(id) {
+    const hk = hooks();
+    if (hk.pushOverlay) hk.pushOverlay(id);
+  }
+
+  function popOverlay(id) {
+    const hk = hooks();
+    if (hk.popOverlay) hk.popOverlay(id);
+  }
+
+  function getState() {
+    return (hooks().getState && hooks().getState()) || { accounts: [], settings: {} };
+  }
+
+  function applyState(st) {
+    if (hooks().applyState) hooks().applyState(st);
+  }
+
+  function toast(msg) {
+    if (hooks().toast) hooks().toast(msg);
+  }
+
+  function showSaved() {
+    const el = document.getElementById('settings-saved');
+    if (!el) return;
+    el.classList.remove('hidden');
+    if (saveIndicatorTimer) clearTimeout(saveIndicatorTimer);
+    saveIndicatorTimer = setTimeout(() => el.classList.add('hidden'), 1200);
+  }
+
+  /* ---------- Managers ---------- */
+
+  function openManager(kind) {
+    closeModule();
+    const host = document.getElementById('manager-host');
+    const grid = document.getElementById('grid');
+    if (!host) return;
+    activeManager = kind;
+    host.classList.remove('hidden');
+    if (grid) grid.classList.add('dimmed-behind');
+    pushOverlay('manager-view');
+    renderManager();
+  }
+
+  function closeManager() {
+    const host = document.getElementById('manager-host');
+    const grid = document.getElementById('grid');
+    if (host) {
+      host.classList.add('hidden');
+      host.innerHTML = '';
+    }
+    if (grid) grid.classList.remove('dimmed-behind');
+    if (activeManager) popOverlay('manager-view');
+    activeManager = null;
+  }
+
+  async function renderManager() {
+    const host = document.getElementById('manager-host');
+    if (!host || !activeManager) return;
+    host.innerHTML = '';
+    const head = h('div', { className: 'manager-head' },
+      h('button', {
+        type: 'button',
+        className: 'btn icon ghost',
+        title: 'Voltar',
+        onClick: () => closeManager(),
+      }, (() => {
+        const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        s.setAttribute('class', 'ico');
+        s.setAttribute('viewBox', '0 0 24 24');
+        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        p.setAttribute('d', ICO.back);
+        s.appendChild(p);
+        return s;
+      })()),
+      h('h2', { text: activeManager === 'favorites' ? 'Favoritos' : activeManager === 'history' ? 'Histórico' : 'Downloads' })
+    );
+    host.appendChild(head);
+    const body = h('div', { className: 'manager-body' });
+    host.appendChild(body);
+    if (activeManager === 'favorites') await renderFavorites(body);
+    else if (activeManager === 'history') await renderHistory(body);
+    else if (activeManager === 'downloads') await renderDownloads(body);
+  }
+
+  async function renderFavorites(body) {
+    const data = await window.multiheiz.bookmarksList();
+    const search = h('input', { type: 'search', placeholder: 'Buscar favoritos…', className: 'mgr-search' });
+    const toolbar = h('div', { className: 'mgr-toolbar' },
+      search,
+      h('button', {
+        type: 'button', className: 'btn ghost', text: 'Nova pasta',
+        onClick: async () => {
+          const name = prompt('Nome da pasta');
+          if (!name) return;
+          await window.multiheiz.bookmarksFolderCreate(name);
+          renderManager();
+        },
+      }),
+      h('button', {
+        type: 'button', className: 'btn ghost', text: 'Exportar',
+        onClick: async () => {
+          const json = await window.multiheiz.bookmarksExport();
+          await navigator.clipboard.writeText(json);
+          toast('JSON copiado');
+        },
+      }),
+      h('button', {
+        type: 'button', className: 'btn ghost', text: 'Importar',
+        onClick: async () => {
+          const raw = prompt('Cole o JSON de favoritos');
+          if (!raw) return;
+          const res = await window.multiheiz.bookmarksImport(raw);
+          if (!res || !res.ok) {
+            toast((res && res.message) || 'Importação rejeitada');
+            return;
+          }
+          toast(`Importados ${res.count || 0} favoritos`);
+          renderManager();
+        },
+      })
+    );
+    body.appendChild(toolbar);
+    const list = h('div', { className: 'mgr-list' });
+    body.appendChild(list);
+
+    function paint(q) {
+      list.innerHTML = '';
+      const folders = data.folders || [];
+      for (const folder of folders) {
+        const items = (data.items || []).filter((it) => it.folderId === folder.id);
+        const filtered = q
+          ? items.filter((it) =>
+              (it.name || '').toLowerCase().includes(q) ||
+              (it.url || '').toLowerCase().includes(q)
+            )
+          : items;
+        if (q && !filtered.length && !folder.name.toLowerCase().includes(q)) continue;
+        list.appendChild(h('div', { className: 'mgr-folder-title', text: folder.name }));
+        for (const it of filtered) {
+          const row = h('div', { className: 'mgr-row' },
+            h('button', {
+              type: 'button', className: 'mgr-row-main',
+              onClick: () => openWithTarget(it.url, it.defaultWindowId),
+            },
+              h('strong', { text: it.name || it.url }),
+              h('span', { className: 'muted-note', text: it.url })
+            ),
+            h('button', {
+              type: 'button', className: 'btn ghost', text: 'Editar',
+              onClick: () => openFavoriteDialog(it),
+            }),
+            h('button', {
+              type: 'button', className: 'btn ghost', text: 'Remover',
+              onClick: async () => {
+                await window.multiheiz.bookmarksRemove(it.id);
+                renderManager();
+              },
+            })
+          );
+          list.appendChild(row);
+        }
+      }
+    }
+    search.addEventListener('input', () => paint(search.value.trim().toLowerCase()));
+    paint('');
+  }
+
+  async function renderHistory(body) {
+    const accounts = getState().accounts || [];
+    const filter = h('select', { className: 'mgr-filter' },
+      h('option', { value: '', text: 'Todas as janelas' }),
+      ...accounts.map((a) => h('option', { value: a.id, text: a.name }))
+    );
+    const search = h('input', { type: 'search', placeholder: 'Buscar…', className: 'mgr-search' });
+    const toolbar = h('div', { className: 'mgr-toolbar' },
+      search, filter,
+      h('button', {
+        type: 'button', className: 'btn ghost', text: 'Limpar…',
+        onClick: async () => {
+          const choice = prompt('Limpar: hour / today / 7days / all / window');
+          if (!choice) return;
+          if (choice === 'window' && filter.value) {
+            await window.multiheiz.historyClear({ windowId: filter.value });
+          } else {
+            await window.multiheiz.historyClear({ range: choice });
+          }
+          renderManager();
+        },
+      })
+    );
+    body.appendChild(toolbar);
+    const list = h('div', { className: 'mgr-list' });
+    body.appendChild(list);
+
+    async function paint() {
+      const entries = await window.multiheiz.historyQuery({
+        search: search.value.trim(),
+        windowId: filter.value || undefined,
+        limit: 500,
+      });
+      list.innerHTML = '';
+      /** @type {Map<string, any[]>} */
+      const byDay = new Map();
+      for (const e of entries) {
+        const d = new Date(e.time || 0);
+        const key = d.toLocaleDateString('pt-BR');
+        if (!byDay.has(key)) byDay.set(key, []);
+        byDay.get(key).push(e);
+      }
+      for (const [day, items] of byDay) {
+        list.appendChild(h('div', { className: 'mgr-folder-title', text: day }));
+        for (const e of items) {
+          const time = new Date(e.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          list.appendChild(h('div', { className: 'mgr-row' },
+            h('button', {
+              type: 'button', className: 'mgr-row-main',
+              onClick: () => openWithTarget(e.url, e.windowId),
+            },
+              h('strong', { text: `${time} · ${e.title || e.url}` }),
+              h('span', { className: 'muted-note', text: `${e.windowName || ''} · ${e.url}` })
+            ),
+            h('button', {
+              type: 'button', className: 'btn ghost', text: 'Excluir',
+              onClick: async () => {
+                await window.multiheiz.historyDelete(e.id);
+                paint();
+              },
+            })
+          ));
+        }
+      }
+    }
+    search.addEventListener('input', () => paint());
+    filter.addEventListener('change', () => paint());
+    await paint();
+  }
+
+  async function renderDownloads(body) {
+    const data = await window.multiheiz.downloadsList();
+    downloadsActive = data.activeCount || 0;
+    updateDownloadsBadge();
+    const list = h('div', { className: 'mgr-list' });
+    body.appendChild(list);
+    for (const it of data.items || []) {
+      const pct =
+        it.totalBytes > 0 ? Math.min(100, Math.round((it.receivedBytes / it.totalBytes) * 100)) : 0;
+      const stateLabel = {
+        progressing: 'Em andamento',
+        paused: 'Pausado',
+        completed: 'Concluído',
+        cancelled: 'Cancelado',
+        failed: 'Falhou',
+        interrupted: 'Interrompido',
+      }[it.state] || it.state;
+      const bar = h('div', { className: 'dl-progress' },
+        h('div', { className: 'dl-progress-bar', style: `width:${pct}%` })
+      );
+      const actions = h('div', { className: 'mgr-row-actions' });
+      if (it.state === 'progressing') {
+        actions.appendChild(h('button', { type: 'button', className: 'btn ghost', text: 'Pausar', onClick: async () => { await window.multiheiz.downloadsPause(it.id); renderManager(); } }));
+        actions.appendChild(h('button', { type: 'button', className: 'btn ghost', text: 'Cancelar', onClick: async () => { await window.multiheiz.downloadsCancel(it.id); renderManager(); } }));
+      }
+      if (it.state === 'paused') {
+        actions.appendChild(h('button', { type: 'button', className: 'btn ghost', text: 'Retomar', onClick: async () => { await window.multiheiz.downloadsResume(it.id); renderManager(); } }));
+        actions.appendChild(h('button', { type: 'button', className: 'btn ghost', text: 'Cancelar', onClick: async () => { await window.multiheiz.downloadsCancel(it.id); renderManager(); } }));
+      }
+      if (it.state === 'completed') {
+        actions.appendChild(h('button', { type: 'button', className: 'btn ghost', text: 'Abrir', onClick: () => window.multiheiz.downloadsOpen(it.id) }));
+        actions.appendChild(h('button', { type: 'button', className: 'btn ghost', text: 'Pasta', onClick: () => window.multiheiz.downloadsShow(it.id) }));
+      }
+      actions.appendChild(h('button', { type: 'button', className: 'btn ghost', text: 'Remover', onClick: async () => { await window.multiheiz.downloadsRemove(it.id); renderManager(); } }));
+
+      list.appendChild(h('div', { className: 'mgr-row dl-row' },
+        h('div', { className: 'mgr-row-main' },
+          h('strong', { text: it.filename }),
+          h('span', { className: 'muted-note', text: `${stateLabel} · ${it.windowName || ''} · ${formatBytes(it.receivedBytes)}/${formatBytes(it.totalBytes)} · ${formatSpeed(it.speed)}` }),
+          bar
+        ),
+        actions
+      ));
+    }
+    if (!(data.items || []).length) {
+      list.appendChild(h('p', { className: 'muted-note', text: 'Nenhum download ainda.' }));
+    }
+  }
+
+  function formatBytes(n) {
+    const v = Number(n) || 0;
+    if (v < 1024) return `${v} B`;
+    if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+    return `${(v / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function formatSpeed(n) {
+    if (!n) return '—';
+    return `${formatBytes(n)}/s`;
+  }
+
+  function updateDownloadsBadge() {
+    const badge = document.getElementById('downloads-badge');
+    if (!badge) return;
+    if (downloadsActive > 0) {
+      badge.textContent = String(downloadsActive);
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+
+  /* ---------- Open target ---------- */
+
+  function openWithTarget(url, defaultWindowId) {
+    pendingOpenUrl = url;
+    const dlg = document.getElementById('dlg-open-target');
+    const sel = document.getElementById('open-target-window');
+    sel.innerHTML = '';
+    for (const a of getState().accounts || []) {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name;
+      if (defaultWindowId && a.id === defaultWindowId) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    pushOverlay('dlg-open-target');
+    dlg.showModal();
+    if (defaultWindowId) {
+      // auto-select path: user still sees dialog, but specific is preselected
+    }
+  }
+
+  async function doOpen(mode, windowId) {
+    if (!pendingOpenUrl) return;
+    const res = await window.multiheiz.bookmarksOpen({
+      url: pendingOpenUrl,
+      mode,
+      windowId: windowId || null,
+    });
+    if (res && res.state) applyState(res.state);
+    pendingOpenUrl = null;
+    const dlg = document.getElementById('dlg-open-target');
+    if (dlg.open) dlg.close();
+    closeManager();
+  }
+
+  /* ---------- Favorite dialog / star ---------- */
+
+  async function openFavoriteDialog(existing) {
+    pendingFavEdit = existing || null;
+    const form = document.getElementById('form-favorite');
+    const folders = (await window.multiheiz.bookmarksList()).folders || [];
+    const folderSel = document.getElementById('fav-folder-select');
+    folderSel.innerHTML = '';
+    for (const f of folders) {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = f.name;
+      folderSel.appendChild(opt);
+    }
+    const winSel = document.getElementById('fav-window-select');
+    winSel.innerHTML = '<option value="">Nenhuma</option>';
+    for (const a of getState().accounts || []) {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name;
+      winSel.appendChild(opt);
+    }
+    if (existing) {
+      form.name.value = existing.name || '';
+      form.url.value = existing.url || '';
+      folderSel.value = existing.folderId || '';
+      winSel.value = existing.defaultWindowId || '';
+    }
+    pushOverlay('dlg-favorite');
+    document.getElementById('dlg-favorite').showModal();
+  }
+
+  async function favoriteCurrentUrl() {
+    const hk = hooks();
+    const info = hk.getFocusedNav && hk.getFocusedNav();
+    if (!info || !info.url) {
+      toast('Nenhuma página para favoritar');
+      return;
+    }
+    const existing = await window.multiheiz.bookmarksFindUrl(info.url);
+    await openFavoriteDialog(
+      existing || {
+        url: info.url,
+        name: info.title || info.url,
+        title: info.title || '',
+        folderId: null,
+        defaultWindowId: info.accountId || null,
+      }
+    );
+  }
+
+  /* ---------- Modules ---------- */
+
+  function modulesEnabled() {
+    const m = (getState().settings && getState().settings.modules) || {};
+    return {
+      planilha: m.planilha !== false,
+      alarmes: m.alarmes !== false,
+      notas: m.notas !== false,
+    };
+  }
+
+  function renderSidebarModules() {
+    const list = document.getElementById('sidebar-modules-list');
+    const wrap = document.getElementById('sidebar-modules');
+    if (!list || !wrap) return;
+    list.innerHTML = '';
+    const en = modulesEnabled();
+    const items = [
+      { id: 'planilha', label: 'Planilha', on: en.planilha },
+      { id: 'alarmes', label: 'Alarmes', on: en.alarmes },
+      { id: 'notas', label: 'Notas', on: en.notas },
+    ].filter((x) => x.on);
+    if (!items.length) {
+      wrap.classList.add('hidden');
+      return;
+    }
+    wrap.classList.remove('hidden');
+    for (const it of items) {
+      const ico = moduleIcon(it.id);
+      const label = h('span', { className: 'mod-label', text: it.label });
+      const btn = h(
+        'button',
+        {
+          type: 'button',
+          className: 'sidebar-module-btn' + (activeModule === it.id ? ' active' : ''),
+          title: it.label,
+          'data-label': it.label,
+          onClick: () => openModule(it.id),
+        },
+        ico,
+        label
+      );
+      list.appendChild(btn);
+    }
+  }
+
+  function openModule(id) {
+    closeManager();
+    const host = document.getElementById('module-host');
+    const grid = document.getElementById('grid');
+    if (!host) return;
+    activeModule = id;
+    host.classList.remove('hidden');
+    if (grid) grid.classList.add('hidden');
+    pushOverlay('module-view');
+    renderModule();
+    renderSidebarModules();
+  }
+
+  function closeModule() {
+    const host = document.getElementById('module-host');
+    const grid = document.getElementById('grid');
+    if (host) {
+      host.classList.add('hidden');
+      host.innerHTML = '';
+    }
+    if (grid) grid.classList.remove('hidden');
+    if (activeModule) popOverlay('module-view');
+    activeModule = null;
+    renderSidebarModules();
+    if (hooks().scheduleSync) hooks().scheduleSync();
+  }
+
+  async function renderModule() {
+    const host = document.getElementById('module-host');
+    if (!host || !activeModule) return;
+    host.innerHTML = '';
+    const head = h('div', { className: 'module-head' },
+      h('button', {
+        type: 'button', className: 'btn ghost', text: '← Janelas',
+        onClick: () => closeModule(),
+      }),
+      h('h2', {
+        text:
+          activeModule === 'planilha'
+            ? 'Planilha'
+            : activeModule === 'alarmes'
+              ? 'Alarmes e lembretes'
+              : 'Notas',
+      })
+    );
+    host.appendChild(head);
+    const body = h('div', { className: 'module-body' });
+    host.appendChild(body);
+    if (activeModule === 'planilha') await renderPlanilha(body);
+    else if (activeModule === 'alarmes') await renderAlarmes(body);
+    else if (activeModule === 'notas') await renderNotas(body);
+  }
+
+  /* ---- Planilha UI ---- */
+  let planilhaWb = null;
+  /** @type {{ editingRef: string|null, formulaMode: boolean, anchor: {c:number,r:number}|null, sel: {c0:number,r0:number,c1:number,r1:number}|null, skipBlur: boolean }} */
+  let planilhaSel = {
+    editingRef: null,
+    formulaMode: false,
+    anchor: null,
+    sel: null,
+    skipBlur: false,
+    dragging: false,
+  };
+  /** @type {(() => void) | null} */
+  let planilhaPaintSelection = null;
+  /** @type {((ref: string) => boolean) | null} */
+  let planilhaInsertRef = null;
+
+  function colLetters(c) {
+    return String.fromCharCode(65 + c);
+  }
+
+  function cellRefAt(c, r) {
+    return `${colLetters(c)}${r + 1}`;
+  }
+
+  function formatRangeRefUi(c0, r0, c1, r1) {
+    const ca = Math.min(c0, c1);
+    const cb = Math.max(c0, c1);
+    const ra = Math.min(r0, r1);
+    const rb = Math.max(r0, r1);
+    if (ca === cb && ra === rb) return cellRefAt(ca, ra);
+    return `${cellRefAt(ca, ra)}:${cellRefAt(cb, rb)}`;
+  }
+
+  function formatColumnRefUi(c) {
+    const L = colLetters(c);
+    return `${L}:${L}`;
+  }
+
+  async function renderPlanilha(body) {
+    const list = await window.multiheiz.planilhaList();
+    const side = h('div', { className: 'planilha-side' });
+    const main = h('div', { className: 'planilha-main' });
+    body.append(side, main);
+    side.appendChild(h('button', {
+      type: 'button', className: 'btn primary', text: 'Nova pasta',
+      onClick: async () => {
+        planilhaWb = await window.multiheiz.planilhaCreate('Pasta de trabalho');
+        renderModule();
+      },
+    }));
+    side.appendChild(h('button', {
+      type: 'button', className: 'btn ghost', text: 'Importar .xlsx',
+      onClick: async () => {
+        const r = await window.multiheiz.planilhaImport();
+        if (r && r.workbook) {
+          planilhaWb = r.workbook;
+          renderModule();
+        }
+      },
+    }));
+    for (const wb of list) {
+      side.appendChild(h('button', {
+        type: 'button',
+        className: 'planilha-wb-btn' + (planilhaWb && planilhaWb.id === wb.id ? ' active' : ''),
+        text: wb.name,
+        onClick: async () => {
+          planilhaWb = await window.multiheiz.planilhaGet(wb.id);
+          renderModule();
+        },
+      }));
+    }
+    if (!planilhaWb && list[0]) {
+      planilhaWb = await window.multiheiz.planilhaGet(list[0].id);
+    }
+    if (!planilhaWb) {
+      main.appendChild(h('p', { className: 'muted-note', text: 'Crie ou importe uma planilha.' }));
+      return;
+    }
+    const sheet =
+      (planilhaWb.sheets || []).find((s) => s.id === planilhaWb.activeSheetId) ||
+      (planilhaWb.sheets || [])[0];
+    const tabs = h('div', { className: 'planilha-tabs' });
+    for (const sh of planilhaWb.sheets || []) {
+      tabs.appendChild(h('button', {
+        type: 'button',
+        className: 'btn ghost' + (sh.id === sheet.id ? ' active' : ''),
+        text: sh.name,
+        onClick: async () => {
+          planilhaWb = await window.multiheiz.planilhaSetActiveSheet({
+            workbookId: planilhaWb.id,
+            sheetId: sh.id,
+          });
+          renderModule();
+        },
+      }));
+    }
+    tabs.appendChild(h('button', {
+      type: 'button', className: 'btn ghost', text: '+',
+      onClick: async () => {
+        planilhaWb = await window.multiheiz.planilhaAddSheet({ workbookId: planilhaWb.id });
+        renderModule();
+      },
+    }));
+    tabs.appendChild(h('button', {
+      type: 'button', className: 'btn ghost', text: 'Exportar',
+      onClick: () => window.multiheiz.planilhaExport(planilhaWb.id),
+    }));
+    main.appendChild(tabs);
+
+    const rows = 20;
+    const cols = 10;
+    const formulaBar = h('div', { className: 'sheet-formula-bar' });
+    const formulaLabel = h('span', { className: 'muted-note', text: 'fx' });
+    const formulaInput = h('input', {
+      type: 'text',
+      placeholder: 'Fórmula ou valor',
+      'data-role': 'formula-bar',
+    });
+    formulaBar.append(formulaLabel, formulaInput);
+    main.appendChild(formulaBar);
+
+    const grid = h('div', { className: 'sheet-grid', tabIndex: 0 });
+    /** @type {Map<string, HTMLInputElement>} */
+    const cellInputs = new Map();
+    /** @type {HTMLElement[]} */
+    const colHeaders = [];
+
+    function paintSelection() {
+      for (const [ref, el] of cellInputs) {
+        el.classList.remove('selected');
+        const m = /^([A-Z]+)(\d+)$/.exec(ref);
+        if (!m || !planilhaSel.sel) continue;
+        const c = m[1].charCodeAt(0) - 65;
+        const r = Number(m[2]) - 1;
+        const { c0, r0, c1, r1 } = planilhaSel.sel;
+        if (c >= Math.min(c0, c1) && c <= Math.max(c0, c1) && r >= Math.min(r0, r1) && r <= Math.max(r0, r1)) {
+          el.classList.add('selected');
+        }
+      }
+      for (let c = 0; c < colHeaders.length; c++) {
+        colHeaders[c].classList.toggle(
+          'col-selected',
+          !!(
+            planilhaSel.sel &&
+            planilhaSel.sel.r0 === 0 &&
+            planilhaSel.sel.r1 === rows - 1 &&
+            c >= Math.min(planilhaSel.sel.c0, planilhaSel.sel.c1) &&
+            c <= Math.max(planilhaSel.sel.c0, planilhaSel.sel.c1)
+          )
+        );
+      }
+    }
+
+    function getEditingInput() {
+      return planilhaSel.editingRef ? cellInputs.get(planilhaSel.editingRef) : null;
+    }
+
+    function insertRefIntoFormula(refText) {
+      const input = getEditingInput();
+      if (!input || !planilhaSel.formulaMode) return false;
+      planilhaSel.skipBlur = true;
+      const start = input.selectionStart != null ? input.selectionStart : input.value.length;
+      const end = input.selectionEnd != null ? input.selectionEnd : start;
+      const before = input.value.slice(0, start);
+      const after = input.value.slice(end);
+      input.value = before + refText + after;
+      const caret = before.length + refText.length;
+      input.setSelectionRange(caret, caret);
+      formulaInput.value = input.value;
+      input.focus();
+      setTimeout(() => {
+        planilhaSel.skipBlur = false;
+      }, 0);
+      return true;
+    }
+
+    function beginEdit(ref, input, raw) {
+      planilhaSel.editingRef = ref;
+      planilhaSel.formulaMode = String(raw || input.value || '').startsWith('=');
+      input.value = raw || '';
+      formulaInput.value = input.value;
+    }
+
+    async function commitEdit(ref, input) {
+      if (planilhaSel.skipBlur) return;
+      const newRaw = input.value;
+      planilhaSel.editingRef = null;
+      planilhaSel.formulaMode = false;
+      planilhaWb = await window.multiheiz.planilhaSetCell({
+        workbookId: planilhaWb.id,
+        sheetId: sheet.id,
+        ref,
+        raw: newRaw,
+      });
+      renderModule();
+    }
+
+    const headerRow = h('div', { className: 'sheet-row header' });
+    headerRow.appendChild(h('div', { className: 'sheet-cell corner', text: '' }));
+    for (let c = 0; c < cols; c++) {
+      const head = h('div', {
+        className: 'sheet-cell head',
+        text: colLetters(c),
+        'data-col': String(c),
+      });
+      head.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        planilhaSel.sel = { c0: c, r0: 0, c1: c, r1: rows - 1 };
+        planilhaSel.anchor = { c, r: 0 };
+        paintSelection();
+        if (planilhaSel.formulaMode && planilhaSel.editingRef) {
+          insertRefIntoFormula(formatColumnRefUi(c));
+        }
+      });
+      colHeaders.push(head);
+      headerRow.appendChild(head);
+    }
+    grid.appendChild(headerRow);
+
+    planilhaPaintSelection = paintSelection;
+    planilhaInsertRef = insertRefIntoFormula;
+
+    for (let r = 0; r < rows; r++) {
+      const row = h('div', { className: 'sheet-row' });
+      row.appendChild(h('div', { className: 'sheet-cell head', text: String(r + 1) }));
+      for (let c = 0; c < cols; c++) {
+        const ref = cellRefAt(c, r);
+        const disp = (sheet.display && sheet.display[ref]) || {};
+        const raw = disp.raw || (sheet.cells && sheet.cells[ref] && sheet.cells[ref].raw) || '';
+        const val = disp.value != null ? disp.value : raw;
+        const input = h('input', {
+          className: 'sheet-cell',
+          value: String(val === 0 && !raw ? '' : val ?? ''),
+          title: raw,
+          'data-ref': ref,
+          'data-c': String(c),
+          'data-r': String(r),
+        });
+        cellInputs.set(ref, input);
+
+        input.addEventListener('focus', () => {
+          beginEdit(ref, input, raw);
+        });
+        input.addEventListener('input', () => {
+          planilhaSel.formulaMode = input.value.startsWith('=');
+          formulaInput.value = input.value;
+        });
+        input.addEventListener('blur', async () => {
+          await commitEdit(ref, input);
+        });
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+            // Inside cell editor: select text (default) — do not select all sheet cells
+            return;
+          }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+          }
+        });
+        input.addEventListener('mousedown', (e) => {
+          if (planilhaSel.formulaMode && planilhaSel.editingRef && planilhaSel.editingRef !== ref) {
+            e.preventDefault();
+            if (e.shiftKey && planilhaSel.anchor) {
+              const range = formatRangeRefUi(planilhaSel.anchor.c, planilhaSel.anchor.r, c, r);
+              planilhaSel.sel = {
+                c0: planilhaSel.anchor.c,
+                r0: planilhaSel.anchor.r,
+                c1: c,
+                r1: r,
+              };
+              insertRefIntoFormula(range);
+            } else {
+              planilhaSel.anchor = { c, r };
+              planilhaSel.sel = { c0: c, r0: r, c1: c, r1: r };
+              insertRefIntoFormula(ref);
+            }
+            paintSelection();
+            return;
+          }
+          if (e.shiftKey && planilhaSel.anchor) {
+            e.preventDefault();
+            planilhaSel.sel = {
+              c0: planilhaSel.anchor.c,
+              r0: planilhaSel.anchor.r,
+              c1: c,
+              r1: r,
+            };
+            paintSelection();
+            return;
+          }
+          planilhaSel.anchor = { c, r };
+          planilhaSel.sel = { c0: c, r0: r, c1: c, r1: r };
+          planilhaSel.dragging = true;
+          paintSelection();
+        });
+        input.addEventListener('mouseenter', () => {
+          if (!planilhaSel.dragging) return;
+          if (!planilhaSel.anchor) return;
+          planilhaSel.sel = {
+            c0: planilhaSel.anchor.c,
+            r0: planilhaSel.anchor.r,
+            c1: c,
+            r1: r,
+          };
+          paintSelection();
+        });
+        row.appendChild(input);
+      }
+      grid.appendChild(row);
+    }
+
+    grid.addEventListener('keydown', (e) => {
+      if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        const active = document.activeElement;
+        if (active && active.tagName === 'INPUT' && active.classList.contains('sheet-cell')) {
+          // editor: select text only
+          return;
+        }
+        e.preventDefault();
+        planilhaSel.sel = { c0: 0, r0: 0, c1: cols - 1, r1: rows - 1 };
+        planilhaSel.anchor = { c: 0, r: 0 };
+        paintSelection();
+      }
+    });
+
+    formulaInput.addEventListener('focus', () => {
+      if (!planilhaSel.editingRef && planilhaSel.sel) {
+        const ref = cellRefAt(planilhaSel.sel.c0, planilhaSel.sel.r0);
+        const input = cellInputs.get(ref);
+        if (input) {
+          input.focus();
+        }
+      }
+    });
+    formulaInput.addEventListener('input', () => {
+      const input = getEditingInput();
+      if (input) {
+        input.value = formulaInput.value;
+        planilhaSel.formulaMode = formulaInput.value.startsWith('=');
+      }
+    });
+
+    main.appendChild(grid);
+    paintSelection();
+
+    // Expose helpers for selftest
+    api._planilhaTest = {
+      formatRangeRef: formatRangeRefUi,
+      formatColumnRef: formatColumnRefUi,
+      cellRefAt,
+      getSel: () => ({ ...planilhaSel }),
+      insertRefIntoFormula,
+      setFormulaMode: (on) => {
+        planilhaSel.formulaMode = !!on;
+      },
+      setEditing: (ref) => {
+        const input = cellInputs.get(ref);
+        if (!input) return;
+        input.focus();
+        planilhaSel.editingRef = ref;
+        planilhaSel.formulaMode = true;
+        input.value = '=';
+        formulaInput.value = '=';
+      },
+      getCellValue: (ref) => {
+        const input = cellInputs.get(ref);
+        return input ? input.value : null;
+      },
+      selectAll: () => {
+        planilhaSel.sel = { c0: 0, r0: 0, c1: cols - 1, r1: rows - 1 };
+        paintSelection();
+        return planilhaSel.sel;
+      },
+      clickCell: (c, r, opts) => {
+        const ref = cellRefAt(c, r);
+        const input = cellInputs.get(ref);
+        if (!input) return null;
+        const ev = new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          shiftKey: !!(opts && opts.shift),
+        });
+        input.dispatchEvent(ev);
+        return { ref, value: getEditingInput() && getEditingInput().value, sel: planilhaSel.sel };
+      },
+      clickColHeader: (c) => {
+        const head = colHeaders[c];
+        if (!head) return null;
+        head.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        return { ref: formatColumnRefUi(c), value: getEditingInput() && getEditingInput().value };
+      },
+    };
+  }
+
+  /* ---- Alarmes UI ---- */
+  async function goToReminderWindow(reminder) {
+    if (!reminder) return { ok: false, reason: 'no-reminder' };
+    // Prefer live main state (renderer cache can lag after selftest / IPC updates)
+    let st = getState();
+    try {
+      const fresh = await window.multiheiz.getState();
+      if (fresh) {
+        applyState(fresh);
+        st = fresh;
+      }
+    } catch {
+      /* keep local */
+    }
+    const wid = reminder.windowId;
+    if (!wid || !(st.accounts || []).some((a) => a.id === wid)) {
+      openPickWindowDialog(reminder);
+      return { ok: false, reason: 'missing-window' };
+    }
+    const hk = hooks();
+    if (hk.focusAccount) {
+      const r = await hk.focusAccount(wid);
+      return r || { ok: true, reloaded: false };
+    }
+    return { ok: false, reason: 'no-hook' };
+  }
+
+  function openPickWindowDialog(reminder) {
+    pendingPickReminderId = reminder && reminder.id;
+    const dlg = document.getElementById('dlg-pick-window');
+    const sel = document.getElementById('pick-window-select');
+    const msg = document.getElementById('pick-window-message');
+    if (!dlg || !sel) return;
+    const st = getState();
+    sel.innerHTML = '';
+    for (const a of st.accounts || []) {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name || a.id;
+      sel.appendChild(opt);
+    }
+    if (msg) {
+      msg.textContent = sel.options.length
+        ? 'A janela vinculada foi removida. Escolha outra:'
+        : 'Nenhuma janela disponível. Crie uma janela primeiro.';
+    }
+    pushOverlay('dlg-pick-window');
+    dlg.showModal();
+  }
+
+  async function renderAlarmes(body) {
+    const data = await window.multiheiz.alarmesList();
+    const views = h('div', { className: 'alarmes-views' });
+    const viewDefs = [
+      { id: 'hoje', label: 'Hoje' },
+      { id: 'proximos', label: 'Próximos' },
+      { id: 'recorrentes', label: 'Recorrentes' },
+      { id: 'concluidos', label: 'Concluídos' },
+    ];
+    for (const v of viewDefs) {
+      views.appendChild(h('button', {
+        type: 'button',
+        className: 'btn ghost' + (alarmesView === v.id ? ' active' : ''),
+        text: v.label,
+        onClick: () => {
+          alarmesView = v.id;
+          renderModule();
+        },
+      }));
+    }
+    body.appendChild(views);
+
+    const col = h('div', { className: 'alarmes-cols' });
+    const remCol = h('div', { className: 'alarmes-col' }, h('h3', { text: 'Lembretes' }));
+    const tmrCol = h('div', { className: 'alarmes-col' }, h('h3', { text: 'Timers' }));
+    col.append(remCol, tmrCol);
+    body.appendChild(col);
+
+    remCol.appendChild(h('button', {
+      type: 'button', className: 'btn primary', text: 'Novo lembrete (+1 min)',
+      onClick: async () => {
+        const focused = hooks().getFocusedNav && hooks().getFocusedNav();
+        await window.multiheiz.alarmesAddReminder({
+          title: 'Lembrete',
+          kind: 'one-off',
+          at: Date.now() + 60000,
+          priority: 'normal',
+          windowId: focused && focused.accountId ? focused.accountId : null,
+        });
+        renderModule();
+      },
+    }));
+
+    const filtered = await window.multiheiz.alarmesFilter(alarmesView);
+    for (const r of filtered || []) {
+      const pri = r.priority || 'normal';
+      const next = r.snoozeUntil || r.nextAt || r.at;
+      remCol.appendChild(h('div', {
+        className: `mgr-row alarmes-row-pri-${pri}`,
+      },
+        h('div', { className: 'mgr-row-main' },
+          h('div', {},
+            h('span', { className: `alarmes-priority ${pri}`, title: pri }),
+            h('strong', { text: r.title })
+          ),
+          h('span', {
+            className: 'muted-note',
+            text: `${r.kind}${r.snoozeUntil ? ' · adiado' : ''} · ${pri} · ${next ? new Date(next).toLocaleString('pt-BR') : '—'}`,
+          })
+        ),
+        h('button', {
+          type: 'button', className: 'btn ghost', text: 'Ir até a janela',
+          onClick: () => goToReminderWindow(r),
+        }),
+        alarmesView !== 'concluidos'
+          ? h('button', {
+            type: 'button', className: 'btn ghost', text: 'Concluir',
+            onClick: async () => {
+              await window.multiheiz.alarmesCompleteReminder(r.id);
+              renderModule();
+            },
+          })
+          : null,
+        h('button', {
+          type: 'button', className: 'btn ghost', text: 'Remover',
+          onClick: async () => {
+            await window.multiheiz.alarmesRemoveReminder(r.id);
+            renderModule();
+          },
+        })
+      ));
+    }
+    if (!(filtered || []).length) {
+      remCol.appendChild(h('p', { className: 'muted-note', text: 'Nenhum lembrete nesta vista.' }));
+    }
+
+    tmrCol.appendChild(h('button', {
+      type: 'button', className: 'btn primary', text: 'Timer 1 min',
+      onClick: async () => {
+        const t = await window.multiheiz.alarmesAddTimer({ title: 'Timer', durationMs: 60000 });
+        await window.multiheiz.alarmesStartTimer(t.id);
+        renderModule();
+      },
+    }));
+    for (const t of data.timers || []) {
+      const left = t.running
+        ? Math.max(0, (t.endsAt || 0) - Date.now())
+        : t.remainingMs || t.durationMs;
+      tmrCol.appendChild(h('div', { className: 'mgr-row' },
+        h('div', { className: 'mgr-row-main' },
+          h('strong', { text: t.title }),
+          h('span', { className: 'muted-note', text: `${Math.ceil(left / 1000)}s · ${t.running ? 'rodando' : 'pausado'}` })
+        ),
+        h('button', {
+          type: 'button', className: 'btn ghost', text: t.running ? 'Pausar' : 'Iniciar',
+          onClick: async () => {
+            if (t.running) await window.multiheiz.alarmesPauseTimer(t.id);
+            else await window.multiheiz.alarmesStartTimer(t.id);
+            renderModule();
+          },
+        }),
+        h('button', {
+          type: 'button', className: 'btn ghost', text: 'Reset',
+          onClick: async () => {
+            await window.multiheiz.alarmesResetTimer(t.id);
+            renderModule();
+          },
+        })
+      ));
+    }
+
+    api._alarmesTest = {
+      goToReminderWindow,
+      getView: () => alarmesView,
+      setView: (v) => {
+        alarmesView = v;
+      },
+    };
+  }
+
+  /* ---- Notas UI ---- */
+  let notasCurrent = null;
+  let notasPreview = false;
+  let notasSaveTimer = null;
+
+  async function renderNotas(body) {
+    const notes = await window.multiheiz.notasList();
+    const side = h('div', { className: 'notas-side' });
+    const main = h('div', { className: 'notas-main' });
+    body.append(side, main);
+    const search = h('input', { type: 'search', placeholder: 'Buscar notas…', className: 'mgr-search' });
+    side.appendChild(search);
+    side.appendChild(h('button', {
+      type: 'button', className: 'btn primary', text: 'Nova nota',
+      onClick: async () => {
+        notasCurrent = await window.multiheiz.notasCreate('Nova nota');
+        notasPreview = false;
+        renderModule();
+      },
+    }));
+    const list = h('div', { className: 'notas-list' });
+    side.appendChild(list);
+
+    function paintList(q) {
+      list.innerHTML = '';
+      for (const n of notes) {
+        if (q && !(n.title || '').toLowerCase().includes(q) && !(n.body || '').toLowerCase().includes(q)) continue;
+        list.appendChild(h('button', {
+          type: 'button',
+          className: 'notas-item' + (notasCurrent && notasCurrent.id === n.id ? ' active' : ''),
+          text: n.title || 'Sem título',
+          onClick: async () => {
+            notasCurrent = await window.multiheiz.notasGet(n.id);
+            renderModule();
+          },
+        }));
+      }
+    }
+    search.addEventListener('input', () => paintList(search.value.trim().toLowerCase()));
+    paintList('');
+
+    if (!notasCurrent && notes[0]) notasCurrent = notes[0];
+    if (!notasCurrent) {
+      main.appendChild(h('p', { className: 'muted-note', text: 'Nenhuma nota.' }));
+      return;
+    }
+
+    const title = h('input', { className: 'notas-title', value: notasCurrent.title || '' });
+    const toolbar = h('div', { className: 'notas-toolbar' },
+      h('button', {
+        type: 'button', className: 'btn ghost', text: notasPreview ? 'Editar' : 'Pré-visualizar',
+        onClick: () => {
+          notasPreview = !notasPreview;
+          renderModule();
+        },
+      }),
+      h('button', {
+        type: 'button', className: 'btn ghost', text: 'Excluir',
+        onClick: async () => {
+          await window.multiheiz.notasRemove(notasCurrent.id);
+          notasCurrent = null;
+          renderModule();
+        },
+      })
+    );
+    main.append(title, toolbar);
+
+    async function autosave(fields) {
+      if (notasSaveTimer) clearTimeout(notasSaveTimer);
+      notasSaveTimer = setTimeout(async () => {
+        notasCurrent = await window.multiheiz.notasUpdate({ id: notasCurrent.id, ...fields });
+      }, 350);
+    }
+
+    title.addEventListener('input', () => autosave({ title: title.value }));
+
+    if (notasPreview) {
+      const html = await window.multiheiz.notasPreview(notasCurrent.body || '');
+      const preview = h('div', { className: 'notas-preview' });
+      preview.innerHTML = html;
+      main.appendChild(preview);
+    } else {
+      const ta = h('textarea', { className: 'notas-editor' });
+      ta.value = notasCurrent.body || '';
+      ta.addEventListener('input', () => autosave({ body: ta.value }));
+      main.appendChild(ta);
+    }
+  }
+
+  /* ---------- Novidades / changelog (v1.8 B9) ---------- */
+
+  let novidadesPendingMark = false;
+
+  function tagClass(tag) {
+    const t = String(tag || '');
+    if (t === 'Novo') return 'tag-novo';
+    if (t === 'Melhoria') return 'tag-melhoria';
+    if (t === 'Correção') return 'tag-correcao';
+    return 'tag-melhoria';
+  }
+
+  /**
+   * @param {{ auto?: boolean, markSeen?: boolean }} [opts]
+   */
+  async function openNovidades(opts) {
+    const markSeen = !!(opts && opts.markSeen);
+    novidadesPendingMark = markSeen;
+    const dlg = document.getElementById('dlg-novidades');
+    const list = document.getElementById('novidades-list');
+    const intro = document.getElementById('novidades-intro');
+    if (!dlg || !list) return { ok: false, reason: 'missing-ui' };
+
+    let data = null;
+    let version = hooks().getAppVersion ? hooks().getAppVersion() : '';
+    try {
+      const r = await window.multiheiz.changelogGet();
+      if (r && r.ok) {
+        data = r.data;
+        if (r.version) version = r.version;
+      }
+    } catch {
+      /* ignore */
+    }
+    if (intro) {
+      intro.textContent = version
+        ? `Log de atualizações · versão atual ${version}`
+        : 'Log de atualizações do MultiHeiz';
+    }
+    list.replaceChildren();
+    const versions = (data && data.versions) || [];
+    for (const ver of versions) {
+      const block = document.createElement('section');
+      block.className = 'novidades-version';
+      block.dataset.version = String(ver.version || '');
+      const h = document.createElement('h3');
+      const titleBit = ver.title ? ` — ${ver.title}` : '';
+      h.textContent = ver.date
+        ? `${ver.version}${titleBit} · ${ver.date}`
+        : `${ver.version || ''}${titleBit}`;
+      block.appendChild(h);
+      const ul = document.createElement('ul');
+      for (const entry of ver.entries || []) {
+        const li = document.createElement('li');
+        const tag = document.createElement('span');
+        tag.className = tagClass(entry.tag);
+        tag.textContent = String(entry.tag || '');
+        const text = document.createElement('span');
+        text.textContent = String(entry.text || '');
+        li.appendChild(tag);
+        li.appendChild(text);
+        ul.appendChild(li);
+      }
+      block.appendChild(ul);
+      list.appendChild(block);
+    }
+
+    if (!dlg.open) {
+      if (hooks().pushOverlay) hooks().pushOverlay('dlg-novidades');
+      dlg.showModal();
+    }
+    return { ok: true, count: versions.length, version };
+  }
+
+  function closeNovidadesAndMaybeMark() {
+    const dlg = document.getElementById('dlg-novidades');
+    if (dlg && dlg.open) dlg.close();
+  }
+
+  /* ---------- Atualizações (electron-updater) ---------- */
+
+  function applyUpdatesStatus(st) {
+    const el = document.getElementById('updates-status');
+    if (el) el.textContent = (st && st.message) || '';
+    const btnDl = document.getElementById('btn-download-update');
+    const btnInst = document.getElementById('btn-install-update');
+    const btnRel = document.getElementById('btn-open-releases');
+    if (btnDl) btnDl.classList.toggle('hidden', !(st && st.status === 'available' && !st.canInstall));
+    if (btnInst) btnInst.classList.toggle('hidden', !(st && st.canInstall));
+    if (btnRel) btnRel.classList.toggle('hidden', !(st && st.manualDownload));
+  }
+
+  async function refreshUpdatesPane() {
+    const v = document.getElementById('settings-version');
+    if (v) v.textContent = (hooks().getAppVersion && hooks().getAppVersion()) || '—';
+    try {
+      const auto = await window.multiheiz.updatesGetAutoCheck();
+      const chk = document.getElementById('chk-auto-check-updates');
+      if (chk && auto) chk.checked = auto.enabled !== false;
+    } catch {
+      /* ignore */
+    }
+    try {
+      const st = await window.multiheiz.updatesStatus();
+      if (st && st.ok !== false) applyUpdatesStatus(st);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function wireUpdatesUi() {
+    const checkUp = document.getElementById('btn-check-updates');
+    if (checkUp) {
+      checkUp.addEventListener('click', async () => {
+        checkUp.disabled = true;
+        try {
+          const r = await window.multiheiz.updatesCheck();
+          applyUpdatesStatus(r);
+        } finally {
+          checkUp.disabled = false;
+        }
+      });
+    }
+    const btnDl = document.getElementById('btn-download-update');
+    if (btnDl) {
+      btnDl.addEventListener('click', async () => {
+        // autoDownload is on; re-check triggers download for NSIS/AppImage
+        btnDl.disabled = true;
+        try {
+          const r = await window.multiheiz.updatesCheck();
+          applyUpdatesStatus(r);
+        } finally {
+          btnDl.disabled = false;
+        }
+      });
+    }
+    const btnInst = document.getElementById('btn-install-update');
+    if (btnInst) {
+      btnInst.addEventListener('click', async () => {
+        await window.multiheiz.updatesInstall();
+      });
+    }
+    const btnRel = document.getElementById('btn-open-releases');
+    if (btnRel) {
+      btnRel.addEventListener('click', () => window.multiheiz.updatesOpenReleases());
+    }
+    const chk = document.getElementById('chk-auto-check-updates');
+    if (chk) {
+      chk.addEventListener('change', async () => {
+        await window.multiheiz.updatesSetAutoCheck(!!chk.checked);
+        showSaved();
+      });
+    }
+  }
+
+  /* ---------- Settings redesign ---------- */
+
+  function wireSettings() {
+    const nav = document.querySelectorAll('.settings-nav-btn');
+    nav.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        nav.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        const section = btn.getAttribute('data-section');
+        document.querySelectorAll('.settings-pane').forEach((p) => {
+          p.classList.toggle('active', p.getAttribute('data-pane') === section);
+        });
+        if (section === 'diagnosticos') refreshDiagnostics();
+        if (section === 'sobre') refreshAbout();
+        if (section === 'adblock') refreshAdblockUi();
+        if (section === 'extensoes') refreshExtensionsUi();
+        if (section === 'atualizacoes') {
+          refreshUpdatesPane();
+        }
+      });
+    });
+
+    const form = document.getElementById('form-settings');
+    if (!form) return;
+
+    form.addEventListener('change', () => autosaveSettings());
+    form.addEventListener('input', (e) => {
+      const t = e.target;
+      if (t && (t.name === 'homepage' || t.name === 'searchTemplate' || t.name === 'suspendDelayMs' || t.name === 'memoryLimitMb' || t.name === 'panelMemoryLimitMb')) {
+        autosaveSettings();
+      }
+    });
+
+    const pick = document.getElementById('btn-pick-download-folder');
+    if (pick) {
+      pick.addEventListener('click', async () => {
+        const s = await window.multiheiz.downloadsPickFolder();
+        const inp = document.getElementById('download-folder');
+        if (inp) inp.value = s.defaultFolder || '';
+        showSaved();
+      });
+    }
+
+    const btnUp = document.getElementById('btn-adblock-update');
+    if (btnUp) {
+      btnUp.addEventListener('click', async () => {
+        btnUp.disabled = true;
+        try {
+          await window.multiheiz.adblockUpdateLists();
+          await refreshAdblockUi();
+          showSaved();
+        } finally {
+          btnUp.disabled = false;
+        }
+      });
+    }
+    const btnAllow = document.getElementById('btn-adblock-allow-add');
+    if (btnAllow) {
+      btnAllow.addEventListener('click', async () => {
+        const inp = document.getElementById('adblock-allow-input');
+        const d = inp && inp.value.trim();
+        if (!d) return;
+        const r = await window.multiheiz.adblockAllowlistAdd(d);
+        if (r && r.state) applyState(r.state);
+        if (inp) inp.value = '';
+        await refreshAdblockUi();
+        showSaved();
+      });
+    }
+    const btnCustom = document.getElementById('btn-adblock-custom-add');
+    if (btnCustom) {
+      btnCustom.addEventListener('click', async () => {
+        const inp = document.getElementById('adblock-custom-url');
+        const url = inp && inp.value.trim();
+        if (!url) return;
+        btnCustom.disabled = true;
+        try {
+          const r = await window.multiheiz.adblockCustomListAdd(url);
+          if (!r || !r.ok) {
+            toast((r && r.error) || 'Falha ao adicionar lista');
+            return;
+          }
+          if (inp) inp.value = '';
+          await refreshAdblockUi();
+          showSaved();
+        } finally {
+          btnCustom.disabled = false;
+        }
+      });
+    }
+    const btnRules = document.getElementById('btn-adblock-user-rules');
+    if (btnRules) {
+      btnRules.addEventListener('click', async () => {
+        const ta = document.getElementById('adblock-user-rules');
+        btnRules.disabled = true;
+        try {
+          const r = await window.multiheiz.adblockSetUserRules(ta ? ta.value : '');
+          if (r && r.state) applyState(r.state);
+          await refreshAdblockUi();
+          showSaved();
+        } finally {
+          btnRules.disabled = false;
+        }
+      });
+    }
+
+    wireExtensionsUi();
+
+    wireUpdatesUi();
+    const openNov = document.getElementById('btn-open-novidades');
+    if (openNov) {
+      openNov.addEventListener('click', () => openNovidades({ auto: false, markSeen: false }));
+    }
+    const aboutNov = document.getElementById('btn-about-novidades');
+    if (aboutNov) {
+      aboutNov.addEventListener('click', () => openNovidades({ auto: false, markSeen: false }));
+    }
+    const closeNov = document.getElementById('btn-novidades-close');
+    if (closeNov) {
+      closeNov.addEventListener('click', () => {
+        closeNovidadesAndMaybeMark();
+      });
+    }
+    const dlgNov = document.getElementById('dlg-novidades');
+    if (dlgNov) {
+      dlgNov.addEventListener('close', () => {
+        if (novidadesPendingMark) {
+          novidadesPendingMark = false;
+          window.multiheiz.changelogMarkSeen().then((r) => {
+            if (r && r.state) applyState(r.state);
+          }).catch(() => {});
+        }
+      });
+    }
+
+    const openData = document.getElementById('btn-open-data');
+    if (openData) openData.addEventListener('click', () => window.multiheiz.openDataFolder());
+
+    const exportDiag = document.getElementById('btn-export-diag');
+    if (exportDiag) {
+      exportDiag.addEventListener('click', async () => {
+        const r = await window.multiheiz.diagnosticsExport();
+        if (r && r.ok) toast('Diagnóstico exportado');
+      });
+    }
+
+    const openKofi = async () => {
+      const about = await window.multiheiz.getAbout();
+      if (about && about.kofiUrl) window.multiheiz.openExternal(about.kofiUrl);
+    };
+    const kofi = document.getElementById('btn-kofi');
+    if (kofi) kofi.addEventListener('click', openKofi);
+    const kofiStatus = document.getElementById('btn-kofi-status');
+    if (kofiStatus) kofiStatus.addEventListener('click', openKofi);
+  }
+
+  let settingsSaveTimer = null;
+  function autosaveSettings() {
+    if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = setTimeout(async () => {
+      const form = document.getElementById('form-settings');
+      if (!form) return;
+      const partial = {
+        openLastPage: !!form.openLastPage.checked,
+        persistSessions: !!(form.persistSessions && form.persistSessions.checked),
+        confirmOnRemove: !!form.confirmOnRemove.checked,
+        keepBackgroundRunning: !!form.keepBackgroundRunning.checked,
+        suspendHidden: !!form.suspendHidden.checked,
+        suspendDelayMs: Number(form.suspendDelayMs.value) || 0,
+        homepage: form.homepage.value || 'https://www.google.com',
+        uaIdentity: (form.uaIdentity && form.uaIdentity.value) || 'chrome',
+        blankLinkMode: (form.blankLinkMode && form.blankLinkMode.value) || 'same',
+        searchEngine: form.searchEngine.value || 'google',
+        searchTemplate: form.searchTemplate.value || '',
+        memoryLimitMb: Number(form.memoryLimitMb.value) || 0,
+        panelMemoryLimitMb: Number(form.panelMemoryLimitMb.value) || 0,
+        hardMemoryLimit: !!form.hardMemoryLimit.checked,
+        backgroundThrottling: !!form.backgroundThrottling.checked,
+        backgroundFps: Number(form.backgroundFps.value) || 5,
+        backgroundPreset: (form.backgroundPreset && form.backgroundPreset.value) || 'balanced',
+        lightMode: !!(form.lightMode && form.lightMode.checked),
+        frameCapHidden: Number(form.frameCapHidden && form.frameCapHidden.value) || 30,
+        frameCapAll: Number(form.frameCapAll && form.frameCapAll.value) || 0,
+        preferHighPerfGpu: !!(form.preferHighPerfGpu && form.preferHighPerfGpu.checked),
+        modules: {
+          planilha: !!form.modPlanilha.checked,
+          alarmes: !!form.modAlarmes.checked,
+          notas: !!form.modNotas.checked,
+        },
+        adblock: {
+          enabled: !!form.adblockEnabled.checked,
+          antiTracking: !!form.adblockAntiTracking.checked,
+          cosmetic: !!form.adblockCosmetic.checked,
+          youtubeExperimental: !!form.adblockYoutube.checked,
+          updateIntervalHours: Number(form.adblockUpdateInterval && form.adblockUpdateInterval.value) || 24,
+          lists: collectAdblockListFlags(),
+        },
+      };
+      const st = await window.multiheiz.updateSettings(partial);
+      applyState(st);
+      await window.multiheiz.downloadsSettings({
+        askWhereToSave: !!form.askWhereToSave.checked,
+      });
+      if (hooks().readAppearanceFromForm && hooks().updateAppearanceLive) {
+        const appearance = hooks().readAppearanceFromForm();
+        const st2 = await window.multiheiz.updateAppearance(appearance);
+        applyState(st2);
+      }
+      showSaved();
+      renderSidebarModules();
+      refreshAdblockUi();
+    }, 280);
+  }
+
+  function collectAdblockListFlags() {
+    const flags = {};
+    const root = document.getElementById('adblock-catalog');
+    if (!root) return flags;
+    root.querySelectorAll('input[data-list-id]').forEach((inp) => {
+      flags[inp.getAttribute('data-list-id')] = !!inp.checked;
+    });
+    return flags;
+  }
+
+  async function refreshAdblockUi() {
+    const status = await window.multiheiz.adblockStatus();
+    const last = document.getElementById('adblock-last-update');
+    if (last) {
+      last.textContent = status.lastUpdateAt
+        ? new Date(status.lastUpdateAt).toLocaleString('pt-BR')
+        : 'nunca';
+    }
+    const total = document.getElementById('adblock-total-rules');
+    if (total) {
+      total.textContent = status.ready
+        ? `${status.totalFilterCount || 0} (${status.networkFilterCount || 0} rede + ${status.cosmeticFilterCount || 0} cosmético)`
+        : '—';
+    }
+    const msg = document.getElementById('adblock-status-msg');
+    if (msg) {
+      msg.textContent =
+        status.statusMessage ||
+        (status.ready ? `Pronto · fonte ${status.engineSource || '?'}` : 'Carregando…');
+    }
+    const prog = document.getElementById('adblock-progress');
+    if (prog) {
+      prog.textContent = status.rebuilding ? status.progress || 'Recompilando…' : '';
+    }
+    const interval = document.getElementById('adblock-update-interval');
+    if (interval && status.updateIntervalHours) {
+      interval.value = String(status.updateIntervalHours);
+    }
+    const ta = document.getElementById('adblock-user-rules');
+    if (ta && typeof status.userRules === 'string' && document.activeElement !== ta) {
+      ta.value = status.userRules;
+    }
+
+    const catalog = document.getElementById('adblock-catalog');
+    if (catalog) {
+      const byGroup = {};
+      for (const item of status.catalog || []) {
+        const g = item.group || 'ads';
+        if (!byGroup[g]) byGroup[g] = [];
+        byGroup[g].push(item);
+      }
+      const order = ['ads', 'privacy', 'malware', 'regional', 'fixes'];
+      catalog.innerHTML = '';
+      for (const g of order) {
+        const items = byGroup[g];
+        if (!items || !items.length) continue;
+        const box = document.createElement('div');
+        box.className = 'adblock-group';
+        const h = document.createElement('h4');
+        h.textContent = (status.groupLabels && status.groupLabels[g]) || g;
+        box.appendChild(h);
+        for (const item of items) {
+          const label = document.createElement('label');
+          label.className = 'check';
+          const inp = document.createElement('input');
+          inp.type = 'checkbox';
+          inp.setAttribute('data-list-id', item.id);
+          inp.checked = item.enabled !== false;
+          label.appendChild(inp);
+          label.appendChild(document.createTextNode(' ' + item.name));
+          box.appendChild(label);
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          const when = item.lastUpdateAt
+            ? new Date(item.lastUpdateAt).toLocaleString('pt-BR')
+            : '—';
+          meta.textContent = `${item.ruleCount || 0} regras · ${item.status || '—'} · ${when}${
+            item.error ? ' · ' + item.error : ''
+          }`;
+          box.appendChild(meta);
+        }
+        catalog.appendChild(box);
+      }
+    }
+
+    const customUl = document.getElementById('adblock-custom-lists');
+    if (customUl) {
+      customUl.innerHTML = '';
+      for (const c of status.customLists || []) {
+        const li = document.createElement('li');
+        const meta = (status.listMeta && status.listMeta[c.id]) || {};
+        li.textContent = `${c.name || c.url} (${meta.ruleCount || 0} regras) `;
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'btn ghost tiny';
+        rm.textContent = 'Remover';
+        rm.addEventListener('click', async () => {
+          const r = await window.multiheiz.adblockCustomListRemove(c.id);
+          if (r && r.state) applyState(r.state);
+          await refreshAdblockUi();
+          showSaved();
+        });
+        li.appendChild(rm);
+        customUl.appendChild(li);
+      }
+    }
+
+    const allowUl = document.getElementById('adblock-allowlist');
+    if (allowUl) {
+      allowUl.innerHTML = '';
+      for (const d of status.allowlist || []) {
+        const li = document.createElement('li');
+        li.textContent = d + ' ';
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'btn ghost tiny';
+        rm.textContent = 'Remover';
+        rm.addEventListener('click', async () => {
+          const r = await window.multiheiz.adblockAllowlistRemove(d);
+          if (r && r.state) applyState(r.state);
+          await refreshAdblockUi();
+          showSaved();
+        });
+        li.appendChild(rm);
+        allowUl.appendChild(li);
+      }
+    }
+  }
+
+  async function fillSettingsForm() {
+    const form = document.getElementById('form-settings');
+    if (!form) return;
+    const s = getState().settings || {};
+    form.openLastPage.checked = !!s.openLastPage;
+    if (form.persistSessions) form.persistSessions.checked = s.persistSessions !== false;
+    form.confirmOnRemove.checked = s.confirmOnRemove !== false;
+    form.keepBackgroundRunning.checked = s.keepBackgroundRunning !== false;
+    form.suspendHidden.checked = !!s.suspendHidden;
+    form.suspendDelayMs.value = Number(s.suspendDelayMs) || 0;
+    form.homepage.value = s.homepage || 'https://www.google.com';
+    if (form.uaIdentity) form.uaIdentity.value = s.uaIdentity || 'chrome';
+    if (form.blankLinkMode) form.blankLinkMode.value = s.blankLinkMode || 'same';
+    form.searchEngine.value = s.searchEngine || 'google';
+    form.searchTemplate.value = s.searchTemplate || '';
+    form.memoryLimitMb.value = Number(s.memoryLimitMb) || 0;
+    form.panelMemoryLimitMb.value = Number(s.panelMemoryLimitMb) || 0;
+    form.hardMemoryLimit.checked = !!s.hardMemoryLimit;
+    form.backgroundThrottling.checked = !!s.backgroundThrottling;
+    form.backgroundFps.value = String(Number(s.backgroundFps) || 5);
+    if (form.backgroundPreset) form.backgroundPreset.value = s.backgroundPreset || 'balanced';
+    if (form.lightMode) form.lightMode.checked = !!s.lightMode;
+    if (form.frameCapHidden) form.frameCapHidden.value = String(Number(s.frameCapHidden) || 30);
+    if (form.frameCapAll) form.frameCapAll.value = String(Number(s.frameCapAll) || 0);
+    if (form.preferHighPerfGpu) form.preferHighPerfGpu.checked = !!s.preferHighPerfGpu;
+    form.modPlanilha.checked = !s.modules || s.modules.planilha !== false;
+    form.modAlarmes.checked = !s.modules || s.modules.alarmes !== false;
+    form.modNotas.checked = !s.modules || s.modules.notas !== false;
+    const ab = s.adblock || {};
+    if (form.adblockEnabled) form.adblockEnabled.checked = ab.enabled !== false;
+    if (form.adblockAntiTracking) form.adblockAntiTracking.checked = ab.antiTracking !== false;
+    if (form.adblockCosmetic) form.adblockCosmetic.checked = ab.cosmetic !== false;
+    if (form.adblockYoutube) form.adblockYoutube.checked = !!ab.youtubeExperimental;
+    if (form.adblockUpdateInterval) {
+      form.adblockUpdateInterval.value = String(ab.updateIntervalHours || 24);
+    }
+    const dl = await window.multiheiz.downloadsList();
+    form.downloadFolder.value = (dl.settings && dl.settings.defaultFolder) || '';
+    form.askWhereToSave.checked = !!(dl.settings && dl.settings.askWhereToSave);
+    if (hooks().fillAppearanceForm) hooks().fillAppearanceForm();
+    const ver = document.getElementById('settings-version');
+    if (ver) ver.textContent = (hooks().getAppVersion && hooks().getAppVersion()) || '—';
+    await refreshAdblockUi();
+    await refreshExtensionsUi();
+  }
+
+  function setExtStatus(msg, isError) {
+    const el = document.getElementById('ext-status');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.style.color = isError ? '#c96b6b' : '';
+  }
+
+  function wireExtensionsUi() {
+    const btnUnp = document.getElementById('btn-ext-unpacked');
+    if (btnUnp) {
+      btnUnp.addEventListener('click', async () => {
+        setExtStatus('Instalando…');
+        const r = await window.multiheiz.extensionsInstallUnpacked();
+        if (r && r.cancelled) {
+          setExtStatus('');
+          return;
+        }
+        if (!r || !r.ok) {
+          setExtStatus((r && r.error) || 'Falha ao instalar', true);
+          return;
+        }
+        setExtStatus('Instalada: ' + (r.extension && r.extension.name));
+        await refreshExtensionsUi();
+        showSaved();
+      });
+    }
+    const btnCrx = document.getElementById('btn-ext-crx');
+    if (btnCrx) {
+      btnCrx.addEventListener('click', async () => {
+        setExtStatus('Instalando .crx…');
+        const r = await window.multiheiz.extensionsInstallCrx();
+        if (r && r.cancelled) {
+          setExtStatus('');
+          return;
+        }
+        if (!r || !r.ok) {
+          setExtStatus((r && r.error) || 'Falha ao instalar CRX', true);
+          return;
+        }
+        setExtStatus('Instalada: ' + (r.extension && r.extension.name));
+        await refreshExtensionsUi();
+        showSaved();
+      });
+    }
+    const btnStore = document.getElementById('btn-ext-store');
+    if (btnStore) {
+      btnStore.addEventListener('click', async () => {
+        const inp = document.getElementById('ext-store-input');
+        const v = inp && inp.value ? inp.value.trim() : '';
+        if (!v) {
+          setExtStatus('Informe URL ou ID', true);
+          return;
+        }
+        btnStore.disabled = true;
+        setExtStatus('Baixando da loja…');
+        try {
+          const r = await window.multiheiz.extensionsInstallStore(v);
+          if (!r || !r.ok) {
+            setExtStatus((r && r.error) || 'Falha ao instalar da loja', true);
+            return;
+          }
+          setExtStatus('Instalada: ' + (r.extension && r.extension.name));
+          if (inp) inp.value = '';
+          await refreshExtensionsUi();
+          showSaved();
+        } finally {
+          btnStore.disabled = false;
+        }
+      });
+    }
+  }
+
+  async function refreshCoexistenceHints() {
+    const hint =
+      window.multiheiz.extensionsCoexistence &&
+      (await window.multiheiz.extensionsCoexistence());
+    const msg = hint && hint.suggest ? hint.message : '';
+    for (const id of ['adblock-coexistence-hint', 'ext-coexistence-hint']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (msg) {
+        el.hidden = false;
+        el.textContent = msg;
+      } else {
+        el.hidden = true;
+        el.textContent = '';
+      }
+    }
+    if (hint && hint.suggest && form.adblockEnabled && form.adblockEnabled.checked) {
+      // Soft prompt once per settings fill — do not auto-uncheck
+      const abHint = document.getElementById('adblock-coexistence-hint');
+      if (abHint && !abHint.dataset.offered) {
+        abHint.dataset.offered = '1';
+        const turnOff = window.confirm(
+          msg + '\n\nDesligar o bloqueador embutido agora?'
+        );
+        if (turnOff) {
+          form.adblockEnabled.checked = false;
+          autosaveSettings();
+        }
+      }
+    }
+  }
+
+  async function refreshExtensionsUi() {
+    const ul = document.getElementById('ext-list');
+    if (!ul || !window.multiheiz.extensionsList) return;
+    const list = await window.multiheiz.extensionsList();
+    const accounts = (getState().accounts || []).slice();
+    ul.innerHTML = '';
+    await refreshCoexistenceHints();
+    if (!list.length) {
+      const empty = document.createElement('li');
+      empty.className = 'muted-note';
+      empty.style.display = 'block';
+      empty.textContent = 'Nenhuma extensão instalada.';
+      ul.appendChild(empty);
+      return;
+    }
+    for (const ext of list) {
+      const li = document.createElement('li');
+      if (ext.iconDataUrl) {
+        const img = document.createElement('img');
+        img.className = 'ext-icon';
+        img.alt = '';
+        img.src = ext.iconDataUrl;
+        li.appendChild(img);
+      } else {
+        const ph = document.createElement('div');
+        ph.className = 'ext-icon placeholder';
+        ph.textContent = 'ext';
+        li.appendChild(ph);
+      }
+      const meta = document.createElement('div');
+      meta.className = 'ext-meta';
+      const name = document.createElement('div');
+      name.className = 'ext-name';
+      name.textContent = ext.name || ext.id;
+      const sub = document.createElement('div');
+      sub.className = 'ext-sub';
+      sub.textContent = `v${ext.version} · MV${ext.manifestVersion} · ${ext.source || '—'}`;
+      meta.append(name, sub);
+      if (ext.warnings && ext.warnings.length) {
+        const w = document.createElement('div');
+        w.className = 'ext-warn';
+        w.textContent = ext.warnings.slice(0, 3).join(' · ');
+        meta.appendChild(w);
+      }
+      li.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'ext-actions';
+
+      const en = document.createElement('label');
+      en.className = 'check';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!ext.enabled;
+      cb.addEventListener('change', async () => {
+        await window.multiheiz.extensionsSetEnabled(ext.id, cb.checked);
+        await refreshExtensionsUi();
+        showSaved();
+      });
+      en.append(cb, document.createTextNode(' Ativa'));
+      actions.appendChild(en);
+
+      const applySel = document.createElement('select');
+      applySel.className = 'ext-apply';
+      const optAll = document.createElement('option');
+      optAll.value = 'all';
+      optAll.textContent = 'Aplicar a: todas as janelas';
+      applySel.appendChild(optAll);
+      for (const acc of accounts) {
+        const o = document.createElement('option');
+        o.value = acc.id;
+        o.textContent = 'Só: ' + (acc.name || acc.id);
+        applySel.appendChild(o);
+      }
+      const multi = document.createElement('option');
+      multi.value = '__choose__';
+      multi.textContent = 'Escolher várias…';
+      applySel.appendChild(multi);
+
+      if (ext.applyTo === 'all' || ext.applyTo == null) applySel.value = 'all';
+      else if (Array.isArray(ext.applyTo) && ext.applyTo.length === 1) {
+        applySel.value = ext.applyTo[0];
+      } else {
+        applySel.value = '__choose__';
+      }
+
+      applySel.addEventListener('change', async () => {
+        if (applySel.value === 'all') {
+          await window.multiheiz.extensionsSetApplyTo(ext.id, 'all');
+        } else if (applySel.value === '__choose__') {
+          const ids = accounts.map((a) => a.id);
+          const picked = window.prompt(
+            'IDs das janelas (vírgula), ou deixe vazio para todas:\n' +
+              accounts.map((a) => a.id + ' = ' + a.name).join('\n'),
+            Array.isArray(ext.applyTo) ? ext.applyTo.join(',') : ids.join(',')
+          );
+          if (picked == null) {
+            await refreshExtensionsUi();
+            return;
+          }
+          const listIds = picked
+            .split(/[,;\s]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+          await window.multiheiz.extensionsSetApplyTo(
+            ext.id,
+            listIds.length ? listIds : 'all'
+          );
+        } else {
+          await window.multiheiz.extensionsSetApplyTo(ext.id, [applySel.value]);
+        }
+        await refreshExtensionsUi();
+        showSaved();
+      });
+      actions.appendChild(applySel);
+
+      if (ext.optionsPage) {
+        const btnOpt = document.createElement('button');
+        btnOpt.type = 'button';
+        btnOpt.className = 'btn ghost';
+        btnOpt.textContent = 'Opções';
+        btnOpt.addEventListener('click', async () => {
+          const focus =
+            (hooks().getFocusedNav && hooks().getFocusedNav() && hooks().getFocusedNav().accountId) ||
+            (accounts[0] && accounts[0].id);
+          const r = await window.multiheiz.extensionsOpenOptions(ext.id, focus);
+          if (r && !r.ok) setExtStatus(r.error || 'Falha ao abrir opções', true);
+        });
+        actions.appendChild(btnOpt);
+      }
+
+      const btnRm = document.createElement('button');
+      btnRm.type = 'button';
+      btnRm.className = 'btn ghost';
+      btnRm.textContent = 'Remover';
+      btnRm.addEventListener('click', async () => {
+        if (!window.confirm('Remover extensão “' + ext.name + '”?')) return;
+        await window.multiheiz.extensionsRemove(ext.id);
+        await refreshExtensionsUi();
+        showSaved();
+      });
+      actions.appendChild(btnRm);
+
+      li.appendChild(actions);
+      ul.appendChild(li);
+    }
+  }
+
+  async function refreshDiagnostics() {
+    const info = await window.multiheiz.diagnosticsProcessInfo();
+    const logs = await window.multiheiz.diagnosticsLogs();
+    const abDiag = await window.multiheiz.adblockDiagnostics();
+    const focusedNav = hooks().getFocusedNav && hooks().getFocusedNav();
+    const focusId =
+      (focusedNav && focusedNav.accountId) ||
+      (getState().accounts && getState().accounts[0] && getState().accounts[0].id) ||
+      null;
+    const focusUrl = (focusedNav && focusedNav.url) || '';
+    const focusDiag = await window.multiheiz.adblockFocusedDiagnostics(focusId, focusUrl);
+    const box = document.getElementById('diag-process');
+    const logBox = document.getElementById('diag-logs');
+    const abBox = document.getElementById('diag-adblock');
+    const focusBox = document.getElementById('diag-adblock-focus');
+    if (box) {
+      box.textContent = JSON.stringify(
+        {
+          pid: info.pid,
+          memoryUsage: info.memoryUsage,
+          totalMb: info.metrics && info.metrics.totalMb,
+        },
+        null,
+        2
+      );
+    }
+    if (focusBox) {
+      focusBox.textContent = JSON.stringify(
+        {
+          accountId: focusDiag.accountId,
+          hostname: focusDiag.hostname,
+          scriptletsInjetados: focusDiag.scriptletsInjected ? 'sim' : 'não',
+          scriptletCount: focusDiag.scriptletCount,
+          earlyCss: focusDiag.earlyCss ? 'sim' : 'não',
+          earlySyncMs: focusDiag.earlySyncMs,
+          earlyInjectMs: focusDiag.earlyInjectMs,
+          earlyVia: focusDiag.earlyVia,
+          regrasAplicadas: focusDiag.rulesApplied,
+          bloqueadosNaPagina: focusDiag.pageBlocked,
+          engineSource: focusDiag.engineSource,
+          resourcesLoaded: focusDiag.resourcesLoaded,
+          preloadUnpacked: focusDiag.preloadUnpacked,
+        },
+        null,
+        2
+      );
+    }
+    if (abBox) {
+      abBox.textContent = JSON.stringify(
+        {
+          engineSource: abDiag.engineSource,
+          ready: abDiag.ready,
+          enabled: abDiag.enabled,
+          networkFilterCount: abDiag.networkFilterCount,
+          cosmeticFilterCount: abDiag.cosmeticFilterCount,
+          resourcesLoaded: abDiag.resourcesLoaded,
+          lastUpdateAt: abDiag.lastUpdateAt,
+          lastBuildMs: abDiag.lastBuildMs,
+          lastBuildRssMb: abDiag.lastBuildRssMb,
+          attachedSessions: abDiag.attachedSessions,
+          preloadPath: abDiag.preloadPath,
+          preloadExists: abDiag.preloadExists,
+          preloadUnpacked: abDiag.preloadUnpacked,
+          statusMessage: abDiag.statusMessage,
+          listStatus: abDiag.listStatus,
+        },
+        null,
+        2
+      );
+    }
+    if (logBox) logBox.textContent = (logs || []).join('\n');
+  }
+
+  function applyKofiVisibility(kofiUrl) {
+    const show = !!kofiUrl;
+    for (const id of ['btn-kofi', 'btn-kofi-status']) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('hidden', !show);
+    }
+  }
+
+  async function refreshKofiVisibility() {
+    const about = await window.multiheiz.getAbout();
+    applyKofiVisibility(about && about.kofiUrl);
+    return !!(about && about.kofiUrl);
+  }
+
+  async function refreshAbout() {
+    const about = await window.multiheiz.getAbout();
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = v || '';
+    };
+    set('about-version', about.version);
+    set('about-electron', about.electron);
+    set('about-chrome', about.chrome);
+    applyKofiVisibility(about && about.kofiUrl);
+  }
+
+  function showMissedReminders(missed) {
+    if (!missed || !missed.length) return;
+    const count = missed.length;
+    const title =
+      count === 1
+        ? missed[0].title || 'Lembrete perdido'
+        : `${count} lembretes perdidos`;
+    toast(title);
+    const dlg = document.getElementById('dlg-missed');
+    const titleEl = document.getElementById('missed-title');
+    const listEl = document.getElementById('missed-list');
+    if (!dlg || !listEl) return;
+    if (titleEl) titleEl.textContent = title;
+    listEl.innerHTML = '';
+    for (const m of missed) {
+      const li = document.createElement('li');
+      li.textContent = m.title || 'Lembrete';
+      if (m.missedAt || m.at) {
+        const when = new Date(m.missedAt || m.at).toLocaleString('pt-BR');
+        li.textContent += ` — ${when}`;
+      }
+      listEl.appendChild(li);
+    }
+    pushOverlay('dlg-missed');
+    dlg.showModal();
+  }
+
+  function showSnooze(reminder) {
+    pendingSnoozeId = reminder && reminder.id;
+    const dlg = document.getElementById('dlg-snooze');
+    const msg = document.getElementById('snooze-message');
+    if (msg) msg.textContent = (reminder && reminder.title) || 'Lembrete';
+    pushOverlay('dlg-snooze');
+    dlg.showModal();
+  }
+
+  /* ---------- Init ---------- */
+
+  function init() {
+    wireSettings();
+
+    document.addEventListener('mouseup', () => {
+      if (!planilhaSel.dragging) return;
+      planilhaSel.dragging = false;
+      if (
+        planilhaSel.formulaMode &&
+        planilhaSel.editingRef &&
+        planilhaSel.sel &&
+        planilhaInsertRef &&
+        (planilhaSel.sel.c0 !== planilhaSel.sel.c1 || planilhaSel.sel.r0 !== planilhaSel.sel.r1)
+      ) {
+        planilhaInsertRef(
+          formatRangeRefUi(
+            planilhaSel.sel.c0,
+            planilhaSel.sel.r0,
+            planilhaSel.sel.c1,
+            planilhaSel.sel.r1
+          )
+        );
+      }
+    });
+
+    document.getElementById('btn-favorites')?.addEventListener('click', () => openManager('favorites'));
+    document.getElementById('btn-history')?.addEventListener('click', () => openManager('history'));
+    document.getElementById('btn-downloads')?.addEventListener('click', () => openManager('downloads'));
+
+    document.getElementById('btn-fav-cancel')?.addEventListener('click', () => {
+      document.getElementById('dlg-favorite')?.close();
+    });
+    document.getElementById('dlg-favorite')?.addEventListener('close', () => popOverlay('dlg-favorite'));
+
+    document.getElementById('form-favorite')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const payload = {
+        name: form.name.value,
+        url: form.url.value,
+        folderId: form.folderId.value,
+        defaultWindowId: form.defaultWindowId.value || null,
+        title: form.name.value,
+      };
+      if (pendingFavEdit && pendingFavEdit.id) {
+        await window.multiheiz.bookmarksUpdate({ id: pendingFavEdit.id, ...payload });
+      } else {
+        await window.multiheiz.bookmarksAdd(payload);
+      }
+      pendingFavEdit = null;
+      form.closest('dialog').close();
+      if (activeManager === 'favorites') renderManager();
+      if (hooks().renderGrid) hooks().renderGrid();
+    });
+
+    document.getElementById('form-open-target')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await doOpen('current');
+    });
+    document.getElementById('btn-open-new')?.addEventListener('click', () => doOpen('new'));
+    document.getElementById('btn-open-specific')?.addEventListener('click', () => {
+      const id = document.getElementById('open-target-window').value;
+      doOpen('specific', id);
+    });
+    document.getElementById('btn-open-cancel')?.addEventListener('click', () => {
+      document.getElementById('dlg-open-target')?.close();
+    });
+    document.getElementById('dlg-open-target')?.addEventListener('close', () => popOverlay('dlg-open-target'));
+
+    document.getElementById('form-snooze')?.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-min]');
+      if (btn && pendingSnoozeId) {
+        await window.multiheiz.alarmesSnooze(pendingSnoozeId, Number(btn.getAttribute('data-min')));
+        document.getElementById('dlg-snooze')?.close();
+      }
+    });
+    document.getElementById('btn-snooze-close')?.addEventListener('click', () => {
+      document.getElementById('dlg-snooze')?.close();
+    });
+    document.getElementById('dlg-snooze')?.addEventListener('close', () => popOverlay('dlg-snooze'));
+
+    document.getElementById('btn-missed-close')?.addEventListener('click', () => {
+      document.getElementById('dlg-missed')?.close();
+    });
+    document.getElementById('dlg-missed')?.addEventListener('close', () => popOverlay('dlg-missed'));
+
+    document.getElementById('form-pick-window')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const sel = document.getElementById('pick-window-select');
+      const id = sel && sel.value;
+      if (pendingPickReminderId && id) {
+        await window.multiheiz.alarmesUpdateReminder({
+          id: pendingPickReminderId,
+          windowId: id,
+        });
+        const rem = { id: pendingPickReminderId, windowId: id };
+        document.getElementById('dlg-pick-window')?.close();
+        pendingPickReminderId = null;
+        await goToReminderWindow(rem);
+        if (activeModule === 'alarmes') renderModule();
+      }
+    });
+    document.getElementById('btn-pick-window-cancel')?.addEventListener('click', () => {
+      document.getElementById('dlg-pick-window')?.close();
+    });
+    document.getElementById('dlg-pick-window')?.addEventListener('close', () => {
+      popOverlay('dlg-pick-window');
+      pendingPickReminderId = null;
+    });
+
+    window.multiheiz.onEvent((payload) => {
+      if (!payload || !payload.type) return;
+      if (payload.type === 'downloads:changed') {
+        downloadsActive = payload.activeCount || 0;
+        updateDownloadsBadge();
+        if (activeManager === 'downloads') renderManager();
+      }
+      if (payload.type === 'alarmes:missed') showMissedReminders(payload.missed);
+      if (payload.type === 'alarmes:notification-click') {
+        showSnooze({ id: payload.reminderId, title: 'Lembrete' });
+        if (payload.windowId && hooks().focusAccount) hooks().focusAccount(payload.windowId);
+      }
+      if (payload.type === 'alarmes:fired') {
+        showSnooze(payload.reminder);
+      }
+      if (payload.type === 'ui:favorite') favoriteCurrentUrl();
+      if (payload.type === 'ui:history') openManager('history');
+      if (payload.type === 'ui:downloads') openManager('downloads');
+      if (payload.type === 'bookmarks:changed' && activeManager === 'favorites') renderManager();
+      if (payload.type === 'history:changed' && activeManager === 'history') renderManager();
+      if (payload.type === 'alarmes:changed' && activeModule === 'alarmes') renderModule();
+      if (payload.type === 'updates:status') {
+        applyUpdatesStatus(payload);
+        if (payload.status === 'ready' && hooks().toast) {
+          hooks().toast(payload.message || 'Atualização pronta — reinicie para atualizar');
+        }
+      }
+    });
+
+    renderSidebarModules();
+    refreshKofiVisibility();
+    window.multiheiz.downloadsList().then((d) => {
+      downloadsActive = d.activeCount || 0;
+      updateDownloadsBadge();
+    });
+  }
+
+  api.init = init;
+  api.openManager = openManager;
+  api.closeManager = closeManager;
+  api.openModule = openModule;
+  api.closeModule = closeModule;
+  api.favoriteCurrentUrl = favoriteCurrentUrl;
+  api.openFavoriteDialog = openFavoriteDialog;
+  api.fillSettingsForm = fillSettingsForm;
+  api.renderSidebarModules = renderSidebarModules;
+  api.autosaveSettings = autosaveSettings;
+  api.refreshKofiVisibility = refreshKofiVisibility;
+  api.openNovidades = openNovidades;
+  api.closeNovidadesAndMaybeMark = closeNovidadesAndMaybeMark;
+  api.getActiveModule = () => activeModule;
+  api.getActiveManager = () => activeManager;
+  api.isStarredUrl = async (url) => !!(await window.multiheiz.bookmarksFindUrl(url));
+  api.goToReminderWindow = goToReminderWindow;
+  api.showMissedReminders = showMissedReminders;
+})();

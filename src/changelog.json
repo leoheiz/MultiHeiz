@@ -1,0 +1,47 @@
+{
+  "versions": [
+    {
+      "version": "1.0.0",
+      "date": "2026-10-19",
+      "title": "Primeira versão pública",
+      "entries": [
+        {
+          "tag": "Novo",
+          "text": "Navegador multi-janela com sessões independentes (cookies/login por painel) e workspaces."
+        },
+        {
+          "tag": "Novo",
+          "text": "Barra de título integrada com workspaces e controles minimizar/maximizar/fechar."
+        },
+        {
+          "tag": "Novo",
+          "text": "Favoritos, histórico e downloads globais."
+        },
+        {
+          "tag": "Novo",
+          "text": "Bloqueador de anúncios embutido com listas por URL (uBlock, EasyList, AdGuard e outras)."
+        },
+        {
+          "tag": "Novo",
+          "text": "Extensões de terceiros: pasta descompactada, .crx, Chrome Web Store e Edge Add-ons."
+        },
+        {
+          "tag": "Novo",
+          "text": "Módulos Planilha, Alarmes e Notas."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Modo leve/desempenho e temas Escuro, Claro e Grafite."
+        },
+        {
+          "tag": "Novo",
+          "text": "Atualizações automáticas (NSIS e AppImage) e botão Ko-fi."
+        },
+        {
+          "tag": "Correção",
+          "text": "Dados do usuário em pasta MultiHeiz estável entre atualizações."
+        }
+      ]
+    }
+  ]
+}

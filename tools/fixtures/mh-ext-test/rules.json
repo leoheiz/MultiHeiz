@@ -1,0 +1,30 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "dnr-ip-block",
+      "resourceTypes": ["image"],
+      "requestDomains": ["127.0.0.1"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "dnr-probe-block",
+      "resourceTypes": ["xmlhttprequest", "image", "script", "other"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 100,
+    "action": { "type": "allow" },
+    "condition": {
+      "urlFilter": "dnr-probe-allow",
+      "resourceTypes": ["xmlhttprequest", "image", "script", "other"]
+    }
+  }
+]
