@@ -313,7 +313,10 @@ async function main() {
   assert(/versão instalada/i.test(st.message), 'dev message');
   console.log('PASS: unpackaged check shows installed-only message');
 
-  /* ---- Portable full flow with local fake feed ---- */
+  /* ---- Portable full flow with local fake feed (Windows-only: PowerShell/.exe) ---- */
+  if (process.platform !== 'win32') {
+    console.log('SKIP: fake portable e2e (Windows only)');
+  } else {
   clearUpdaterModules();
   const fakeBytes = Buffer.from('FAKE-PORTABLE-EXE-' + Date.now());
   const sha256 = crypto.createHash('sha256').update(fakeBytes).digest('hex');
@@ -487,6 +490,7 @@ async function main() {
   delete process.env.MULTIHEIZ_PORTABLE_SKIP_PID_WAIT;
   delete process.env.MULTIHEIZ_PORTABLE_RELAUNCH_CMD;
   delete process.env.MULTIHEIZ_SELFTEST;
+  } // end win32 fake portable e2e
 
   try {
     fs.rmSync(tempRoot, { recursive: true, force: true });
