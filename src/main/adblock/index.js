@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { app, ipcMain, webContents } = require('electron');
+const { app, ipcMain, webContents, net } = require('electron');
 const { ElectronBlocker, fetchResources } = require('@ghostery/adblocker-electron');
 const { parse } = require('tldts-experimental');
 const { getState, updateState } = require('../state');
@@ -326,23 +326,43 @@ function resetPageStats(accountId) {
   }
 }
 
-function auditedFetch(url, opts) {
+function cancelResponseBody(res) {
+  try {
+    if (res && res.body && typeof res.body.cancel === 'function') {
+      res.body.cancel();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Internet fetch for adblock lists/resources via Electron Chromium stack (net.fetch),
+ * not Node undici — avoids intermittent AssertionError assert(!this.paused) on E44.
+ * Uses the default session (no account partition cookies).
+ * @param {string|URL} url
+ * @param {RequestInit} [opts]
+ * @returns {Promise<Response>}
+ */
+async function auditedFetch(url, opts) {
   fetchLog.push({ url: String(url), at: Date.now() });
   if (fetchBlocked) {
-    return Promise.reject(new Error('adblock fetch blocked (offline mode)'));
+    throw new Error('adblock fetch blocked (offline mode)');
   }
-  return fetch(url, opts).then((res) => {
-    try {
-      const dateHdr = res && res.headers && res.headers.get && res.headers.get('date');
-      if (dateHdr) {
-        const changelog = require('../changelog');
-        changelog.noteHttpDate(dateHdr);
-      }
-    } catch {
-      /* ignore */
+  if (!app.isReady()) {
+    await app.whenReady();
+  }
+  const res = await net.fetch(String(url), opts || {});
+  try {
+    const dateHdr = res && res.headers && res.headers.get && res.headers.get('date');
+    if (dateHdr) {
+      const changelog = require('../changelog');
+      changelog.noteHttpDate(dateHdr);
     }
-    return res;
-  });
+  } catch {
+    /* ignore */
+  }
+  return res;
 }
 
 function getFetchLog() {
@@ -642,7 +662,10 @@ async function gatherFilterText(opts = {}) {
         const res = await auditedFetch(info.url, {
           headers: { 'User-Agent': 'MultiHeiz-Adblock/1.7.1' },
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          cancelResponseBody(res);
+          throw new Error(`HTTP ${res.status}`);
+        }
         body = await res.text();
         fs.writeFileSync(file, body, 'utf8');
         status = 'ok';
@@ -697,7 +720,10 @@ async function gatherFilterText(opts = {}) {
         const res = await auditedFetch(custom.url, {
           headers: { 'User-Agent': 'MultiHeiz-Adblock/1.7.1' },
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          cancelResponseBody(res);
+          throw new Error(`HTTP ${res.status}`);
+        }
         body = await res.text();
         fs.writeFileSync(file, body, 'utf8');
         status = 'ok';
@@ -1523,7 +1549,10 @@ async function addCustomList(url) {
     const res = await auditedFetch(raw, {
       headers: { 'User-Agent': 'MultiHeiz-Adblock/1.7.1' },
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      cancelResponseBody(res);
+      throw new Error(`HTTP ${res.status}`);
+    }
     body = await res.text();
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };

@@ -10,6 +10,7 @@ const {
   Menu,
   screen,
   desktopCapturer,
+  dialog,
 } = require('electron');
 const {
   loadState,
@@ -53,6 +54,71 @@ const userDataOverride = envGet('MULTIHEIZ_USERDATA');
 if (userDataOverride) {
   app.setPath('userData', userDataOverride);
 }
+
+/**
+ * Electron shows a modal for uncaught main-process exceptions. Network/undici
+ * races (e.g. AssertionError assert(!this.paused) under Node fetch) must not
+ * block the UI — log and ignore those only; other errors keep the dialog.
+ */
+function isIgnorableNetworkUncaught(err) {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  const name = String(err.name || '');
+  const code = String(err.code || '');
+  const stack = String(err.stack || '');
+  if (name === 'AssertionError' && /assert\(!this\.paused\)/.test(msg)) return true;
+  if (/node:internal\/deps\/undici|\/deps\/undici\//.test(stack)) return true;
+  if (/^UND_ERR_/.test(code) || /UND_ERR_/.test(msg)) return true;
+  if (
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ENOTFOUND' ||
+    code === 'EPIPE' ||
+    code === 'ECONNABORTED' ||
+    code === 'ERR_NETWORK_CHANGED'
+  ) {
+    return true;
+  }
+  return false;
+}
+
+process.on('uncaughtException', (err) => {
+  if (isIgnorableNetworkUncaught(err)) {
+    try {
+      logger.warn('uncaughtException ignored (network/undici)', {
+        name: err && err.name,
+        code: err && err.code,
+        message: String(err && err.message ? err.message : err),
+      });
+    } catch {
+      /* ignore */
+    }
+    console.warn(
+      '[main] uncaughtException ignored (network/undici):',
+      err && err.message ? err.message : err
+    );
+    return;
+  }
+  console.error('[main] uncaughtException:', err);
+  try {
+    logger.error('uncaughtException', {
+      name: err && err.name,
+      message: String(err && err.message ? err.message : err),
+      stack: err && err.stack ? String(err.stack).slice(0, 4000) : undefined,
+    });
+  } catch {
+    /* ignore */
+  }
+  try {
+    dialog.showErrorBox(
+      'A JavaScript error occurred in the main process',
+      'Uncaught Exception:\n' + (err && err.stack ? err.stack : String(err))
+    );
+  } catch {
+    /* ignore */
+  }
+});
 
 /*
  * v1.3 - keep hidden / occluded panel renderers from being throttled by Chromium.

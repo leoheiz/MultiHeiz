@@ -12,6 +12,90 @@ const AdmZip = require('adm-zip');
 
 const CRX_MAGIC = Buffer.from('Cr24');
 
+/** Zip-slip / zip-bomb limits for CRX unpack (unsigned CRX still accepted in phase 1). */
+const MAX_ZIP_ENTRIES = 20_000;
+const MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
+/** Unix S_IFMT / S_IFLNK in external attributes (high 16 bits). */
+const UNIX_S_IFMT = 0o170000;
+const UNIX_S_IFLNK = 0o120000;
+
+/**
+ * @param {number} attr
+ */
+function isZipSymlinkAttr(attr) {
+  const mode = (Number(attr) >>> 16) & 0xffff;
+  return (mode & UNIX_S_IFMT) === UNIX_S_IFLNK;
+}
+
+/**
+ * Resolve a zip entry path under destDir; rejects absolutes, drives, .., and escapes.
+ * @param {string} entryName
+ * @param {string} destDir
+ * @returns {{ target: string, isDir: boolean }}
+ */
+function resolveSafeZipTarget(entryName, destDir) {
+  const raw = String(entryName || '');
+  if (!raw || raw.includes('\0')) {
+    throw new Error('Entrada ZIP inválida');
+  }
+  const normalized = raw.replace(/\\/g, '/');
+  if (
+    path.posix.isAbsolute(normalized) ||
+    path.win32.isAbsolute(normalized) ||
+    /^[a-zA-Z]:/.test(normalized) ||
+    normalized.startsWith('/') ||
+    normalized.startsWith('\\')
+  ) {
+    throw new Error('Entrada ZIP com caminho absoluto rejeitada: ' + raw);
+  }
+  const parts = normalized.split('/').filter((p) => p.length > 0 && p !== '.');
+  if (parts.some((p) => p === '..')) {
+    throw new Error('Entrada ZIP com .. rejeitada: ' + raw);
+  }
+  const destRoot = path.resolve(destDir);
+  const target = parts.length ? path.resolve(destRoot, ...parts) : destRoot;
+  const rel = path.relative(destRoot, target);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('Entrada ZIP fora do destino: ' + raw);
+  }
+  return { target, isDir: normalized.endsWith('/') };
+}
+
+/**
+ * Extract zip buffer entry-by-entry with zip-slip / symlink / size guards.
+ * @param {Buffer} zipBuf
+ * @param {string} destDir
+ * @returns {number} entry count
+ */
+function extractZipSafely(zipBuf, destDir) {
+  const adm = new AdmZip(zipBuf);
+  const entries = adm.getEntries();
+  if (!entries.length) throw new Error('ZIP do CRX está vazio');
+  if (entries.length > MAX_ZIP_ENTRIES) {
+    throw new Error('ZIP do CRX excede limite de entradas (' + MAX_ZIP_ENTRIES + ')');
+  }
+  fs.mkdirSync(destDir, { recursive: true });
+  let totalBytes = 0;
+  for (const entry of entries) {
+    if (isZipSymlinkAttr(entry.attr)) {
+      throw new Error('Entrada ZIP symlink rejeitada: ' + entry.entryName);
+    }
+    const { target, isDir } = resolveSafeZipTarget(entry.entryName, destDir);
+    if (entry.isDirectory || isDir) {
+      fs.mkdirSync(target, { recursive: true });
+      continue;
+    }
+    const data = entry.getData();
+    totalBytes += data.length;
+    if (totalBytes > MAX_UNCOMPRESSED_BYTES) {
+      throw new Error('ZIP do CRX excede limite de tamanho (512 MB)');
+    }
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, data);
+  }
+  return entries.length;
+}
+
 /**
  * @param {Buffer} buf
  * @returns {{ version: number, zip: Buffer }}
@@ -78,11 +162,7 @@ function unpackCrxToDir(buf, destDir) {
   if (zip[0] !== 0x50 || zip[1] !== 0x4b) {
     throw new Error('Payload CRX não é um ZIP válido');
   }
-  fs.mkdirSync(destDir, { recursive: true });
-  const adm = new AdmZip(zip);
-  const entries = adm.getEntries();
-  if (!entries.length) throw new Error('ZIP do CRX está vazio');
-  adm.extractAllTo(destDir, true);
+  const files = extractZipSafely(zip, destDir);
   const manifestPath = path.join(destDir, 'manifest.json');
   if (!fs.existsSync(manifestPath)) {
     // Some CRXs nest a single root folder
@@ -105,7 +185,7 @@ function unpackCrxToDir(buf, destDir) {
   if (!fs.existsSync(path.join(destDir, 'manifest.json'))) {
     throw new Error('manifest.json não encontrado após unpack');
   }
-  return { crxVersion: version, files: entries.length };
+  return { crxVersion: version, files };
 }
 
 /**

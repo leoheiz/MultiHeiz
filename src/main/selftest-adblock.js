@@ -61,10 +61,19 @@ async function runAdblockSelftest(ctx) {
   <script src="/tracker.js"></script>
   <script>
     window.__adResults = { adImg: 'pending', okImg: 'pending', tracker: 'pending', xhrAd: 'pending', xhrOk: 'pending', cookie: '', scriptlet: 'pending' };
-    document.getElementById('ad-img').onerror = () => { window.__adResults.adImg = 'error'; };
-    document.getElementById('ad-img').onload = () => { window.__adResults.adImg = 'load'; };
-    document.getElementById('ok-img').onerror = () => { window.__adResults.okImg = 'error'; };
-    document.getElementById('ok-img').onload = () => { window.__adResults.okImg = 'load'; };
+    function wireImg(id, key) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const done = (state) => { window.__adResults[key] = state; };
+      el.onerror = () => done('error');
+      el.onload = () => done('load');
+      // Electron 44+/Chromium: localhost 1x1 may finish before this script runs.
+      if (el.complete) {
+        done(el.naturalWidth > 0 ? 'load' : 'error');
+      }
+    }
+    wireImg('ad-img', 'adImg');
+    wireImg('ok-img', 'okImg');
     document.cookie = 'mh_adblock_test=1; path=/';
     window.__adResults.cookie = document.cookie;
     fetch('/adserver/pixel').then(() => { window.__adResults.xhrAd = 'load'; }).catch(() => { window.__adResults.xhrAd = 'error'; });
