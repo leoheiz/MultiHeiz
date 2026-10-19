@@ -1960,8 +1960,27 @@
           inp.setAttribute('data-list-id', item.id);
           inp.checked = item.enabled !== false;
           label.appendChild(inp);
-          label.appendChild(document.createTextNode(' ' + item.name));
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'adblock-list-name';
+          nameSpan.appendChild(document.createTextNode(item.name));
+          if (item.vendor) {
+            const badge = document.createElement('span');
+            badge.className = 'badge-vendor';
+            badge.textContent = item.vendor;
+            nameSpan.appendChild(document.createTextNode(' '));
+            nameSpan.appendChild(badge);
+          }
+          label.appendChild(nameSpan);
           box.appendChild(label);
+          if (item.license || item.note) {
+            const lic = document.createElement('div');
+            lic.className = 'meta adblock-list-license';
+            const parts = [];
+            if (item.license) parts.push(item.license);
+            if (item.note) parts.push(item.note);
+            lic.textContent = parts.join(' · ');
+            box.appendChild(lic);
+          }
           const meta = document.createElement('div');
           meta.className = 'meta';
           const when = item.lastUpdateAt

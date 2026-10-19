@@ -1,4 +1,28 @@
-# AdBlocker Ultimate on MultiHeiz (Phase 3b)
+# AdBlocker Ultimate on MultiHeiz
+
+## Built-in Ghostery engine — optional ABU filter lists (1.2.0)
+
+Besides the third-party **extension** path below (Experimental), MultiHeiz can download
+AdBlocker Ultimate filter lists into the **built-in** `@ghostery/adblocker-electron` catalog.
+All five are opt-in (`defaultOn: false`), never bundled in the installer, and labelled
+“AdBlocker Ultimate” in Configurações → Bloqueio de anúncios (with license text).
+
+| id | List | Approx. size | License |
+|----|------|--------------|---------|
+| `abu_ad` | Ultimate Ad Filter | ~6.1 MB | GNU GPLv3 / CC BY 3.0 |
+| `abu_privacy` | Ultimate Privacy Filter | ~12 MB (heavy) | GNU GPLv3 / CC BY 3.0 |
+| `abu_security` | Ultimate Security Filter | ~160 KB | MIT / CC0 1.0 |
+| `abu_anticircumvention` | Anti-circumvention | ~1.3 MB | GNU GPLv3 |
+| `abu_spanish_portuguese` | EasyList Spanish (ES/PT) | ~128 KB | GNU GPLv3 / CC BY 3.0 |
+
+Source: [adblockultimate.net/filters](https://adblockultimate.net/filters) (AdAvoid Ltd.).
+No dedicated Portuguese list on filters.adavoid.org — EasyList Spanish covers ES/PT sites.
+See `THIRD_PARTY_NOTICES.md` and catalog `src/main/adblock/lists.js`. AdGuard-syntax
+preprocessing / scriptlet conversion is phase 5B.
+
+---
+
+## Extension probe (Phase 3b)
 
 Honest results from a TEMP `MULTIHEIZ_USERDATA` run (not a personal user profile).
 

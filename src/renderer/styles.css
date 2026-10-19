@@ -1501,6 +1501,26 @@ dialog label.check-row input[type='checkbox'],
   margin-left: 22px;
   margin-bottom: 4px;
 }
+.adblock-list-name {
+  flex: 1;
+  min-width: 0;
+}
+.badge-vendor {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  vertical-align: middle;
+  color: color-mix(in srgb, var(--text) 72%, transparent);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+}
+.adblock-list-license {
+  margin-top: 0;
+}
 .ext-list {
   list-style: none;
   padding: 0;

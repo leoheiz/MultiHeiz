@@ -29,6 +29,20 @@ As listas **não** são empacotadas no instalador. São baixadas sob demanda par
 | Peter Lowe’s Ad and tracking server list | Ver [yoyo.org](https://pgl.yoyo.org/) |
 | AdGuard filters | GPLv3 |
 
+### AdBlocker Ultimate filter lists (AdAvoid Ltd.)
+
+Fonte: [adblockultimate.net/filters](https://adblockultimate.net/filters). Listas opcionais do catálogo embutido (todas `defaultOn: false`), baixadas em runtime sob demanda — **não** distribuídas com o instalador MultiHeiz. O código do MultiHeiz permanece MIT.
+
+| Lista (id) | URL | Licença |
+|------------|-----|---------|
+| Ultimate Ad Filter (`abu_ad`) | https://filters.adavoid.org/ultimate-ad-filter.txt | GNU GPLv3 / CC BY 3.0 |
+| Ultimate Privacy Filter (`abu_privacy`) | https://filters.adavoid.org/ultimate-privacy-filter.txt | GNU GPLv3 / CC BY 3.0 |
+| Ultimate Security Filter (`abu_security`) | https://filters.adavoid.org/ultimate-security-filter.txt | MIT / CC0 1.0 |
+| Anti-circumvention (`abu_anticircumvention`) | https://filters.adavoid.org/filters/Anticircumvention.txt | GNU GPLv3 |
+| EasyList Spanish ES/PT (`abu_spanish_portuguese`) | https://filters.adavoid.org/filters/EasyListSpanish.txt | GNU GPLv3 / CC BY 3.0 |
+
+Não há lista portuguesa dedicada em filters.adavoid.org; a EasyList Spanish é a opção regional ABU indicada para sites ES/PT.
+
 ## Ícones
 
 Ícones Lucide — ISC ([lucide.dev](https://lucide.dev)).

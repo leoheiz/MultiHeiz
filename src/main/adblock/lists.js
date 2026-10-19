@@ -17,6 +17,7 @@
  * @property {ListGroup} group
  * @property {boolean} defaultOn
  * @property {string} [note]
+ * @property {string} [vendor]
  */
 
 /** @type {Record<string, ListDef>} */
@@ -130,6 +131,61 @@ const LISTS = {
     group: 'privacy',
     defaultOn: false,
     note: '~11 MB; opcional (memória/tempo de build)',
+  },
+  abu_ad: {
+    id: 'abu_ad',
+    name: 'AdBlocker Ultimate - Ultimate Ad Filter',
+    url: 'https://filters.adavoid.org/ultimate-ad-filter.txt',
+    license: 'GNU GPLv3 / CC BY 3.0 (AdAvoid Ltd.)',
+    file: 'ultimate-ad-filter.txt',
+    group: 'ads',
+    defaultOn: false,
+    vendor: 'AdBlocker Ultimate',
+    note: '~6,1 MB',
+  },
+  abu_privacy: {
+    id: 'abu_privacy',
+    name: 'AdBlocker Ultimate - Ultimate Privacy Filter',
+    url: 'https://filters.adavoid.org/ultimate-privacy-filter.txt',
+    license: 'GNU GPLv3 / CC BY 3.0 (AdAvoid Ltd.)',
+    file: 'ultimate-privacy-filter.txt',
+    group: 'privacy',
+    defaultOn: false,
+    vendor: 'AdBlocker Ultimate',
+    note: '~12 MB; pesada (memória/tempo de build)',
+  },
+  abu_security: {
+    id: 'abu_security',
+    name: 'AdBlocker Ultimate - Ultimate Security Filter',
+    url: 'https://filters.adavoid.org/ultimate-security-filter.txt',
+    license: 'MIT / CC0 1.0 (AdAvoid Ltd.)',
+    file: 'ultimate-security-filter.txt',
+    group: 'malware',
+    defaultOn: false,
+    vendor: 'AdBlocker Ultimate',
+    note: '~160 KB',
+  },
+  abu_anticircumvention: {
+    id: 'abu_anticircumvention',
+    name: 'AdBlocker Ultimate - Anti-circumvention',
+    url: 'https://filters.adavoid.org/filters/Anticircumvention.txt',
+    license: 'GNU GPLv3 (AdAvoid Ltd.)',
+    file: 'anticircumvention.txt',
+    group: 'fixes',
+    defaultOn: false,
+    vendor: 'AdBlocker Ultimate',
+    note: '~1,3 MB',
+  },
+  abu_spanish_portuguese: {
+    id: 'abu_spanish_portuguese',
+    name: 'AdBlocker Ultimate - EasyList Spanish (ES/PT)',
+    url: 'https://filters.adavoid.org/filters/EasyListSpanish.txt',
+    license: 'GNU GPLv3 / CC BY 3.0 (AdAvoid Ltd.)',
+    file: 'easylistspanish.txt',
+    group: 'regional',
+    defaultOn: false,
+    vendor: 'AdBlocker Ultimate',
+    note: '~128 KB; regional ES/PT (sem lista PT dedicada no ABU)',
   },
 };
 

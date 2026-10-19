@@ -166,6 +166,7 @@ function readAdblockSettings() {
   // Migrate v1.7.0: antiTracking / easyprivacy coupling
   if (ab.antiTracking === false) lists.easyprivacy = false;
   if (ab.antiTracking === false) lists.ublock_privacy = false;
+  if (ab.antiTracking === false) lists.abu_privacy = false;
   return {
     ...base,
     ...ab,
@@ -445,7 +446,10 @@ function selectedBuiltinListIds() {
     if (ab.lists[id] !== false && LISTS[id]) {
       // antiTracking master switch also gates privacy lists
       if (
-        (id === 'easyprivacy' || id === 'ublock_privacy' || id === 'adguard_tracking') &&
+        (id === 'easyprivacy' ||
+          id === 'ublock_privacy' ||
+          id === 'adguard_tracking' ||
+          id === 'abu_privacy') &&
         ab.antiTracking === false
       ) {
         continue;
@@ -1723,6 +1727,8 @@ function getStatus() {
     group: def.group,
     groupLabel: GROUP_LABELS[def.group] || def.group,
     url: def.url,
+    license: def.license || '',
+    vendor: def.vendor || '',
     enabled: ab.lists[def.id] !== false,
     defaultOn: def.defaultOn,
     note: def.note || '',

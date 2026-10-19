@@ -107,7 +107,10 @@ sumiam na prática. Causas reais encontradas e corrigidas:
 
 Defaults ON: uBlock (filters, badware, privacy, quick-fixes, unbreak, resource-abuse), EasyList,
 EasyPrivacy, EasyList Portuguese, Peter Lowe, AdGuard Base `2_without_easylist` (~4 MB).
-Default OFF: AdGuard Tracking `3.txt` (~11 MB). Auto-update 6/12/24/48 h (default 24).
+Default OFF: AdGuard Tracking `3.txt` (~11 MB); AdBlocker Ultimate (AdAvoid) opcional —
+`abu_ad`, `abu_privacy` (~12 MB; pesada), `abu_security`, `abu_anticircumvention`,
+`abu_spanish_portuguese` (ES/PT regional). Baixadas em runtime; não vão no pacote.
+Auto-update 6/12/24/48 h (default 24).
 
 Números de build (listas default, com resources) são registrados em
 `docs/adblock-real-results.md` / `TASK-v1.7.1.result.md` após `check:adblock-real`.
