@@ -131,6 +131,9 @@ body {
   overflow-y: hidden;
   box-sizing: border-box;
   position: relative;
+  /* Never a Windows caption-drag region (incl. under titleBarOverlay height). */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 /*
@@ -167,7 +170,7 @@ body {
   app-region: no-drag;
   pointer-events: auto;
   position: relative;
-  z-index: 2;
+  z-index: 6;
 }
 
 #btn-sidebar-toggle .ico-sidebar-pin.hidden,
@@ -491,8 +494,13 @@ html[data-theme='claro'] .sidebar-item:hover {
   z-index: 3;
   min-width: 0;
   overflow: hidden;
-  -webkit-app-region: drag;
-  app-region: drag;
+  /*
+   * Do NOT mark the whole topbar as drag. In auto-hide the sidebar overlays the left
+   * of a full-width topbar; a sibling drag region still wins OS hit-test on Windows
+   * and swallows real clicks on #btn-sidebar-toggle. Drag lives only on .spacer.
+   */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
   /* Keep tools clear of native Windows overlay buttons (env fallbacks → 0 on Linux) */
   padding-right: max(
     8px,
@@ -651,6 +659,9 @@ html[data-theme='claro'] .tab:hover {
 .spacer {
   flex: 1 1 0;
   min-width: 0;
+  /* Sole caption-drag strip (see #topbar). Must not extend under the sidebar. */
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
 .layout-label {

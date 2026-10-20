@@ -211,6 +211,7 @@ const SELFTEST_UA = selftestMode === 'ua';
 const SELFTEST_GIS = selftestMode === 'gis';
 const SELFTEST_STORE = selftestMode === 'store';
 const SELFTEST_SIDEBAR = selftestMode === 'sidebar';
+const SELFTEST_REALCLICK_SIDEBAR = selftestMode === 'realclick-sidebar';
 const SELFTEST_WORKSPACE_DELETE = selftestMode === 'workspace-delete';
 const SELFTEST_CONTEXTMENU = selftestMode === 'contextmenu';
 const SELFTEST_PROXY = selftestMode === 'proxy';
@@ -241,6 +242,7 @@ const ANY_SELFTEST =
   SELFTEST_GIS ||
   SELFTEST_STORE ||
   SELFTEST_SIDEBAR ||
+  SELFTEST_REALCLICK_SIDEBAR ||
   SELFTEST_WORKSPACE_DELETE ||
   SELFTEST_CONTEXTMENU ||
   SELFTEST_PROXY ||
@@ -523,6 +525,7 @@ function createWindow() {
     SELFTEST_TITLEBAR ||
     SELFTEST_FULLSCREEN ||
     SELFTEST_SIDEBAR ||
+    SELFTEST_REALCLICK_SIDEBAR ||
     SELFTEST_WORKSPACE_DELETE
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
@@ -532,6 +535,7 @@ function createWindow() {
 
   // adblock-real / sidebar / workspace-delete: keep window off-screen so nothing
   // pops on the desktop, but still paint (layout / WebContentsView bounds).
+  // realclick-sidebar must be on-screen for a real OS mouse click.
   const offscreenSelftest =
     SELFTEST_ADBLOCK_REAL || SELFTEST_SIDEBAR || SELFTEST_WORKSPACE_DELETE;
   let winX = uiSize
@@ -586,6 +590,7 @@ function createWindow() {
       SELFTEST_TITLEBAR ||
       SELFTEST_FULLSCREEN ||
       SELFTEST_SIDEBAR ||
+      SELFTEST_REALCLICK_SIDEBAR ||
       SELFTEST_WORKSPACE_DELETE ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
@@ -1060,6 +1065,33 @@ function createWindow() {
         try {
           const { runSidebarSelftest } = require('./selftest-sidebar');
           runSidebarSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            chromeFullscreen,
+            sidebarCursor,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_REALCLICK_SIDEBAR) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runRealclickSidebarSelftest } = require('./selftest-realclick-sidebar');
+          runRealclickSidebarSelftest({
             mainWindow,
             panels,
             getState,
