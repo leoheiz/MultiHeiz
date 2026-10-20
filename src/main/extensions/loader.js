@@ -124,6 +124,11 @@ async function loadOne(accountId, record) {
       });
       const eid = ext && ext.id ? ext.id : record.id;
       map.set(record.id, eid);
+      try {
+        dnr.setRuntimeId(record.id, eid);
+      } catch {
+        /* ignore */
+      }
       if (abuCompatApplies(record)) {
         swBridge.afterLoad(ses, accountId, record, eid);
       }

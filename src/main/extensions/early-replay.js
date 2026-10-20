@@ -30,6 +30,25 @@ const WARM_URLS_EXTRA = [
 ];
 
 /**
+ * Optional origin override for local selftests (e.g. https://www.youtube.com:18443).
+ * Hostname stays www.youtube.com so the early-cache key matches real navigations.
+ * @param {string} url
+ */
+function warmUrlMaybeRewrite(url) {
+  const origin = String(process.env.MULTIHEIZ_EARLY_WARM_ORIGIN || '').trim();
+  if (!origin) return url;
+  try {
+    const u = new URL(url);
+    const o = new URL(origin);
+    u.protocol = o.protocol;
+    u.host = o.host; // hostname + port
+    return u.href;
+  } catch {
+    return url;
+  }
+}
+
+/**
  * @typedef {object} CacheItem
  * @property {string} func
  * @property {any[]} args
@@ -498,8 +517,9 @@ async function warmUp(ses, accountId, record, versionStr) {
       /* ignore */
     }
 
-    const urls = [...WARM_URLS_PRIMARY];
-    if (c.hosts.size === 0) urls.push(...WARM_URLS_EXTRA);
+    const urls = [...WARM_URLS_PRIMARY, ...(c.hosts.size === 0 ? WARM_URLS_EXTRA : [])].map(
+      warmUrlMaybeRewrite
+    );
 
     for (const url of urls) {
       try {
@@ -513,7 +533,7 @@ async function warmUp(ses, accountId, record, versionStr) {
           err && err.message ? err.message : err
         );
       }
-      if (c.hosts.size > 0 && urls.length > 1 && url === WARM_URLS_PRIMARY[0]) {
+      if (c.hosts.size > 0 && urls.length > 1) {
         // Primary filled — skip extras
         break;
       }

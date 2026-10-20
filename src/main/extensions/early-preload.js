@@ -38,6 +38,21 @@ const { ipcRenderer, contextBridge } = require('electron');
 
     if (keys.length) {
       try {
+        // Marker for selftests / diagnostics (same shape as the ABU prototype).
+        contextBridge.executeInMainWorld({
+          func: (n) => {
+            try {
+              (window.__INJ = window.__INJ || []).push('early-replay:' + n);
+            } catch {
+              /* ignore */
+            }
+          },
+          args: [keys.length],
+        });
+      } catch {
+        /* ignore */
+      }
+      try {
         ipcRenderer.send('multiheiz/ext-early-done', { keys, href });
       } catch {
         /* ignore */

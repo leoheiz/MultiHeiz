@@ -3,8 +3,11 @@
 /**
  * Stub chrome.declarativeNetRequest dynamic/session/updateEnabledRulesets.
  * Injected into extension pages (popup/options) via executeJavaScript when opened.
- * Background service workers cannot be patched reliably in Electron — static rulesets
- * + main-process update* APIs cover the shim; SW calls are no-ops unless a page bridge runs.
+ *
+ * Kept as a fallback (not removed in step 6): MV3 service workers get DNR through
+ * sw-shim-preload → sw-bridge → dnr-shim, but popup/options pages still need this
+ * page stub + multiheizDnrBridge for updateEnabledRulesets / updateDynamicRules /
+ * getEnabledRulesets when the user opens the extension UI.
  */
 
 const dnr = require('./dnr-shim');

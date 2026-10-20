@@ -4,17 +4,31 @@
  * chrome.declarativeNetRequest static ruleset shim for Electron.
  * Enforced via webRequestHub alongside the built-in adblock engine.
  *
- * Supported actions: block, allow, allowAllRequests, redirect, upgradeScheme.
+ * Supported actions: block, allow, allowAllRequests, redirect, upgradeScheme,
+ * modifyHeaders (request + response).
  * Condition fields: urlFilter, regexFilter, requestDomains, excludedRequestDomains,
  * initiatorDomains, excludedInitiatorDomains, resourceTypes, excludedResourceTypes,
  * domainType, isUrlFilterCaseSensitive.
+ *
+ * redirect.extensionPath → chrome-extension://<runtimeId>/<path>, with
+ * multiheiz-extres:// fallback when the custom scheme is registered (use_dynamic_url
+ * WARs are not reliably served by Electron for DNR redirects).
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { net, protocol } = require('electron');
 const hub = require('../adblock/web-request-hub');
 
 const HUB_ID = 'dnr-shim';
+const HUB_ID_REQ_HEADERS = 'dnr-shim-req-headers';
+const HUB_ID_RES_HEADERS = 'dnr-shim-res-headers';
+const EXTRES_SCHEME = 'multiheiz-extres';
+
+/** @type {boolean} */
+let extresProtocolReady = false;
+/** @type {boolean} */
+let extresSchemeRegistered = false;
 
 /** @type {Map<Electron.Session, { accountId: string|null }>} */
 const attached = new WeakMap();
@@ -70,6 +84,7 @@ const ACTION_RANK = {
   block: 3,
   upgradeScheme: 2,
   redirect: 1,
+  modifyHeaders: 1,
 };
 
 /**
@@ -259,6 +274,7 @@ function compileRule(raw) {
  * @typedef {object} ExtensionEngine
  * @property {string} installId
  * @property {string} extPath
+ * @property {string|null} runtimeId Electron chrome-extension id when loaded
  * @property {Map<string, { enabled: boolean, path: string, rules: CompiledRule[] }>} rulesets
  * @property {CompiledRule[]} dynamicRules
  * @property {CompiledRule[]} sessionRules
@@ -312,6 +328,7 @@ function loadExtensionRules(installId, extPath, manifest) {
   const eng = {
     installId,
     extPath,
+    runtimeId: null,
     rulesets: new Map(),
     dynamicRules: [],
     sessionRules: [],
@@ -359,6 +376,141 @@ function loadExtensionRules(installId, extPath, manifest) {
 function unloadExtensionRules(installId) {
   enginesByInstall.delete(installId);
   for (const set of applyMap.values()) set.delete(installId);
+}
+
+/**
+ * Bind Electron runtime id so redirect.extensionPath can resolve.
+ * @param {string} installId
+ * @param {string|null} runtimeId
+ */
+function setRuntimeId(installId, runtimeId) {
+  const eng = enginesByInstall.get(installId);
+  if (!eng) return;
+  eng.runtimeId = runtimeId ? String(runtimeId) : null;
+}
+
+/**
+ * Register privileged scheme (must run before app.whenReady).
+ */
+function registerExtresScheme() {
+  if (extresSchemeRegistered) return;
+  try {
+    protocol.registerSchemesAsPrivileged([
+      {
+        scheme: EXTRES_SCHEME,
+        privileges: {
+          standard: true,
+          secure: true,
+          supportFetchAPI: true,
+          corsEnabled: true,
+          stream: true,
+          bypassCSP: true,
+        },
+      },
+    ]);
+    extresSchemeRegistered = true;
+  } catch (err) {
+    console.warn(
+      '[dnr-shim] registerSchemesAsPrivileged',
+      err && err.message ? err.message : err
+    );
+  }
+}
+
+/**
+ * Serve extension files for DNR redirects (fallback when chrome-extension WAR
+ * use_dynamic_url is not served). Call after app.whenReady.
+ */
+function ensureExtresProtocol() {
+  if (extresProtocolReady) return;
+  try {
+    protocol.handle(EXTRES_SCHEME, (request) => {
+      try {
+        const u = new URL(request.url);
+        const installId = decodeURIComponent(u.hostname || '');
+        let rel = decodeURIComponent((u.pathname || '/').replace(/^\/+/, ''));
+        if (rel.includes('..') || path.isAbsolute(rel)) {
+          return new Response('', { status: 400 });
+        }
+        const eng = enginesByInstall.get(installId);
+        if (!eng || !eng.extPath) {
+          return new Response('', { status: 404 });
+        }
+        const abs = path.normalize(path.join(eng.extPath, rel));
+        if (!abs.startsWith(path.normalize(eng.extPath))) {
+          return new Response('', { status: 403 });
+        }
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+          return new Response('', { status: 404 });
+        }
+        return net.fetch('file:///' + abs.replace(/\\/g, '/'));
+      } catch (err) {
+        console.warn('[dnr-shim] extres handle', err && err.message);
+        return new Response('', { status: 500 });
+      }
+    });
+    extresProtocolReady = true;
+  } catch (err) {
+    console.warn(
+      '[dnr-shim] extres protocol.handle',
+      err && err.message ? err.message : err
+    );
+  }
+}
+
+/**
+ * Resolve redirect.extensionPath to a navigable URL.
+ * Prefer chrome-extension:// when runtimeId is known; also offer multiheiz-extres://
+ * as a stable fallback for WAR files under use_dynamic_url.
+ * @param {ExtensionEngine} eng
+ * @param {string} extensionPath
+ * @returns {string|null}
+ */
+function resolveExtensionPathRedirect(eng, extensionPath) {
+  if (!eng || !extensionPath) return null;
+  let rel = String(extensionPath).replace(/^\/+/, '');
+  if (!rel || rel.includes('..')) return null;
+  ensureExtresProtocol();
+  // Prefer chrome-extension:// when the extension is loaded in a session.
+  if (eng.runtimeId) {
+    return 'chrome-extension://' + eng.runtimeId + '/' + rel;
+  }
+  if (extresProtocolReady || extresSchemeRegistered) {
+    return EXTRES_SCHEME + '://' + encodeURIComponent(eng.installId) + '/' + rel;
+  }
+  return null;
+}
+
+/**
+ * Apply DNR HeaderOperation list onto an Electron headers object.
+ * @param {Record<string, string|string[]>} headers
+ * @param {object[]} ops
+ * @returns {Record<string, string|string[]>}
+ */
+function applyHeaderOps(headers, ops) {
+  /** @type {Record<string, string|string[]>} */
+  const out = { ...(headers || {}) };
+  if (!Array.isArray(ops)) return out;
+  for (const op of ops) {
+    if (!op || !op.header) continue;
+    const name = String(op.header);
+    const lower = name.toLowerCase();
+    const key =
+      Object.keys(out).find((k) => k.toLowerCase() === lower) || name;
+    const operation = String(op.operation || '');
+    if (operation === 'remove') {
+      delete out[key];
+    } else if (operation === 'set') {
+      out[key] = String(op.value != null ? op.value : '');
+    } else if (operation === 'append') {
+      const prev = out[key];
+      const add = String(op.value != null ? op.value : '');
+      if (prev == null) out[key] = add;
+      else if (Array.isArray(prev)) out[key] = prev.concat(add);
+      else out[key] = [String(prev), add];
+    }
+  }
+  return out;
 }
 
 /**
@@ -627,6 +779,8 @@ function evaluate(accountId, details) {
 
   if (winner.actionType === 'allow') return {};
   if (winner.actionType === 'allowAllRequests') {
+    // Document navigations (main_frame and sub_frame): allow subsequent requests
+    // from this webContents until the next top-level main_frame navigation.
     if (
       (resourceType === 'main_frame' || resourceType === 'sub_frame') &&
       details.webContentsId != null
@@ -650,8 +804,30 @@ function evaluate(accountId, details) {
     const red = winner.action.redirect;
     if (!red) return {};
     if (red.url) return { redirectURL: String(red.url) };
-    if (red.extensionPath && winner /* need ext path */) {
-      // extensionPath redirects need chrome-extension:// id — skip if unknown
+    if (red.extensionPath) {
+      // Find engine that owns this winner for runtimeId / extPath
+      let owner = null;
+      if (installIds && installIds.size) {
+        for (const id of installIds) {
+          const eng = enginesByInstall.get(id);
+          if (!eng) continue;
+          if (eng.dynamicRules.includes(winner) || eng.sessionRules.includes(winner)) {
+            owner = eng;
+            break;
+          }
+          for (const rs of eng.rulesets.values()) {
+            if (rs.enabled && rs.rules.includes(winner)) {
+              owner = eng;
+              break;
+            }
+          }
+          if (owner) break;
+        }
+      }
+      const resolved = owner
+        ? resolveExtensionPathRedirect(owner, String(red.extensionPath))
+        : null;
+      if (resolved) return { redirectURL: resolved };
       return {};
     }
     if (red.transform) {
@@ -670,7 +846,108 @@ function evaluate(accountId, details) {
       }
     }
   }
+  // modifyHeaders is handled in onBeforeSendHeaders / onHeadersReceived
+  if (winner.actionType === 'modifyHeaders') return {};
   return {};
+}
+
+/**
+ * Resolve accountId for a webRequest details object (same as attachSession).
+ * @param {Electron.Session} ses
+ * @param {object} details
+ * @returns {string|null}
+ */
+function accountIdForDetails(ses, details) {
+  const meta = attached.get(ses) || { accountId: null };
+  let accountId2 = meta.accountId;
+  try {
+    const ab = getAdblock();
+    if (ab && details.webContentsId && ab.wcToAccount) {
+      accountId2 = ab.wcToAccount.get(details.webContentsId) || accountId2;
+    }
+  } catch {
+    /* ignore */
+  }
+  return accountId2 || null;
+}
+
+/**
+ * Winning modifyHeaders rule for request or response phase.
+ * @param {string|null} accountId
+ * @param {object} details
+ * @param {'request'|'response'} phase
+ * @returns {CompiledRule|null}
+ */
+function evaluateModifyHeaders(accountId, details, phase) {
+  const url = details.url || '';
+  if (!url || url.startsWith('chrome-extension:') || url.startsWith('data:')) {
+    return null;
+  }
+  const resourceType = RT_MAP[details.resourceType] || 'other';
+  if (details.webContentsId != null && allowAllWc.has(details.webContentsId)) {
+    return null;
+  }
+  const ab = getAdblock();
+  if (ab) {
+    let pageUrl = details.referrer || '';
+    try {
+      const { webContents } = require('electron');
+      if (details.webContentsId) {
+        const wc = webContents.fromId(details.webContentsId);
+        if (wc && !wc.isDestroyed()) pageUrl = wc.getURL() || pageUrl;
+      }
+    } catch {
+      /* ignore */
+    }
+    if (pageUrl && ab.isAllowed(pageUrl)) return null;
+  }
+
+  const host = hostnameOf(url);
+  let initiatorHost = hostnameOf(details.referrer || '');
+  if (!initiatorHost && details.webContentsId) {
+    try {
+      const { webContents } = require('electron');
+      const wc = webContents.fromId(details.webContentsId);
+      if (wc && !wc.isDestroyed()) initiatorHost = hostnameOf(wc.getURL());
+    } catch {
+      /* ignore */
+    }
+  }
+  const firstParty = sameSite(host, initiatorHost);
+  const ctx = { url, host, initiatorHost, resourceType, firstParty };
+
+  let installIds = null;
+  if (accountId && applyMap.has(accountId)) {
+    installIds = applyMap.get(accountId);
+  } else if (applyMap.has('*')) {
+    installIds = applyMap.get('*');
+  } else {
+    return null;
+  }
+
+  /** @type {CompiledRule[]} */
+  const winners = [];
+  if (installIds && installIds.size) {
+    for (const id of installIds) {
+      const eng = enginesByInstall.get(id);
+      if (!eng || !eng.ruleCount) continue;
+      const w = matchEngine(eng, ctx);
+      if (
+        w &&
+        w.actionType === 'modifyHeaders' &&
+        w.action &&
+        ((phase === 'request' &&
+          Array.isArray(w.action.requestHeaders) &&
+          w.action.requestHeaders.length) ||
+          (phase === 'response' &&
+            Array.isArray(w.action.responseHeaders) &&
+            w.action.responseHeaders.length))
+      ) {
+        winners.push(w);
+      }
+    }
+  }
+  return pickWinner(winners);
 }
 
 /**
@@ -679,27 +956,10 @@ function evaluate(accountId, details) {
  */
 function attachSession(ses, accountId) {
   attached.set(ses, { accountId: accountId || null });
+  ensureExtresProtocol();
   hub.removeBeforeRequest(ses, HUB_ID);
   hub.addBeforeRequest(ses, HUB_ID, (details, callback) => {
-    const meta = attached.get(ses) || { accountId: null };
-    let accountId2 = meta.accountId;
-    try {
-      const ab = getAdblock();
-      if (ab && details.webContentsId && ab.wcToAccount) {
-        accountId2 = ab.wcToAccount.get(details.webContentsId) || accountId2;
-      }
-    } catch {
-      /* ignore */
-    }
-    // Resolve account from panels binding if available
-    try {
-      const ab = getAdblock();
-      if ((!accountId2 || accountId2 === 'acc') && details.webContentsId && ab) {
-        // wcToAccount may not be exported — use referrer path only
-      }
-    } catch {
-      /* ignore */
-    }
+    const accountId2 = accountIdForDetails(ses, details);
     try {
       const result = evaluate(accountId2, details);
       callback(result || {});
@@ -708,6 +968,48 @@ function attachSession(ses, accountId) {
       callback({});
     }
   });
+
+  // Stealth / session modifyHeaders (request)
+  hub.removeBeforeSendHeaders(ses, HUB_ID_REQ_HEADERS);
+  hub.addBeforeSendHeaders(ses, HUB_ID_REQ_HEADERS, (details, callback) => {
+    try {
+      const accountId2 = accountIdForDetails(ses, details);
+      const winner = evaluateModifyHeaders(accountId2, details, 'request');
+      if (winner && winner.action && winner.action.requestHeaders) {
+        callback({
+          requestHeaders: applyHeaderOps(
+            details.requestHeaders || {},
+            winner.action.requestHeaders
+          ),
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('[dnr] modifyHeaders request', err && err.message);
+    }
+    callback({});
+  });
+
+  // Stealth / session modifyHeaders (response)
+  hub.removeHeadersReceived(ses, HUB_ID_RES_HEADERS);
+  hub.addHeadersReceived(ses, HUB_ID_RES_HEADERS, (details, callback) => {
+    try {
+      const accountId2 = accountIdForDetails(ses, details);
+      const winner = evaluateModifyHeaders(accountId2, details, 'response');
+      if (winner && winner.action && winner.action.responseHeaders) {
+        callback({
+          responseHeaders: applyHeaderOps(
+            details.responseHeaders || {},
+            winner.action.responseHeaders
+          ),
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('[dnr] modifyHeaders response', err && err.message);
+    }
+    callback({});
+  });
 }
 
 /**
@@ -715,6 +1017,8 @@ function attachSession(ses, accountId) {
  */
 function detachSession(ses) {
   hub.removeBeforeRequest(ses, HUB_ID);
+  hub.removeBeforeSendHeaders(ses, HUB_ID_REQ_HEADERS);
+  hub.removeHeadersReceived(ses, HUB_ID_RES_HEADERS);
   attached.delete(ses);
 }
 
@@ -793,6 +1097,9 @@ function matchUrl(installId, url, opts = {}) {
 module.exports = {
   loadExtensionRules,
   unloadExtensionRules,
+  setRuntimeId,
+  registerExtresScheme,
+  ensureExtresProtocol,
   updateEnabledRulesets,
   updateRules,
   setApplies,
@@ -800,12 +1107,15 @@ module.exports = {
   attachSession,
   detachSession,
   evaluate,
+  evaluateModifyHeaders,
   measureLookup,
   getEngine,
   listEngines,
   matchUrl,
   compileRule,
   urlFilterToRegExp,
+  resolveExtensionPathRedirect,
   HUB_ID,
+  EXTRES_SCHEME,
   enginesByInstall,
 };

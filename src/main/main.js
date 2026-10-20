@@ -155,6 +155,16 @@ try {
   );
 }
 
+// DNR redirect.extensionPath fallback scheme (multiheiz-extres://) — before ready.
+try {
+  require('./extensions/dnr-shim').registerExtresScheme();
+} catch (err) {
+  console.warn(
+    '[main] dnr extres scheme',
+    err && err.message ? err.message : err
+  );
+}
+
 // Prefer high-performance GPU when enabled (needs restart to take effect) — Windows only
 if (process.platform === 'win32') {
   try {
@@ -191,6 +201,7 @@ const SELFTEST_TITLEBAR = selftestMode === 'titlebar';
 const SELFTEST_FULLSCREEN = selftestMode === 'fullscreen';
 const SELFTEST_EXT = selftestMode === 'ext';
 const SELFTEST_ABU = selftestMode === 'abu';
+const SELFTEST_ABU_YT = selftestMode === 'abu-yt';
 const SELFTEST_SECURITY = selftestMode === 'security';
 const SELFTEST_UA = selftestMode === 'ua';
 const SELFTEST_GIS = selftestMode === 'gis';
@@ -213,9 +224,18 @@ const ANY_SELFTEST =
   SELFTEST_FULLSCREEN ||
   SELFTEST_EXT ||
   SELFTEST_ABU ||
+  SELFTEST_ABU_YT ||
   SELFTEST_SECURITY ||
   SELFTEST_UA ||
   SELFTEST_GIS;
+
+// ABU YouTube selftest: map YT hosts to loopback (local HTTPS page-server).
+if (SELFTEST_ABU_YT) {
+  app.commandLine.appendSwitch(
+    'host-resolver-rules',
+    'MAP www.youtube.com 127.0.0.1, MAP m.youtube.com 127.0.0.1, MAP www.youtube-nocookie.com 127.0.0.1'
+  );
+}
 
 /** @type {object|null} recorded BrowserWindow chrome options for selftests / diagnostics */
 let recordedWindowChrome = null;
@@ -1009,6 +1029,31 @@ function createWindow() {
         try {
           const { runAbuSelftest } = require('./selftest-abu');
           runAbuSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            extensions,
+            adblock,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_ABU_YT) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runAbuYtSelftest } = require('./selftest-abu-yt');
+          runAbuYtSelftest({
             mainWindow,
             panels,
             getState,
@@ -3834,6 +3879,11 @@ async function runV14Selftest() {
 
 app.whenReady().then(() => {
   loadState();
+  try {
+    require('./extensions/dnr-shim').ensureExtresProtocol();
+  } catch (err) {
+    console.warn('[main] dnr extres protocol', err && err.message ? err.message : err);
+  }
   // IPC frame guard must wrap ipcMain before any handle/on registration
   ipcGuard.install({
     getMainWindow: () => mainWindow,
