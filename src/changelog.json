@@ -44,6 +44,10 @@
         {
           "tag": "Novo",
           "text": "Barra lateral: padrão fixa; a seta alterna para esconder automaticamente (zona quente + overlay). Em Configurações → Aparência: \"Manter barra lateral sempre ativa (modo legado)\" restaura o recolhimento antigo."
+        },
+        {
+          "tag": "Correção",
+          "text": "Excluir uma área de trabalho agora fecha e remove todas as janelas dela (em vez de movê-las para outra área), com confirmação mostrando a quantidade."
         }
       ]
     },
