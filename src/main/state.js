@@ -46,9 +46,9 @@ function defaultState() {
     ui: {
       sidebarCollapsed: false,
       /**
-       * Auto-hide sidebar (overlay on hover). Replaces the old "collapsed" toggle.
-       * When true, panels use nearly full width; a thin hot-zone reveals the sidebar
-       * as an overlay without reflowing panel HTML layout.
+       * Auto-hide sidebar (overlay on hover). Used when settings.sidebarAlwaysActive is off.
+       * Default false = fixed sidebar. When true, panels use nearly full width; a thin
+       * hot-zone reveals the sidebar as an overlay without reflowing panel HTML layout.
        */
       sidebarAutoHide: false,
       layoutLocked: true,
@@ -88,6 +88,11 @@ function defaultState() {
       windowsPasskeys: true,
       blankLinkMode: 'same', // same | new-panel
       lightMode: false,
+      /**
+       * Legacy sidebar: top arrow collapses/expands like before (icon rail), with no
+       * auto-hide, hot-zone, or overlay inset. Default off = new fixed/auto-hide toggle.
+       */
+      sidebarAlwaysActive: false,
       backgroundPreset: 'balanced', // balanced | always | max-save
       preferHighPerfGpu: false,
       frameCapHidden: 30,
@@ -289,6 +294,9 @@ function migrate(parsed) {
   }
   if (!next.settings.blankLinkMode) next.settings.blankLinkMode = 'same';
   if (typeof next.settings.lightMode !== 'boolean') next.settings.lightMode = false;
+  if (typeof next.settings.sidebarAlwaysActive !== 'boolean') {
+    next.settings.sidebarAlwaysActive = false;
+  }
   if (!next.settings.backgroundPreset) next.settings.backgroundPreset = 'balanced';
   if (typeof next.settings.preferHighPerfGpu !== 'boolean') {
     next.settings.preferHighPerfGpu = false;
@@ -301,18 +309,15 @@ function migrate(parsed) {
   if (typeof next.ui.sidebarCollapsed !== 'boolean') {
     next.ui.sidebarCollapsed = false;
   }
-  // Migrate legacy "recolhido" toggle → auto-hide (icon-rail collapse is no longer the toggle).
-  // Check *parsed* ui: defaultState already has sidebarAutoHide:false, so merging first
-  // would hide a missing key and skip migration.
+  // Profiles without sidebarAutoHide start FIXED. Keep an existing boolean (user already
+  // chose auto-hide in the new mode). Do not map old sidebarCollapsed → autoHide.
+  // Check *parsed* ui: defaultState already has sidebarAutoHide:false after merge.
   {
     const rawUi = parsed.ui && typeof parsed.ui === 'object' ? parsed.ui : {};
     if (typeof rawUi.sidebarAutoHide !== 'boolean') {
-      if (rawUi.sidebarCollapsed === true) {
-        next.ui.sidebarAutoHide = true;
-        next.ui.sidebarCollapsed = false;
-      } else {
-        next.ui.sidebarAutoHide = false;
-      }
+      next.ui.sidebarAutoHide = false;
+      // Full fixed bar (not icon-rail) for profiles that never used the new toggle.
+      next.ui.sidebarCollapsed = false;
     }
   }
   if (typeof next.ui.sidebarWidth !== 'number' || !Number.isFinite(next.ui.sidebarWidth)) {
