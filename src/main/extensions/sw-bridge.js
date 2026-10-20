@@ -1,20 +1,20 @@
 'use strict';
 
 /**
- * Minimal MV3 service-worker IPC bridge (extensions.abuCompat).
- * Hooks ServiceWorkerMain.ipc, waits for shim `ready` (+50ms), and answers
- * invoke('dnr.*'), cookies, getAllFrames/getFrame. Full event feeding is a
- * later step — this only establishes the handshake and handlers.
+ * MV3 service-worker IPC bridge (extensions.abuCompat).
+ * One bridge per (session, extension): hooks ServiceWorkerMain.ipc, queues until
+ * ready (+50ms), feeds webNavigation/tabs/webRequest events, answers invoke
+ * handlers (dnr/cookies/frames/tabs stubs).
  *
- * Security: handlers are attached only to workers whose scope is
- * chrome-extension://<runtimeId>/ for an extension loaded in that session
- * with abuCompat. ipcMain is not used for SW traffic (Electron routes SW
- * preload IPC to ServiceWorkerMain.ipc).
+ * Security: handlers only for workers whose scope is chrome-extension://<id>/
+ * for abuCompat extensions in that session. SW IPC uses ServiceWorkerMain.ipc
+ * (not ipcMain).
  */
 
 const path = require('node:path');
-const { webContents } = require('electron');
+const { app, webContents, webFrameMain } = require('electron');
 const dnr = require('./dnr-shim');
+const hub = require('../adblock/web-request-hub');
 const { resolvePreloadPath } = require('../preload-path');
 const { abuCompatApplies, extensionIdFromScope } = require('./abu-compat');
 
@@ -24,8 +24,31 @@ const SW_SHIM_FILE = resolvePreloadPath(
 
 const READY_FLUSH_DELAY_MS = 50;
 
+/** Electron resourceType → chrome.webRequest type */
+const RESOURCE_TYPE_MAP = {
+  mainFrame: 'main_frame',
+  subFrame: 'sub_frame',
+  stylesheet: 'stylesheet',
+  script: 'script',
+  image: 'image',
+  font: 'font',
+  object: 'object',
+  xhr: 'xmlhttprequest',
+  ping: 'ping',
+  cspReport: 'csp_report',
+  media: 'media',
+  webSocket: 'websocket',
+  other: 'other',
+};
+
+/** Phase 1: cosmetics only need document navigations. */
+const PHASE1_DOC_TYPES = new Set(['main_frame', 'sub_frame']);
+
 /** @type {WeakMap<Electron.Session, SessionBridge>} */
 const bySession = new WeakMap();
+
+/** @type {boolean} */
+let appContentsHooked = false;
 
 /**
  * @typedef {object} ExtBinding
@@ -45,6 +68,11 @@ const bySession = new WeakMap();
  * @property {Set<number>} hookedVersionIds
  * @property {Map<number, WorkerState>} workers
  * @property {boolean} statusHooked
+ * @property {boolean} contentsHooked
+ * @property {boolean} webRequestHooked
+ * @property {Set<number>} hookedWcIds
+ * @property {Map<string, object[]>} pendingByRuntimeId
+ * @property {Map<string, object[]>} pendingEventsByRuntimeId
  */
 
 /**
@@ -57,7 +85,24 @@ const bySession = new WeakMap();
  * @property {object[]} dynamicRaw
  * @property {object[]} sessionRaw
  * @property {Record<string, number[]>} disabledStatic
+ * @property {string} scope
  */
+
+/**
+ * @param {Electron.WebFrameMain|null|undefined} f
+ */
+function frameIdOf(f) {
+  if (!f) return -1;
+  return f.parent ? f.frameTreeNodeId : 0;
+}
+
+/**
+ * @param {Electron.WebFrameMain|null|undefined} f
+ */
+function parentFrameIdOf(f) {
+  if (!f || !f.parent) return -1;
+  return f.parent.parent ? f.parent.frameTreeNodeId : 0;
+}
 
 /**
  * @param {Electron.Session} ses
@@ -78,9 +123,13 @@ function ensureSession(ses, accountId) {
     byInstallId: new Map(),
     /** @type {Map<string, { worker: object, versionId: number }[]>} */
     pendingByRuntimeId: new Map(),
+    pendingEventsByRuntimeId: new Map(),
     hookedVersionIds: new Set(),
     workers: new Map(),
     statusHooked: false,
+    contentsHooked: false,
+    webRequestHooked: false,
+    hookedWcIds: new Set(),
   };
   bySession.set(ses, br);
   return br;
@@ -110,6 +159,8 @@ function registerSwPreload(ses, accountId) {
     );
   }
   ensureStatusHook(br);
+  ensureContentsHook(br);
+  ensureWebRequestObservers(br);
 }
 
 /**
@@ -128,7 +179,6 @@ function noteExtension(br, record, runtimeId, accountId) {
   };
   br.byRuntimeId.set(binding.runtimeId, binding);
   br.byInstallId.set(binding.installId, binding);
-  // Workers that started before binding existed
   const pending = br.pendingByRuntimeId.get(binding.runtimeId) || [];
   br.pendingByRuntimeId.delete(binding.runtimeId);
   for (const item of pending) {
@@ -166,6 +216,14 @@ function ensureStatusHook(br) {
 function onRunningStatusChanged(br, details) {
   const versionId = details && details.versionId;
   if (versionId == null) return;
+  const status = String((details && details.runningStatus) || '');
+
+  if (status && status !== 'running') {
+    const state = br.workers.get(versionId);
+    if (state) state.ready = false;
+    return;
+  }
+
   const worker =
     typeof br.ses.serviceWorkers.getWorkerFromVersionID === 'function'
       ? br.ses.serviceWorkers.getWorkerFromVersionID(versionId)
@@ -174,12 +232,15 @@ function onRunningStatusChanged(br, details) {
 
   const scope = String(worker.scope || worker.scriptURL || '');
   const runtimeId = extensionIdFromScope(scope);
-  if (!runtimeId) return; // not a chrome-extension SW
-  if (br.hookedVersionIds.has(versionId)) return;
+  if (!runtimeId) return;
+  if (br.hookedVersionIds.has(versionId)) {
+    const existing = br.workers.get(versionId);
+    if (existing) existing.worker = worker;
+    return;
+  }
 
   const binding = br.byRuntimeId.get(runtimeId);
   if (!binding) {
-    // Extension may still be loading; queue until noteExtension.
     let list = br.pendingByRuntimeId.get(runtimeId);
     if (!list) {
       list = [];
@@ -202,6 +263,7 @@ function onRunningStatusChanged(br, details) {
  * @param {ExtBinding} binding
  */
 function hookWorker(br, worker, versionId, binding) {
+  const scope = String(worker.scope || `chrome-extension://${binding.runtimeId}/`);
   const state = {
     worker,
     runtimeId: binding.runtimeId,
@@ -211,6 +273,7 @@ function hookWorker(br, worker, versionId, binding) {
     dynamicRaw: [],
     sessionRaw: [],
     disabledStatic: {},
+    scope,
   };
   br.workers.set(versionId, state);
 
@@ -233,6 +296,7 @@ function hookWorker(br, worker, versionId, binding) {
   const markReady = () => {
     if (state.ready) return;
     state.ready = true;
+    // Drain per-worker queue
     while (state.queue.length) {
       try {
         worker.send('mh-sw:event', state.queue.shift());
@@ -240,6 +304,18 @@ function hookWorker(br, worker, versionId, binding) {
         break;
       }
     }
+    // Drain session-level pending for this runtime
+    const pending = br.pendingEventsByRuntimeId.get(binding.runtimeId) || [];
+    br.pendingEventsByRuntimeId.set(binding.runtimeId, []);
+    for (const ev of pending) {
+      try {
+        worker.send('mh-sw:event', ev);
+      } catch {
+        break;
+      }
+    }
+    // Re-announce live panels so ABU rebuilds tab state after SW restart.
+    reannounceLivePanels(br, binding.runtimeId);
   };
 
   ipc.on(
@@ -249,7 +325,6 @@ function hookWorker(br, worker, versionId, binding) {
       setTimeout(markReady, READY_FLUSH_DELAY_MS);
     })
   );
-  // If ready was sent before we hooked (race with loadExtension), don't stall.
   setTimeout(() => {
     if (!state.ready) {
       console.log('[sw-bridge] ready fallback', binding.runtimeId);
@@ -257,19 +332,25 @@ function hookWorker(br, worker, versionId, binding) {
     }
   }, 150);
 
-  ipc.on('mh-sw:scripting.observed', guard((_e, meta) => {
-    // Early-replay cache is filled in a later step; acknowledge only.
-    void meta;
-  }));
+  ipc.on(
+    'mh-sw:scripting.observed',
+    guard((_e, meta) => {
+      // Early-replay cache filled in step 5.
+      void meta;
+    })
+  );
 
-  ipc.on('mh-sw:dnr.enabledRulesets', guard((_e, ids) => {
-    if (Array.isArray(ids)) {
-      dnr.updateEnabledRulesets(binding.installId, {
-        enableRulesetIds: ids,
-        disableRulesetIds: [],
-      });
-    }
-  }));
+  ipc.on(
+    'mh-sw:dnr.enabledRulesets',
+    guard((_e, ids) => {
+      if (Array.isArray(ids)) {
+        dnr.updateEnabledRulesets(binding.installId, {
+          enableRulesetIds: ids,
+          disableRulesetIds: [],
+        });
+      }
+    })
+  );
 
   ipc.handle(
     'mh-sw:scripting.shouldSkip',
@@ -378,7 +459,7 @@ function hookWorker(br, worker, versionId, binding) {
   ipc.handle(
     'mh-sw:tabs.create',
     guard(async (_e, props) => {
-      // Full panel open comes later; return a Tab-shaped stub for now.
+      // Full panel open in step 4; Tab-shaped stub for now.
       return {
         id: -1,
         url: (props && props.url) || '',
@@ -440,8 +521,8 @@ function framesForTab(tabId) {
   try {
     const frames = wc.mainFrame.framesInSubtree || [];
     return frames.map((f) => ({
-      frameId: f.parent ? f.frameTreeNodeId : 0,
-      parentFrameId: f.parent ? (f.parent.parent ? f.parent.frameTreeNodeId : 0) : -1,
+      frameId: frameIdOf(f),
+      parentFrameId: parentFrameIdOf(f),
       url: f.url || '',
       errorOccurred: false,
     }));
@@ -522,8 +603,52 @@ function cookieToChrome(c) {
 }
 
 /**
- * Emit a chrome.* event into a ready worker (queued until ready).
- * Used by later event-feeder steps.
+ * @param {Electron.WebContents} wc
+ */
+function tabShape(wc) {
+  let url = '';
+  let title = '';
+  let status = 'complete';
+  try {
+    url = wc.getURL() || '';
+    title = wc.getTitle() || '';
+    status = wc.isLoading() ? 'loading' : 'complete';
+  } catch {
+    /* ignore */
+  }
+  return {
+    id: wc.id,
+    url,
+    title,
+    active: true,
+    windowId: 0,
+    index: 0,
+    status,
+    discarded: false,
+  };
+}
+
+/**
+ * Wake a stopped SW and queue until ready.
+ * @param {SessionBridge} br
+ * @param {string} runtimeId
+ */
+function wakeWorker(br, runtimeId) {
+  const scope = `chrome-extension://${runtimeId}/`;
+  const sw = br.ses.serviceWorkers;
+  if (!sw || typeof sw.startWorkerForScope !== 'function') return;
+  try {
+    const p = sw.startWorkerForScope(scope);
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {});
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Emit a chrome.* event into ready workers (queued until ready; wakes SW if needed).
  * @param {SessionBridge} br
  * @param {string} runtimeId
  * @param {string} ns
@@ -532,18 +657,390 @@ function cookieToChrome(c) {
  */
 function emit(br, runtimeId, ns, name, ...args) {
   const ev = { ns, name, args };
+  let delivered = false;
+  let queued = false;
   for (const state of br.workers.values()) {
     if (state.runtimeId !== runtimeId) continue;
     if (state.ready && state.worker) {
       try {
         state.worker.send('mh-sw:event', ev);
+        delivered = true;
       } catch {
-        /* ignore */
+        state.ready = false;
+        state.queue.push(ev);
+        queued = true;
       }
     } else {
       state.queue.push(ev);
+      queued = true;
     }
   }
+  if (!delivered && !queued) {
+    let list = br.pendingEventsByRuntimeId.get(runtimeId);
+    if (!list) {
+      list = [];
+      br.pendingEventsByRuntimeId.set(runtimeId, list);
+    }
+    list.push(ev);
+    queued = true;
+  }
+  if (!delivered) {
+    wakeWorker(br, runtimeId);
+  }
+}
+
+/**
+ * Emit to every abuCompat extension bound in this session.
+ * @param {SessionBridge} br
+ * @param {string} ns
+ * @param {string} name
+ * @param {...any} args
+ */
+function emitAll(br, ns, name, ...args) {
+  for (const runtimeId of br.byRuntimeId.keys()) {
+    emit(br, runtimeId, ns, name, ...args);
+  }
+}
+
+/**
+ * @param {SessionBridge} br
+ * @param {string} runtimeId
+ */
+function reannounceLivePanels(br, runtimeId) {
+  for (const wc of webContents.getAllWebContents()) {
+    try {
+      if (!wc || wc.isDestroyed() || wc.session !== br.ses) continue;
+      // Skip extension pages / service worker clients without a real URL
+      let url = '';
+      try {
+        url = wc.getURL() || '';
+      } catch {
+        continue;
+      }
+      if (!url || url === 'about:blank') continue;
+      if (url.startsWith('chrome-extension://')) continue;
+
+      emit(br, runtimeId, 'tabs', 'onCreated', tabShape(wc));
+      const f = wc.mainFrame;
+      emit(br, runtimeId, 'webNavigation', 'onCommitted', {
+        tabId: wc.id,
+        frameId: 0,
+        parentFrameId: -1,
+        url,
+        timeStamp: Date.now(),
+        transitionType: 'link',
+        transitionQualifiers: [],
+        frameType: 'outermost_frame',
+        documentLifecycle: 'active',
+      });
+      void f;
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Global web-contents-created → route to session bridges.
+ */
+function ensureAppContentsHook() {
+  if (appContentsHooked) return;
+  appContentsHooked = true;
+  app.on('web-contents-created', (_e, wc) => {
+    try {
+      const br = bySession.get(wc.session);
+      if (!br) return;
+      attachWebContents(br, wc);
+    } catch (err) {
+      console.warn('[sw-bridge] web-contents-created', err && err.message);
+    }
+  });
+}
+
+/**
+ * @param {SessionBridge} br
+ */
+function ensureContentsHook(br) {
+  if (br.contentsHooked) return;
+  br.contentsHooked = true;
+  ensureAppContentsHook();
+  for (const wc of webContents.getAllWebContents()) {
+    try {
+      if (wc.session === br.ses) attachWebContents(br, wc);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * @param {SessionBridge} br
+ * @param {Electron.WebContents} wc
+ */
+function attachWebContents(br, wc) {
+  if (!wc || wc.isDestroyed()) return;
+  if (br.hookedWcIds.has(wc.id)) return;
+  br.hookedWcIds.add(wc.id);
+
+  const navDetails = (url, f) => ({
+    tabId: wc.id,
+    frameId: frameIdOf(f),
+    parentFrameId: parentFrameIdOf(f),
+    url: url || '',
+    timeStamp: Date.now(),
+    frameType: f && f.parent ? 'sub_frame' : 'outermost_frame',
+    documentLifecycle: 'active',
+  });
+
+  wc.on('did-start-navigation', (...args) => {
+    try {
+      const first = args[0];
+      let sameDoc = false;
+      let f = null;
+      let navUrl = '';
+      // Electron 25+: Event<Params> with isSameDocument/frame; older: (e, url, isInPlace, …)
+      if (
+        first &&
+        typeof first === 'object' &&
+        ('isSameDocument' in first || 'frame' in first)
+      ) {
+        sameDoc = !!first.isSameDocument;
+        f = first.frame || null;
+        navUrl = first.url || '';
+      } else {
+        const url = args[1];
+        const isInPlace = args[2];
+        const isMainFrame = args[3];
+        const frameProcessId = args[4];
+        const frameRoutingId = args[5];
+        sameDoc = !!isInPlace;
+        navUrl = typeof url === 'string' ? url : '';
+        if (frameProcessId != null && frameRoutingId != null) {
+          f = webFrameMain.fromId(frameProcessId, frameRoutingId);
+        }
+        if (!f && isMainFrame) {
+          try {
+            f = wc.mainFrame;
+          } catch {
+            f = null;
+          }
+        }
+      }
+      if (sameDoc) return;
+      if (!f) return;
+      emitAll(br, 'webNavigation', 'onBeforeNavigate', navDetails(navUrl, f));
+      if (!f.parent) {
+        emitAll(
+          br,
+          'tabs',
+          'onUpdated',
+          wc.id,
+          { status: 'loading', url: navUrl },
+          { ...tabShape(wc), url: navUrl, status: 'loading' }
+        );
+      }
+    } catch (err) {
+      console.warn('[sw-bridge] did-start-navigation', err && err.message);
+    }
+  });
+
+  wc.on('did-frame-navigate', (_e, url, _code, _text, _isMain, pid, rid) => {
+    try {
+      const f = webFrameMain.fromId(pid, rid);
+      emitAll(br, 'webNavigation', 'onCommitted', {
+        ...navDetails(url, f),
+        transitionType: 'link',
+        transitionQualifiers: [],
+      });
+    } catch (err) {
+      console.warn('[sw-bridge] did-frame-navigate', err && err.message);
+    }
+  });
+
+  wc.on('dom-ready', () => {
+    try {
+      emitAll(br, 'webNavigation', 'onDOMContentLoaded', {
+        tabId: wc.id,
+        frameId: 0,
+        parentFrameId: -1,
+        url: wc.getURL() || '',
+        timeStamp: Date.now(),
+        frameType: 'outermost_frame',
+        documentLifecycle: 'active',
+      });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  wc.on('did-frame-finish-load', (_e, _isMain, pid, rid) => {
+    try {
+      const f = webFrameMain.fromId(pid, rid);
+      emitAll(br, 'webNavigation', 'onCompleted', navDetails(f ? f.url : '', f));
+      if (f && !f.parent) {
+        emitAll(
+          br,
+          'tabs',
+          'onUpdated',
+          wc.id,
+          { status: 'complete', url: f.url || '' },
+          { ...tabShape(wc), status: 'complete' }
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+
+  const onFail = (_e, _code, _desc, validatedURL, isMainFrame, pid, rid) => {
+    try {
+      let f = null;
+      if (pid != null && rid != null) f = webFrameMain.fromId(pid, rid);
+      if (!f && isMainFrame) {
+        try {
+          f = wc.mainFrame;
+        } catch {
+          f = null;
+        }
+      }
+      emitAll(br, 'webNavigation', 'onErrorOccurred', {
+        ...navDetails(validatedURL || '', f),
+        error: 'net::ERR_FAILED',
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+  wc.on('did-fail-load', onFail);
+  wc.on('did-fail-provisional-load', onFail);
+
+  wc.on('did-navigate-in-page', (_e, url, _isMain, pid, rid) => {
+    try {
+      const f =
+        pid != null && rid != null ? webFrameMain.fromId(pid, rid) : wc.mainFrame;
+      emitAll(br, 'webNavigation', 'onHistoryStateUpdated', {
+        ...navDetails(url, f),
+        transitionType: 'link',
+        transitionQualifiers: [],
+      });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  wc.on('did-create-window', (_child, details) => {
+    try {
+      emitAll(br, 'webNavigation', 'onCreatedNavigationTarget', {
+        sourceTabId: wc.id,
+        sourceProcessId: 0,
+        sourceFrameId: 0,
+        url: (details && details.url) || '',
+        tabId: _child && _child.webContents ? _child.webContents.id : -1,
+        timeStamp: Date.now(),
+      });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  wc.on('destroyed', () => {
+    br.hookedWcIds.delete(wc.id);
+    emitAll(br, 'tabs', 'onRemoved', wc.id, {
+      windowId: 0,
+      isWindowClosing: false,
+    });
+  });
+
+  wc.on('focus', () => {
+    try {
+      emitAll(br, 'tabs', 'onActivated', {
+        tabId: wc.id,
+        windowId: 0,
+      });
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+/**
+ * Convert Electron webRequest details → chrome.webRequest details (phase 1 docs).
+ * @param {object} d
+ * @returns {object|null}
+ */
+function toChromeWebRequestDetails(d) {
+  if (!d) return null;
+  const electronType = String(d.resourceType || '');
+  const type = RESOURCE_TYPE_MAP[electronType] || 'other';
+  if (!PHASE1_DOC_TYPES.has(type)) return null;
+
+  const f = d.frame || null;
+  const isMain = type === 'main_frame';
+  let initiator = '';
+  let documentUrl = '';
+  try {
+    if (d.referrer) initiator = String(d.referrer);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (f && f.url) documentUrl = String(f.url);
+  } catch {
+    /* ignore */
+  }
+
+  /** @type {{ name: string, value: string }[]} */
+  const responseHeaders = [];
+  const rh = d.responseHeaders;
+  if (rh && typeof rh === 'object') {
+    for (const [name, value] of Object.entries(rh)) {
+      if (Array.isArray(value)) {
+        for (const v of value) responseHeaders.push({ name, value: String(v) });
+      } else if (value != null) {
+        responseHeaders.push({ name, value: String(value) });
+      }
+    }
+  }
+
+  return {
+    requestId: String(d.id),
+    url: d.url || '',
+    method: d.method || 'GET',
+    tabId: d.webContentsId != null ? d.webContentsId : -1,
+    frameId: isMain ? 0 : f ? frameIdOf(f) : -1,
+    parentFrameId: isMain ? -1 : f ? parentFrameIdOf(f) : 0,
+    type,
+    timeStamp: Date.now(),
+    frameType: isMain ? 'outermost_frame' : 'sub_frame',
+    documentLifecycle: 'active',
+    initiator: initiator || undefined,
+    documentUrl: documentUrl || undefined,
+    statusCode: d.statusCode,
+    fromCache: !!d.fromCache,
+    responseHeaders,
+  };
+}
+
+/**
+ * @param {SessionBridge} br
+ */
+function ensureWebRequestObservers(br) {
+  if (br.webRequestHooked) return;
+  br.webRequestHooked = true;
+  const id = 'mh-abu-sw-' + (br.accountId || 'ses');
+
+  const feed = (eventName, details) => {
+    const chrome = toChromeWebRequestDetails(details);
+    if (!chrome) return;
+    emitAll(br, 'webRequest', eventName, chrome);
+  };
+
+  hub.addBeforeRequestObserver(br.ses, id, (d) => feed('onBeforeRequest', d));
+  hub.addBeforeSendHeadersObserver(br.ses, id, (d) => feed('onBeforeSendHeaders', d));
+  hub.addHeadersReceivedObserver(br.ses, id, (d) => feed('onHeadersReceived', d));
+  hub.addResponseStartedObserver(br.ses, id, (d) => feed('onResponseStarted', d));
+  hub.addCompletedObserver(br.ses, id, (d) => feed('onCompleted', d));
+  hub.addErrorOccurredObserver(br.ses, id, (d) => feed('onErrorOccurred', d));
 }
 
 /**
@@ -569,7 +1066,8 @@ function afterLoad(ses, accountId, record, runtimeId) {
   if (!abuCompatApplies(record)) return;
   const br = ensureSession(ses, accountId);
   noteExtension(br, record, runtimeId, accountId);
-  // Retry hook for workers that started before noteExtension
+  ensureContentsHook(br);
+  ensureWebRequestObservers(br);
   try {
     const infos =
       typeof ses.serviceWorkers.getAllRunning === 'function'
@@ -597,5 +1095,10 @@ module.exports = {
   ensureSession,
   registerSwPreload,
   emit,
+  emitAll,
   getBridge,
+  frameIdOf,
+  parentFrameIdOf,
+  toChromeWebRequestDetails,
+  tabShape,
 };

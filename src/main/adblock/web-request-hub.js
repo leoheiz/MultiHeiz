@@ -3,11 +3,16 @@
 /**
  * Electron allows only ONE listener per webRequest event per session.
  * This hub is that listener and multiplexes app handlers (adblock, UA, future).
+ *
+ * Observers are pure taps: they never cancel/redirect/modify and must not change
+ * hub behaviour for built-in adblock / DNR handlers. They work even when no
+ * mutating handlers are registered (e.g. built-in adblock OFF).
  */
 
 /** @typedef {(details: Electron.OnBeforeRequestListenerDetails, callback: (r: Electron.CallbackResponse) => void) => void} BeforeRequestHandler */
 /** @typedef {(details: Electron.OnHeadersReceivedListenerDetails, callback: (r: Electron.HeadersReceivedResponse) => void) => void} HeadersReceivedHandler */
 /** @typedef {(details: Electron.OnBeforeSendHeadersListenerDetails, callback: (r: Electron.BeforeSendResponse) => void) => void} BeforeSendHeadersHandler */
+/** @typedef {(details: object) => void} ObserverFn */
 
 /** @type {WeakMap<Electron.Session, SessionHub>} */
 const hubs = new WeakMap();
@@ -17,7 +22,14 @@ const hubs = new WeakMap();
  * @property {Map<string, BeforeRequestHandler>} beforeRequest
  * @property {Map<string, HeadersReceivedHandler>} headersReceived
  * @property {Map<string, BeforeSendHeadersHandler>} beforeSendHeaders
+ * @property {Map<string, ObserverFn>} beforeRequestObservers
+ * @property {Map<string, ObserverFn>} beforeSendHeadersObservers
+ * @property {Map<string, ObserverFn>} headersReceivedObservers
+ * @property {Map<string, ObserverFn>} responseStartedObservers
+ * @property {Map<string, ObserverFn>} completedObservers
+ * @property {Map<string, ObserverFn>} errorOccurredObservers
  * @property {boolean} attached
+ * @property {boolean} passiveAttached
  */
 
 /**
@@ -31,10 +43,32 @@ function ensureHub(ses) {
     beforeRequest: new Map(),
     headersReceived: new Map(),
     beforeSendHeaders: new Map(),
+    beforeRequestObservers: new Map(),
+    beforeSendHeadersObservers: new Map(),
+    headersReceivedObservers: new Map(),
+    responseStartedObservers: new Map(),
+    completedObservers: new Map(),
+    errorOccurredObservers: new Map(),
     attached: false,
+    passiveAttached: false,
   };
   hubs.set(ses, hub);
   return hub;
+}
+
+/**
+ * @param {Map<string, ObserverFn>} map
+ * @param {object} details
+ */
+function notifyObservers(map, details) {
+  if (!map || !map.size) return;
+  for (const fn of map.values()) {
+    try {
+      fn(details);
+    } catch (err) {
+      console.warn('[webRequestHub] observer error', err && err.message ? err.message : err);
+    }
+  }
 }
 
 /**
@@ -42,11 +76,15 @@ function ensureHub(ses) {
  */
 function attachIfNeeded(ses) {
   const hub = ensureHub(ses);
-  if (hub.attached) return;
+  if (hub.attached) {
+    attachPassiveIfNeeded(ses, hub);
+    return;
+  }
   hub.attached = true;
 
   // Run all beforeRequest handlers; block (cancel) wins over redirect (coexistence).
   ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+    notifyObservers(hub.beforeRequestObservers, details);
     const handlers = [...hub.beforeRequest.values()];
     if (!handlers.length) {
       callback({});
@@ -84,6 +122,7 @@ function attachIfNeeded(ses) {
   });
 
   ses.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (details, callback) => {
+    notifyObservers(hub.headersReceivedObservers, details);
     const handlers = [...hub.headersReceived.values()];
     if (!handlers.length) {
       callback({});
@@ -127,6 +166,7 @@ function attachIfNeeded(ses) {
   });
 
   ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, callback) => {
+    notifyObservers(hub.beforeSendHeadersObservers, details);
     const handlers = [...hub.beforeSendHeaders.values()];
     if (!handlers.length) {
       callback({});
@@ -168,6 +208,28 @@ function attachIfNeeded(ses) {
       console.warn('[webRequestHub] onBeforeSendHeaders handler error', err);
       callback({});
     }
+  });
+
+  attachPassiveIfNeeded(ses, hub);
+}
+
+/**
+ * Pure observer listeners (no response callback). Safe to own exclusively via hub.
+ * @param {Electron.Session} ses
+ * @param {SessionHub} hub
+ */
+function attachPassiveIfNeeded(ses, hub) {
+  if (hub.passiveAttached) return;
+  hub.passiveAttached = true;
+
+  ses.webRequest.onResponseStarted({ urls: ['<all_urls>'] }, (details) => {
+    notifyObservers(hub.responseStartedObservers, details);
+  });
+  ses.webRequest.onCompleted({ urls: ['<all_urls>'] }, (details) => {
+    notifyObservers(hub.completedObservers, details);
+  });
+  ses.webRequest.onErrorOccurred({ urls: ['<all_urls>'] }, (details) => {
+    notifyObservers(hub.errorOccurredObservers, details);
   });
 }
 
@@ -234,6 +296,108 @@ function removeBeforeSendHeaders(ses, id) {
   hub.beforeSendHeaders.delete(id);
 }
 
+/**
+ * @param {Electron.Session} ses
+ * @param {string} id
+ * @param {ObserverFn} fn
+ */
+function addBeforeRequestObserver(ses, id, fn) {
+  const hub = ensureHub(ses);
+  hub.beforeRequestObservers.set(id, fn);
+  attachIfNeeded(ses);
+}
+
+/** @param {Electron.Session} ses @param {string} id */
+function removeBeforeRequestObserver(ses, id) {
+  const hub = hubs.get(ses);
+  if (hub) hub.beforeRequestObservers.delete(id);
+}
+
+/**
+ * @param {Electron.Session} ses
+ * @param {string} id
+ * @param {ObserverFn} fn
+ */
+function addBeforeSendHeadersObserver(ses, id, fn) {
+  const hub = ensureHub(ses);
+  hub.beforeSendHeadersObservers.set(id, fn);
+  attachIfNeeded(ses);
+}
+
+/** @param {Electron.Session} ses @param {string} id */
+function removeBeforeSendHeadersObserver(ses, id) {
+  const hub = hubs.get(ses);
+  if (hub) hub.beforeSendHeadersObservers.delete(id);
+}
+
+/**
+ * @param {Electron.Session} ses
+ * @param {string} id
+ * @param {ObserverFn} fn
+ */
+function addHeadersReceivedObserver(ses, id, fn) {
+  const hub = ensureHub(ses);
+  hub.headersReceivedObservers.set(id, fn);
+  attachIfNeeded(ses);
+}
+
+/** @param {Electron.Session} ses @param {string} id */
+function removeHeadersReceivedObserver(ses, id) {
+  const hub = hubs.get(ses);
+  if (hub) hub.headersReceivedObservers.delete(id);
+}
+
+/**
+ * @param {Electron.Session} ses
+ * @param {string} id
+ * @param {ObserverFn} fn
+ */
+function addResponseStartedObserver(ses, id, fn) {
+  const hub = ensureHub(ses);
+  hub.responseStartedObservers.set(id, fn);
+  attachIfNeeded(ses);
+}
+
+/** @param {Electron.Session} ses @param {string} id */
+function removeResponseStartedObserver(ses, id) {
+  const hub = hubs.get(ses);
+  if (hub) hub.responseStartedObservers.delete(id);
+}
+
+/**
+ * @param {Electron.Session} ses
+ * @param {string} id
+ * @param {ObserverFn} fn
+ */
+function addCompletedObserver(ses, id, fn) {
+  const hub = ensureHub(ses);
+  hub.completedObservers.set(id, fn);
+  attachIfNeeded(ses);
+}
+
+/** @param {Electron.Session} ses @param {string} id */
+function removeCompletedObserver(ses, id) {
+  const hub = hubs.get(ses);
+  if (hub) hub.completedObservers.delete(id);
+}
+
+/**
+ * @param {Electron.Session} ses
+ * @param {string} id
+ * @param {ObserverFn} fn
+ */
+function addErrorOccurredObserver(ses, id, fn) {
+  const hub = ensureHub(ses);
+  hub.errorOccurredObservers.set(id, fn);
+  attachIfNeeded(ses);
+}
+
+/** @param {Electron.Session} ses @param {string} id */
+function removeErrorOccurredObserver(ses, id) {
+  const hub = hubs.get(ses);
+  if (hub) hub.errorOccurredObservers.delete(id);
+}
+
 module.exports = {
   addBeforeRequest,
   removeBeforeRequest,
@@ -241,5 +405,17 @@ module.exports = {
   removeHeadersReceived,
   addBeforeSendHeaders,
   removeBeforeSendHeaders,
+  addBeforeRequestObserver,
+  removeBeforeRequestObserver,
+  addBeforeSendHeadersObserver,
+  removeBeforeSendHeadersObserver,
+  addHeadersReceivedObserver,
+  removeHeadersReceivedObserver,
+  addResponseStartedObserver,
+  removeResponseStartedObserver,
+  addCompletedObserver,
+  removeCompletedObserver,
+  addErrorOccurredObserver,
+  removeErrorOccurredObserver,
   ensureHub,
 };
