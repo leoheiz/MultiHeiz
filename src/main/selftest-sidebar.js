@@ -826,18 +826,18 @@ async function runSidebarSelftest(ctx) {
     console.log('PASS: migration defaults to fixed; keeps existing autoHide');
   }
 
-  /* ---------- F11: chrome hidden, no hotzone reveal ---------- */
-  // Need auto-hide active for F11 hotzone checks — turn legacy off first.
+  /* ---------- F11: edge-reveal overlay (auto-hide prefs) ---------- */
+  // Need auto-hide active for F11 checks — turn legacy off first.
   await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(false)');
   await sleep(200);
   await waitForLayoutSettle();
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (!mode.autoHide) {
-    // ui still has autoHide true from earlier
     console.log('FAIL: expected autoHide after leaving legacy', mode);
     app.exit(1);
     return;
   }
+  const prefAutoHideBeforeFs = mode.autoHide;
 
   chromeFullscreen.enter();
   await sleep(500);
@@ -850,30 +850,228 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (!mode.hotzoneHidden || mode.open) {
-    console.log('FAIL: F11 should hide hotzone and keep sidebar closed', mode);
+  if (
+    vis.topbar.display !== 'none' &&
+    vis.topbar.offsetHeight !== 0
+  ) {
+    console.log('FAIL: F11 topbar should be hidden', vis.topbar);
     app.exit(1);
     return;
   }
+  if (mode.open || mode.fsPinned || mode.hotzoneHidden) {
+    console.log('FAIL: F11 start closed with hotzone visible', mode);
+    app.exit(1);
+    return;
+  }
+  if (!mode.appClassAutoHide || !mode.overlayMode) {
+    console.log('FAIL: F11 should force overlay mode classes', mode);
+    app.exit(1);
+    return;
+  }
+  let fsBounds = panelBounds();
+  if (fsBounds.overlayW !== 0) {
+    console.log('FAIL: F11 closed overlay width must be 0', fsBounds);
+    app.exit(1);
+    return;
+  }
+  const trackingFs = sidebarCursor.getTracking();
+  if (!trackingFs || !trackingFs.enabled) {
+    console.log('FAIL: F11 cursor tracking must stay enabled', trackingFs);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 starts closed with hotzone + tracking');
+
+  parkCursorAway();
+  await sleep(80);
   await rendererEval('window.__multiheizUi.sidebarHotzoneEnter()');
-  await sleep(250);
+  setCursorContent(5, midY);
+  await sleep(80);
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (mode.open) {
-    console.log('FAIL: F11 hotzone must not reveal sidebar', mode);
+    console.log('FAIL: F11 should still be closed before show delay', mode);
     app.exit(1);
     return;
   }
-  const fsBounds = panelBounds();
-  if (fsBounds.overlayW !== 0) {
-    console.log('FAIL: F11 overlay width must stay 0', fsBounds);
+  await sleep(120);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: F11 hotzone should reveal after ~150ms', mode);
     app.exit(1);
     return;
   }
-  console.log('PASS: F11 keeps sidebar fully hidden (no hotzone)');
+  setCursorContent(80, midY);
+  await sleep(80);
+  fsBounds = panelBounds();
+  if (!(fsBounds.overlayW >= 200) || !near(fsBounds.bounds.x, fsBounds.overlayW, 4)) {
+    console.log('FAIL: F11 open should shift panels (overlay)', fsBounds);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 edge reveal + shift-x overlay', fsBounds);
+
+  setCursorContent(Math.max(500, (fsBounds.overlayW || 240) + 200), midY);
+  await sleep(500);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: F11 should still be open before ~700ms hide', mode);
+    app.exit(1);
+    return;
+  }
+  await sleep(700);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.open) {
+    console.log('FAIL: F11 should hide after leave delay', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 leave hides after ~700ms');
+
+  /* Pin while revealed: stays open with cursor away; prefs unchanged */
+  setCursorContent(8, midY);
+  await sleep(280);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: F11 expected open before pin', mode);
+    app.exit(1);
+    return;
+  }
+  await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await sleep(150);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.fsPinned || !mode.open || mode.autoHide !== prefAutoHideBeforeFs) {
+    console.log('FAIL: F11 pin should keep open without changing autoHide pref', mode);
+    app.exit(1);
+    return;
+  }
+  parkCursorAway();
+  await sleep(900);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open || !mode.fsPinned) {
+    console.log('FAIL: F11 pinned must stay open with mouse away', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 pin keeps sidebar open');
+
+  await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await sleep(150);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.fsPinned || mode.open) {
+    console.log('FAIL: F11 unpin should close overlay', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 unpin closes overlay');
 
   chromeFullscreen.exit();
   await sleep(400);
   await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.chromeHidden || mode.fsPinned || mode.open) {
+    console.log('FAIL: leave F11 should clear chrome-hidden / fs pin', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.autoHide !== prefAutoHideBeforeFs) {
+    console.log('FAIL: leave F11 must not alter autoHide pref', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: leave F11 restores auto-hide mode (prefs intact)');
+
+  /* ---------- F11 from fixed mode (no saved autoHide) ---------- */
+  await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
+  await sleep(150);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.autoHide || mode.legacyAlwaysActive) {
+    console.log('FAIL: expected fixed before F11-from-fixed', mode);
+    app.exit(1);
+    return;
+  }
+  parkCursorAway();
+  await sleep(100);
+  chromeFullscreen.enter();
+  await sleep(500);
+  await waitForLayoutSettle();
+  await sleep(300);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.chromeHidden || mode.open || mode.hotzoneHidden || !mode.overlayMode) {
+    console.log('FAIL: F11 from fixed should edge-reveal (closed + hotzone)', mode);
+    app.exit(1);
+    return;
+  }
+  setCursorContent(6, midY);
+  await sleep(280);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open || mode.autoHide) {
+    console.log('FAIL: F11 from fixed should reveal without flipping autoHide pref', mode);
+    app.exit(1);
+    return;
+  }
+  chromeFullscreen.exit();
+  await sleep(400);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.chromeHidden || mode.autoHide || mode.open || mode.overlayMode) {
+    console.log('FAIL: leave F11 should restore fixed (no overlay)', mode);
+    app.exit(1);
+    return;
+  }
+  const fixedAfterFs = panelBounds();
+  if (fixedAfterFs.overlayW !== 0 || !(fixedAfterFs.bounds && fixedAfterFs.bounds.x >= 160)) {
+    console.log('FAIL: leave F11 fixed should restore panel inset', fixedAfterFs);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 from fixed + restore');
+
+  /* ---------- F11 from legacy ---------- */
+  await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.legacyAlwaysActive || mode.autoHide) {
+    console.log('FAIL: expected legacy before F11-legacy', mode);
+    app.exit(1);
+    return;
+  }
+  parkCursorAway();
+  await sleep(100);
+  chromeFullscreen.enter();
+  await sleep(500);
+  await waitForLayoutSettle();
+  await sleep(300);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.chromeHidden || mode.open || mode.hotzoneHidden || !mode.overlayMode) {
+    console.log('FAIL: F11 legacy should edge-reveal (closed + hotzone)', mode);
+    app.exit(1);
+    return;
+  }
+  setCursorContent(6, midY);
+  await sleep(280);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open || !mode.legacyAlwaysActive) {
+    console.log('FAIL: F11 legacy reveal must keep legacy pref', mode);
+    app.exit(1);
+    return;
+  }
+  chromeFullscreen.exit();
+  await sleep(400);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.chromeHidden || !mode.legacyAlwaysActive || mode.open || mode.overlayMode) {
+    console.log('FAIL: leave F11 should restore legacy expanded', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 from legacy + restore');
 
   // Restore legacy ON for phase 2 restart persistence.
   await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');

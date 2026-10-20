@@ -122,13 +122,32 @@ function getCursorOverride() {
 }
 
 /**
- * Window is worth polling: visible, not minimized, not chrome-hidden,
- * and focused or cursor is over / just outside the left edge.
+ * Screen bounds used for edge classify.
+ * Fullscreen: window bounds (covers the display, not workArea).
+ * Otherwise: content bounds (DIP, matches getCursorScreenPoint).
+ * @returns {{ x: number, y: number, width: number, height: number } | null}
+ */
+function getPollBounds() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  try {
+    if (typeof mainWindow.isFullScreen === 'function' && mainWindow.isFullScreen()) {
+      return mainWindow.getBounds();
+    }
+    return mainWindow.getContentBounds();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Window is worth polling: visible, not minimized, and focused or cursor is
+ * over / just outside the left edge. Chrome-hidden (F11) still polls so the
+ * left-edge overlay can reveal the sidebar.
  */
 function shouldPollWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   if (!mainWindow.isVisible() || mainWindow.isMinimized()) return false;
-  if (chromeHiddenFlag || getChromeHidden()) return false;
+  // F11 (chrome-hidden) still polls — left-edge overlay reveal.
   if (mainWindow.isFocused()) return true;
   try {
     const pt = getCursorScreenPoint();
@@ -151,10 +170,8 @@ function classifyCursor() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return { insideHot: false, insideOpen: false };
   }
-  let bounds;
-  try {
-    bounds = mainWindow.getContentBounds();
-  } catch {
+  const bounds = getPollBounds();
+  if (!bounds) {
     return { insideHot: false, insideOpen: false };
   }
   const pt = getCursorScreenPoint();
@@ -253,18 +270,15 @@ function getTracking() {
 
 /**
  * Content-relative point → screen coords (for selftests).
+ * Uses the same bounds as classifyCursor (window bounds in fullscreen).
  * @param {number} contentX
  * @param {number} contentY
  * @returns {{ x: number, y: number } | null}
  */
 function contentPointToScreen(contentX, contentY) {
-  if (!mainWindow || mainWindow.isDestroyed()) return null;
-  try {
-    const b = mainWindow.getContentBounds();
-    return { x: b.x + contentX, y: b.y + contentY };
-  } catch {
-    return null;
-  }
+  const b = getPollBounds();
+  if (!b) return null;
+  return { x: b.x + contentX, y: b.y + contentY };
 }
 
 function dispose() {
@@ -284,6 +298,7 @@ module.exports = {
   getCursorScreenPoint,
   contentPointToScreen,
   classifyCursor,
+  getPollBounds,
   dispose,
   REVEAL_EDGE_PX,
   OUTSIDE_LEFT_PX,

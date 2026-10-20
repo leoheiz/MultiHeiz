@@ -95,6 +95,7 @@ body {
   display: flex;
   height: 100%;
   width: 100%;
+  position: relative;
 }
 
 #sidebar-hotzone {
@@ -1234,12 +1235,29 @@ select {
   z-index: 3;
 }
 
-/* F11 focus mode: hide app chrome; panel grid fills the content area */
-body.is-chrome-hidden #sidebar,
-body.is-chrome-hidden #sidebar-hotzone,
+/* F11 focus mode: hide topbar/statusbar; sidebar uses edge-reveal overlay */
 body.is-chrome-hidden #topbar,
 body.is-chrome-hidden #statusbar {
   display: none !important;
+}
+/* Without overlay classes, keep sidebar/hotzone fully gone (safety). */
+body.is-chrome-hidden #sidebar,
+body.is-chrome-hidden #sidebar-hotzone {
+  display: none !important;
+}
+/* Edge-reveal: same auto-hide overlay as non-FS (above WebContentsView via shift-x). */
+body.is-chrome-hidden #app.sidebar-auto-hide #sidebar {
+  display: flex !important;
+}
+/* Absolute hotzone: must not inset panels (F11 still fills the display when closed). */
+body.is-chrome-hidden #app.sidebar-auto-hide #sidebar-hotzone:not(.hidden) {
+  display: block !important;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--sidebar-hotzone-w);
+  z-index: 25;
 }
 body.is-chrome-hidden #grid {
   top: 0;

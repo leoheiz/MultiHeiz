@@ -80,6 +80,10 @@
         {
           "tag": "Correção",
           "text": "Aplicar configurações não trava mais a interface: só aplica o que mudou, DoH sem recarregar painéis, trabalho pesado (adblock) em segundo plano."
+        },
+        {
+          "tag": "Correção",
+          "text": "Em tela cheia (F11) a barra lateral volta a abrir pela borda esquerda (zona quente / overlay), com pino temporário; ao sair, o modo anterior é restaurado sem alterar a preferência salva."
         }
       ]
     },

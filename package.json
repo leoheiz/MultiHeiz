@@ -35,6 +35,7 @@
     "selftest:security": "node tools/selftest-security.js",
     "selftest:sidebar": "node tools/selftest-sidebar.js",
     "check:realclick-sidebar": "node tools/realclick-sidebar.js",
+    "check:realhover-fullscreen": "node tools/realhover-fullscreen.js",
     "selftest:workspace-delete": "node tools/selftest-workspace-delete.js",
     "selftest:ua": "node tools/selftest-ua.js",
     "selftest:gis": "node tools/selftest-gis.js",

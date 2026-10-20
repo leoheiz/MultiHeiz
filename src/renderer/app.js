@@ -82,6 +82,11 @@ const SIDEBAR_HIDE_DELAY_MS = 700;
 let sidebarForceExpanded = false;
 /** Auto-hide overlay currently slid in (session; not persisted) */
 let sidebarAutoHideOpen = false;
+/**
+ * Temporary pin while F11 chrome-hidden: keep overlay open until unpin or leave FS.
+ * Does not change saved sidebarAutoHide / legacy prefs.
+ */
+let sidebarFsPinned = false;
 /** Native Menu.popup from sidebar account context menu is open */
 let sidebarNativeMenuOpen = false;
 /** Last inside/outside from main-process cursor polling (null = unknown) */
@@ -438,6 +443,14 @@ function isChromeHiddenMode() {
   return document.body.classList.contains('is-chrome-hidden');
 }
 
+/**
+ * Overlay + hot-zone behavior: normal auto-hide, or always while F11 chrome-hidden
+ * (independent of fixed / auto-hide / legacy preference).
+ */
+function usesSidebarOverlay() {
+  return isChromeHiddenMode() || isSidebarAutoHide();
+}
+
 function clearSidebarHoverTimers() {
   if (sidebarShowTimer) {
     clearTimeout(sidebarShowTimer);
@@ -453,6 +466,7 @@ function clearSidebarHoverTimers() {
  * Keep auto-hide sidebar open while a menu / rename / modal / drag is active.
  */
 function shouldHoldSidebarOpen() {
+  if (isChromeHiddenMode() && sidebarFsPinned) return true;
   if (sidebarNativeMenuOpen) return true;
   if (document.querySelector('.context-menu')) return true;
   if (document.querySelector('.panel-ext-menu')) return true;
@@ -476,18 +490,19 @@ function shouldHoldSidebarOpen() {
 }
 
 /**
- * Tell main to start/stop cursor polling for auto-hide reveal + keep-open.
+ * Tell main to start/stop cursor polling for auto-hide / F11 edge reveal + keep-open.
  */
 function syncSidebarAutoHideTracking() {
   if (!window.multiheiz || typeof window.multiheiz.setSidebarAutoHideTracking !== 'function') {
     return;
   }
-  const autoHide = isSidebarAutoHide() && !isChromeHiddenMode();
+  const edge = usesSidebarOverlay();
   try {
     window.multiheiz.setSidebarAutoHideTracking({
-      enabled: autoHide,
-      open: !!(autoHide && sidebarAutoHideOpen),
+      enabled: edge,
+      open: !!(edge && sidebarAutoHideOpen),
       sidebarWidth: clampSidebarWidth(state.ui && state.ui.sidebarWidth),
+      // Still report chrome-hidden for debug; main keeps polling when enabled.
       chromeHidden: isChromeHiddenMode(),
     });
   } catch {
@@ -502,9 +517,7 @@ function syncSidebarAutoHideTracking() {
 async function syncSidebarOverlayBounds(open) {
   if (!window.multiheiz.setSidebarOverlay) return;
   const w =
-    open && isSidebarAutoHide() && !isChromeHiddenMode()
-      ? clampSidebarWidth(state.ui && state.ui.sidebarWidth)
-      : 0;
+    open && usesSidebarOverlay() ? clampSidebarWidth(state.ui && state.ui.sidebarWidth) : 0;
   try {
     await window.multiheiz.setSidebarOverlay(w);
   } catch {
@@ -514,11 +527,20 @@ async function syncSidebarOverlayBounds(open) {
 
 /**
  * @param {boolean} open
- * @param {{ skipDelay?: boolean }} [opts]
+ * @param {{ force?: boolean }} [opts]
  */
 function setSidebarAutoHideOpen(open, opts = {}) {
-  if (!isSidebarAutoHide() || isChromeHiddenMode()) {
+  if (!usesSidebarOverlay()) {
     open = false;
+  }
+  // Temporary F11 pin: ignore hide unless force (unpin / leave FS).
+  if (
+    !open &&
+    isChromeHiddenMode() &&
+    sidebarFsPinned &&
+    !opts.force
+  ) {
+    return;
   }
   const next = !!open;
   if (next === sidebarAutoHideOpen && !opts.force) {
@@ -537,7 +559,7 @@ function setSidebarAutoHideOpen(open, opts = {}) {
 }
 
 function requestSidebarShow() {
-  if (!isSidebarAutoHide() || isChromeHiddenMode()) return;
+  if (!usesSidebarOverlay()) return;
   clearSidebarHoverTimers();
   if (sidebarAutoHideOpen) return;
   sidebarShowTimer = setTimeout(() => {
@@ -547,8 +569,9 @@ function requestSidebarShow() {
 }
 
 function requestSidebarHide() {
-  if (!isSidebarAutoHide()) return;
+  if (!usesSidebarOverlay()) return;
   if (!sidebarAutoHideOpen) return;
+  if (isChromeHiddenMode() && sidebarFsPinned) return;
   // Do not reset an in-flight hide countdown (continuous "outside" must stay ~700ms).
   if (sidebarHideTimer) return;
   if (sidebarShowTimer) {
@@ -572,7 +595,7 @@ function requestSidebarHide() {
  * @param {boolean} inside
  */
 function onSidebarCursorFromMain(inside) {
-  if (!isSidebarAutoHide() || isChromeHiddenMode()) return;
+  if (!usesSidebarOverlay()) return;
   sidebarCursorInside = !!inside;
   if (inside) {
     if (sidebarAutoHideOpen) {
@@ -613,6 +636,15 @@ function updateSidebarToggleUi() {
   if (!el.btnSidebarToggle) return;
   const hideIco = el.btnSidebarToggle.querySelector('.ico-sidebar-hide');
   const pinIco = el.btnSidebarToggle.querySelector('.ico-sidebar-pin');
+  // F11: temporary pin/unpin (session only), same icons as auto-hide toggle.
+  if (isChromeHiddenMode()) {
+    const label = sidebarFsPinned ? 'Esconder automaticamente' : 'Fixar barra lateral';
+    el.btnSidebarToggle.title = label;
+    el.btnSidebarToggle.setAttribute('aria-label', label);
+    if (hideIco) hideIco.classList.toggle('hidden', !sidebarFsPinned);
+    if (pinIco) pinIco.classList.toggle('hidden', !!sidebarFsPinned);
+    return;
+  }
   if (isSidebarLegacyAlwaysActive()) {
     const collapsed = isSidebarEffectivelyCollapsed();
     const label = collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral';
@@ -631,35 +663,36 @@ function updateSidebarToggleUi() {
 }
 
 function updateSidebarCollapseClasses() {
+  const chromeHidden = isChromeHiddenMode();
   const autoHide = isSidebarAutoHide();
+  // F11 always uses overlay edge-reveal (ignore fixed / legacy layout for chrome).
+  const overlayMode = chromeHidden || autoHide;
   const userCollapsed = !!(state.ui && state.ui.sidebarCollapsed);
   const auto =
-    !autoHide &&
+    !overlayMode &&
     window.innerWidth < SIDEBAR_AUTO_BREAKPOINT &&
     !sidebarForceExpanded &&
     !userCollapsed;
-  const collapsed = isSidebarEffectivelyCollapsed();
+  const collapsed = overlayMode ? false : isSidebarEffectivelyCollapsed();
 
   if (el.app) {
-    el.app.classList.toggle('sidebar-auto-hide', autoHide);
-    el.app.classList.toggle('sidebar-auto-hide-open', autoHide && sidebarAutoHideOpen);
+    el.app.classList.toggle('sidebar-auto-hide', overlayMode);
+    el.app.classList.toggle('sidebar-auto-hide-open', overlayMode && sidebarAutoHideOpen);
   }
   if (el.sidebarHotzone) {
-    const showZone = autoHide && !isChromeHiddenMode();
+    // Hot-zone while edge-reveal active and not temporarily pinned in F11.
+    const showZone = overlayMode && !(chromeHidden && sidebarFsPinned);
     el.sidebarHotzone.classList.toggle('hidden', !showZone);
     el.sidebarHotzone.setAttribute('aria-hidden', showZone ? 'false' : 'true');
   }
   el.sidebar.classList.toggle('collapsed', collapsed);
   el.sidebar.classList.toggle('auto-collapsed', auto);
-  el.sidebar.classList.toggle('auto-hide-open', autoHide && sidebarAutoHideOpen);
+  el.sidebar.classList.toggle('auto-hide-open', overlayMode && sidebarAutoHideOpen);
 
-  if (!autoHide && sidebarAutoHideOpen) {
+  if (!overlayMode && sidebarAutoHideOpen) {
     sidebarAutoHideOpen = false;
     if (el.app) el.app.classList.remove('sidebar-auto-hide-open');
     syncSidebarOverlayBounds(false);
-  }
-  if (autoHide && isChromeHiddenMode() && sidebarAutoHideOpen) {
-    setSidebarAutoHideOpen(false);
   }
 
   syncSidebarAutoHideTracking();
@@ -2155,6 +2188,19 @@ window.addEventListener('resize', () => updateTabsOverflow());
 
 el.btnSidebarToggle.addEventListener('click', async () => {
   clearSidebarHoverTimers();
+  // F11: temporary pin/unpin — never writes sidebarAutoHide / legacy prefs.
+  if (isChromeHiddenMode()) {
+    if (sidebarFsPinned) {
+      sidebarFsPinned = false;
+      setSidebarAutoHideOpen(false, { force: true });
+      updateSidebarCollapseClasses();
+    } else {
+      sidebarFsPinned = true;
+      setSidebarAutoHideOpen(true, { force: true });
+      updateSidebarCollapseClasses();
+    }
+    return;
+  }
   if (isSidebarLegacyAlwaysActive()) {
     // Pre-1.3.0 behavior: collapse/expand icon rail (incl. narrow auto-collapse).
     const narrow = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT;
@@ -2223,11 +2269,11 @@ el.btnSidebarToggle.addEventListener('click', async () => {
   }
   if (el.sidebar) {
     el.sidebar.addEventListener('mouseenter', () => {
-      if (!isSidebarAutoHide()) return;
+      if (!usesSidebarOverlay()) return;
       clearSidebarHoverTimers();
     });
     el.sidebar.addEventListener('mouseleave', () => {
-      if (!isSidebarAutoHide() || !sidebarAutoHideOpen) return;
+      if (!usesSidebarOverlay() || !sidebarAutoHideOpen) return;
       // Drag regions / panels fire leave even when the cursor is still in the keep-open strip.
       if (sidebarCursorInside === true) return;
       requestSidebarHide();
@@ -2636,9 +2682,21 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'chrome:hidden') {
     document.body.classList.toggle('is-chrome-hidden', !!payload.hidden);
+    clearSidebarHoverTimers();
+    sidebarFsPinned = false;
+    sidebarCursorInside = null;
     if (payload.hidden) {
-      clearSidebarHoverTimers();
-      setSidebarAutoHideOpen(false);
+      // Enter F11: sidebar hidden by default; left edge reveals as overlay.
+      sidebarAutoHideOpen = false;
+      if (el.app) el.app.classList.remove('sidebar-auto-hide-open');
+      if (el.sidebar) el.sidebar.classList.remove('auto-hide-open');
+      syncSidebarOverlayBounds(false);
+    } else {
+      // Leave F11: restore saved mode visually (prefs unchanged).
+      sidebarAutoHideOpen = false;
+      if (el.app) el.app.classList.remove('sidebar-auto-hide-open');
+      if (el.sidebar) el.sidebar.classList.remove('auto-hide-open');
+      syncSidebarOverlayBounds(false);
     }
     updateSidebarCollapseClasses();
     scheduleSync();
@@ -2646,7 +2704,7 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'sidebar:native-menu') {
     sidebarNativeMenuOpen = !!payload.open;
-    if (!sidebarNativeMenuOpen && isSidebarAutoHide() && sidebarAutoHideOpen) {
+    if (!sidebarNativeMenuOpen && usesSidebarOverlay() && sidebarAutoHideOpen) {
       requestSidebarHide();
     }
     return;
@@ -3026,12 +3084,20 @@ window.__multiheizUi = {
         display: cs.display,
         offsetHeight: node.offsetHeight,
         offsetWidth: node.offsetWidth,
+        transform: cs.transform || '',
       };
     };
+    const sb = measure(el.sidebar);
+    const sbRect = el.sidebar ? el.sidebar.getBoundingClientRect() : null;
     return {
       chromeHidden: document.body.classList.contains('is-chrome-hidden'),
       topbar: measure(topbarEl),
-      sidebar: measure(el.sidebar),
+      sidebar: {
+        ...sb,
+        // Overlay off-screen: width may be non-zero while visually hidden (translateX).
+        visuallyOpen: !!(el.sidebar && el.sidebar.classList.contains('auto-hide-open')),
+        rectLeft: sbRect ? sbRect.left : null,
+      },
       statusbar: measure(statusEl),
     };
   },
@@ -3052,6 +3118,8 @@ window.__multiheizUi = {
       open: !!sidebarAutoHideOpen,
       collapsed: isSidebarEffectivelyCollapsed(),
       chromeHidden: isChromeHiddenMode(),
+      fsPinned: !!sidebarFsPinned,
+      overlayMode: usesSidebarOverlay(),
       toggleTitle: el.btnSidebarToggle ? el.btnSidebarToggle.title : '',
       sidebarWidth: el.sidebar ? el.sidebar.getBoundingClientRect().width : 0,
       hotzoneWidth: hz && !hz.classList.contains('hidden') ? hz.getBoundingClientRect().width : 0,
@@ -3129,10 +3197,22 @@ window.__multiheizUi = {
   /** Selftest: pretend native menu / hold is active so hide delay re-arms. */
   setSidebarNativeMenuOpen: (open) => {
     sidebarNativeMenuOpen = !!open;
-    if (!sidebarNativeMenuOpen && isSidebarAutoHide() && sidebarAutoHideOpen) {
+    if (!sidebarNativeMenuOpen && usesSidebarOverlay() && sidebarAutoHideOpen) {
       requestSidebarHide();
     }
     return !!sidebarNativeMenuOpen;
+  },
+  /** Selftest: temporary F11 pin state (does not touch saved prefs). */
+  getSidebarFsPinned: () => !!sidebarFsPinned,
+  setSidebarFsPinned: (on) => {
+    sidebarFsPinned = !!on;
+    if (sidebarFsPinned) {
+      setSidebarAutoHideOpen(true, { force: true });
+    } else {
+      setSidebarAutoHideOpen(false, { force: true });
+    }
+    updateSidebarCollapseClasses();
+    return !!sidebarFsPinned;
   },
   toggleSidebarAutoHide: async () => {
     if (el.btnSidebarToggle) el.btnSidebarToggle.click();

@@ -194,6 +194,7 @@ function showExitHint() {
     const parentBounds = mainWindow.getBounds();
     const w = 360;
     const h = 36;
+    // Bottom-center: must not cover the left-edge hot zone (≤12px) used for sidebar reveal.
     const x = Math.round(parentBounds.x + (parentBounds.width - w) / 2);
     const y = Math.round(parentBounds.y + parentBounds.height - h - 48);
     hintWin = new BrowserWindow({

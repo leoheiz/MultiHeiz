@@ -219,17 +219,103 @@ async function runFullscreenSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (
-    visEnter.sidebar.display !== 'none' &&
-    visEnter.sidebar.offsetWidth !== 0
-  ) {
-    console.log('FAIL: sidebar still visible', visEnter.sidebar);
+  // Sidebar uses edge-reveal overlay: may have non-zero width while translated off-screen.
+  if (visEnter.sidebar && visEnter.sidebar.visuallyOpen) {
+    console.log('FAIL: sidebar overlay should start closed in F11', visEnter.sidebar);
     app.exit(1);
     return;
   }
-  console.log('PASS: enter mode — fullscreen + chrome hidden');
+  const modeEnter = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!modeEnter || modeEnter.open || modeEnter.hotzoneHidden || !modeEnter.overlayMode) {
+    console.log('FAIL: F11 should start closed with hotzone edge-reveal', modeEnter);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: enter mode — fullscreen + chrome hidden + edge-reveal ready');
 
   if (!assertUnionFillsContent('after-enter')) return;
+
+  /* ---------- F11 edge-reveal (cursor override, no real mouse) ---------- */
+  const sidebarCursor = ctx.sidebarCursor;
+  if (!sidebarCursor || typeof sidebarCursor.setCursorOverride !== 'function') {
+    console.log('FAIL: sidebarCursor hooks missing for F11 edge-reveal');
+    app.exit(1);
+    return;
+  }
+  const midY = Math.round((mainWindow.getContentSize()[1] || 900) / 2);
+  function setCursorContent(cx, cy) {
+    const pt = sidebarCursor.contentPointToScreen(cx, cy);
+    if (!pt) throw new Error('contentPointToScreen failed');
+    sidebarCursor.setCursorOverride(pt);
+  }
+  function panelFsBounds() {
+    const info = panels.getPanelDebugInfo();
+    const p = info.panels.find((x) => x.accountId === 'acc-fs-a');
+    return { bounds: p && p.bounds, overlayW: info.sidebarOverlayWidth };
+  }
+  function near(a, b, tol = 4) {
+    return Math.abs(a - b) <= tol;
+  }
+
+  setCursorContent(400, midY);
+  await sleep(100);
+  setCursorContent(5, midY);
+  await sleep(280);
+  await waitForLayoutSettle();
+  let modeFs = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!modeFs.open) {
+    console.log('FAIL: F11 cursor edge should reveal sidebar', modeFs);
+    app.exit(1);
+    return;
+  }
+  let openFs = panelFsBounds();
+  if (!(openFs.overlayW >= 200) || !near(openFs.bounds.x, openFs.overlayW, 4)) {
+    console.log('FAIL: F11 reveal should shift panels left of overlay', openFs);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 edge reveal + panel shift-x', openFs);
+
+  setCursorContent(500, midY);
+  await sleep(900);
+  await waitForLayoutSettle();
+  modeFs = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (modeFs.open) {
+    console.log('FAIL: F11 should hide after cursor leave', modeFs);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 leave hides sidebar');
+
+  setCursorContent(5, midY);
+  await sleep(280);
+  await waitForLayoutSettle();
+  await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await sleep(150);
+  modeFs = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!modeFs.fsPinned || !modeFs.open) {
+    console.log('FAIL: F11 pin should keep overlay open', modeFs);
+    app.exit(1);
+    return;
+  }
+  setCursorContent(500, midY);
+  await sleep(900);
+  modeFs = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!modeFs.open || !modeFs.fsPinned) {
+    console.log('FAIL: F11 pinned must stay open with cursor away', modeFs);
+    app.exit(1);
+    return;
+  }
+  await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await sleep(150);
+  modeFs = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (modeFs.fsPinned || modeFs.open) {
+    console.log('FAIL: F11 unpin should close', modeFs);
+    app.exit(1);
+    return;
+  }
+  sidebarCursor.setCursorOverride(null);
+  console.log('PASS: F11 temporary pin / unpin');
 
   /* ---------- Workspace switch keeps mode ---------- */
   updateState((s) => {
