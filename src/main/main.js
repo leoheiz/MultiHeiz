@@ -230,6 +230,8 @@ const SELFTEST_SHOTS_TOOLS = selftestMode === 'shots-tools';
 const SELFTEST_NOTES = selftestMode === 'notes';
 const SELFTEST_REMINDERS = selftestMode === 'reminders';
 const SELFTEST_SHEET = selftestMode === 'sheet';
+const SELFTEST_VOLUME = selftestMode === 'volume';
+const SELFTEST_SHOTS_VOLUME = selftestMode === 'shots-volume';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -272,11 +274,18 @@ const ANY_SELFTEST =
   SELFTEST_SHOTS_SIDEBAR2 ||
   SELFTEST_NOTES ||
   SELFTEST_REMINDERS ||
-  SELFTEST_SHEET;
+  SELFTEST_SHEET ||
+  SELFTEST_VOLUME ||
+  SELFTEST_SHOTS_VOLUME;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
   app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+}
+
+// Volume selftest: permite tom/Oscillator sem gesto do usuário.
+if (SELFTEST_VOLUME) {
+  app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 }
 
 // YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
@@ -570,7 +579,9 @@ function createWindow() {
     SELFTEST_SHOTS_SIDEBAR2 ||
     SELFTEST_NOTES ||
     SELFTEST_REMINDERS ||
-    SELFTEST_SHEET
+    SELFTEST_SHEET ||
+    SELFTEST_VOLUME ||
+    SELFTEST_SHOTS_VOLUME
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -589,7 +600,9 @@ function createWindow() {
     SELFTEST_SHOTS_SIDEBAR2 ||
     SELFTEST_NOTES ||
     SELFTEST_REMINDERS ||
-    SELFTEST_SHEET;
+    SELFTEST_SHEET ||
+    SELFTEST_VOLUME ||
+    SELFTEST_SHOTS_VOLUME;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -1738,6 +1751,56 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_VOLUME) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runVolumeSelftest } = require('./selftest-volume');
+          runVolumeSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_SHOTS_VOLUME) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runShotsVolumeSelftest } = require('./selftest-shots-volume');
+          runShotsVolumeSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -2319,6 +2382,7 @@ function registerIpc() {
       startUrl,
       workspaceId,
       muted: false,
+      volume: 100,
       pauseInBackground,
       keepAliveInBackground,
       privateHistory: !!(data && data.privateHistory),
@@ -2478,6 +2542,15 @@ function registerIpc() {
   ipcMain.handle('panel:set-muted', (_e, { accountId, muted }) => {
     panels.panelSetMuted(accountId, muted);
     return publicState();
+  });
+
+  ipcMain.handle('panel:set-volume', (_e, { accountId, percent }) => {
+    const volume = panels.panelSetVolume(accountId, percent);
+    return { state: publicState(), volume };
+  });
+
+  ipcMain.handle('panel:get-volume', (_e, accountId) => {
+    return { volume: panels.panelGetVolume(accountId) };
   });
 
   ipcMain.handle('panel:focus', (_e, accountId) => {

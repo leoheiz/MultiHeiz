@@ -116,6 +116,10 @@
         {
           "tag": "Melhoria",
           "text": "Barra lateral no modo padrão: seta (compacta 52px / expandida) e pino (fixar / esconder automaticamente) independentes e persistidos; no modo legado só a seta, sem auto-esconder."
+        },
+        {
+          "tag": "Novo",
+          "text": "Volume fino por janela: ao passar o mouse no ícone de áudio, um slider de 0–100% com faixa opcional de Reforço até 200%, mudo, roda do mouse e duplo clique para 100%; o valor persiste por janela."
         }
       ]
     },

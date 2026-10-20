@@ -276,6 +276,83 @@ function injectEarlySync() {
 injectEarlySync();
 
 /**
+ * Volume fino por janela (GainNode no main world). Guarda própria __mhVolCtlDone.
+ * Fonte + ganho via sendSync (preload sandboxed — sem require local).
+ */
+(function installVolumeControl() {
+  /** @type {string} */
+  let cachedSource = '';
+
+  function injectVol(src) {
+    const code = src || cachedSource;
+    if (!code) return;
+    try {
+      injectInMainWorld(code);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function applyLevel(gain) {
+    const g = Number(gain);
+    if (!Number.isFinite(g)) return;
+    try {
+      contextBridge.executeInMainWorld({
+        func: (level) => {
+          try {
+            if (window.__mhVol && typeof window.__mhVol.set === 'function') {
+              window.__mhVol.set(level);
+            }
+          } catch (e) {
+            /* ignore */
+          }
+        },
+        args: [g],
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  try {
+    const boot = ipcRenderer.sendSync('panel:volume-sync');
+    if (boot && typeof boot.source === 'string' && boot.source) {
+      cachedSource = boot.source;
+      injectVol(cachedSource);
+    }
+    if (boot && boot.gain != null && Number.isFinite(Number(boot.gain))) {
+      applyLevel(Number(boot.gain));
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    ipcRenderer.on('mh-apply-volume', (_e, payload) => {
+      if (payload && typeof payload.source === 'string' && payload.source) {
+        cachedSource = payload.source;
+      }
+      injectVol(cachedSource);
+      const g =
+        payload && typeof payload.gain === 'number'
+          ? payload.gain
+          : payload && typeof payload.percent === 'number'
+            ? Number(payload.percent) / 100
+            : null;
+      if (g != null) applyLevel(g);
+    });
+  } catch {
+    /* ignore */
+  }
+  try {
+    ipcRenderer.on('mh-rehook-media', () => {
+      injectVol(cachedSource);
+    });
+  } catch {
+    /* ignore */
+  }
+})();
+
+/**
  * Indicador de captura mic/câmera.
  * Electron 44 não expõe app/session "media-access"; observamos getUserMedia no main
  * world e reportamos via bridge → ipc-message do painel (como panel:fps).

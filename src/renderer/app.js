@@ -1,6 +1,6 @@
 'use strict';
 
-/** @typedef {{ id: string, name: string, color: string, startUrl: string, workspaceId: string, muted: boolean, pauseInBackground?: boolean, keepAliveInBackground?: boolean, lastUrl?: string|null }} Account */
+/** @typedef {{ id: string, name: string, color: string, startUrl: string, workspaceId: string, muted: boolean, volume?: number, pauseInBackground?: boolean, keepAliveInBackground?: boolean, lastUrl?: string|null }} Account */
 /** @typedef {{ id: string, name: string }} Workspace */
 /** @typedef {{ c: number, r: number, w: number, h: number }} Tile */
 /** @typedef {{ workspaces: Workspace[], activeWorkspaceId: string, accounts: Account[], layout: string, page: number, maximizedAccountId: string|null, settings: object, ui: object, appearance: object, freeTiles: object }} AppState */
@@ -112,6 +112,11 @@ const storeOffers = new Map();
 const favicons = new Map();
 /** @type {Map<string, string|null>} */
 const overlaySnapMap = new Map();
+/** Contas com áudio tocando (indicador na barra lateral). */
+/** @type {Set<string>} */
+const audibleAccounts = new Set();
+/** @type {{ accountId: string, el: HTMLElement, hideTimer: ReturnType<typeof setTimeout>|null } | null} */
+let volumePopover = null;
 /** @type {Set<string>} */
 let forceSuspended = new Set();
 /** @type {object | null} */
@@ -980,8 +985,232 @@ function closeMenus() {
   document.querySelectorAll('.context-menu').forEach((n) => n.remove());
   document.querySelectorAll('.panel-ext-menu').forEach((n) => n.remove());
   document.querySelectorAll('.panel-site-perm-popover').forEach((n) => n.remove());
+  closeVolumePopover();
   if (hadCtx) popOverlay('context-menu');
   if (hadExt) popOverlay('panel-ext-menu');
+}
+
+function normalizeVolumeUi(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 100;
+  return Math.max(0, Math.min(200, Math.round(n)));
+}
+
+function accountVolumePercent(accountId) {
+  const acc = (state.accounts || []).find((a) => a.id === accountId);
+  return normalizeVolumeUi(acc && acc.volume != null ? acc.volume : 100);
+}
+
+function accountIsMuted(accountId) {
+  const nav = navState.get(accountId);
+  if (nav && typeof nav.muted === 'boolean') return nav.muted;
+  const acc = (state.accounts || []).find((a) => a.id === accountId);
+  return !!(acc && acc.muted);
+}
+
+/**
+ * @param {string} accountId
+ * @param {number} percent
+ */
+async function setAccountVolume(accountId, percent) {
+  const p = normalizeVolumeUi(percent);
+  if (!window.multiheiz.panelSetVolume) return p;
+  const res = await window.multiheiz.panelSetVolume(accountId, p);
+  if (res && res.state) applyState(res.state);
+  else {
+    const acc = (state.accounts || []).find((a) => a.id === accountId);
+    if (acc) acc.volume = p;
+  }
+  refreshVolumePopoverUi();
+  return (res && res.volume != null ? res.volume : p);
+}
+
+function closeVolumePopover() {
+  if (volumePopover && volumePopover.hideTimer) {
+    clearTimeout(volumePopover.hideTimer);
+    volumePopover.hideTimer = null;
+  }
+  const existing = document.querySelectorAll('.volume-popover');
+  if (existing.length) {
+    existing.forEach((n) => n.remove());
+    popOverlay('volume-popover');
+  }
+  volumePopover = null;
+}
+
+function refreshVolumePopoverUi() {
+  if (!volumePopover || !volumePopover.el) return;
+  const pop = volumePopover.el;
+  const accountId = volumePopover.accountId;
+  const pct = accountVolumePercent(accountId);
+  const muted = accountIsMuted(accountId);
+  const valueEl = pop.querySelector('[data-role="volume-value"]');
+  const slider = /** @type {HTMLInputElement|null} */ (pop.querySelector('[data-role="volume-slider"]'));
+  const muteBtn = pop.querySelector('[data-role="volume-mute"]');
+  if (valueEl) {
+    valueEl.textContent = muted ? 'Mudo' : `${pct}%`;
+    valueEl.classList.toggle('is-boost', !muted && pct > 100);
+  }
+  if (slider) {
+    slider.value = String(pct);
+    slider.classList.toggle('is-boost', pct > 100);
+  }
+  if (muteBtn) {
+    muteBtn.innerHTML = svg(muted ? ICO.mute : ICO.unmute);
+    muteBtn.title = muted ? 'Ativar som' : 'Mudo';
+    muteBtn.setAttribute('aria-label', muteBtn.title);
+  }
+}
+
+/**
+ * @param {string} accountId
+ * @param {DOMRect|number} anchorRectOrX
+ * @param {number} [y]
+ */
+function openVolumePopover(accountId, anchorRectOrX, y) {
+  closeVolumePopover();
+  let left = 0;
+  let top = 0;
+  if (typeof anchorRectOrX === 'object' && anchorRectOrX && 'left' in anchorRectOrX) {
+    const r = /** @type {DOMRect} */ (anchorRectOrX);
+    left = Math.round(r.left);
+    top = Math.round(r.bottom + 4);
+  } else {
+    left = Math.round(Number(anchorRectOrX) || 0);
+    top = Math.round(Number(y) || 0);
+  }
+  const pop = document.createElement('div');
+  pop.className = 'volume-popover';
+  pop.dataset.role = 'volume-popover';
+  pop.dataset.accountId = accountId;
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', 'Volume da janela');
+
+  const pct = accountVolumePercent(accountId);
+  const muted = accountIsMuted(accountId);
+
+  const head = document.createElement('div');
+  head.className = 'volume-popover-head';
+  const title = document.createElement('span');
+  title.className = 'volume-popover-title';
+  title.textContent = 'Volume';
+  const valueEl = document.createElement('span');
+  valueEl.className = 'volume-popover-value' + (!muted && pct > 100 ? ' is-boost' : '');
+  valueEl.dataset.role = 'volume-value';
+  valueEl.textContent = muted ? 'Mudo' : `${pct}%`;
+  const muteBtn = document.createElement('button');
+  muteBtn.type = 'button';
+  muteBtn.className = 'btn icon ghost volume-popover-mute';
+  muteBtn.dataset.role = 'volume-mute';
+  muteBtn.title = muted ? 'Ativar som' : 'Mudo';
+  muteBtn.setAttribute('aria-label', muteBtn.title);
+  muteBtn.innerHTML = svg(muted ? ICO.mute : ICO.unmute);
+  muteBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    applyState(await window.multiheiz.panelSetMuted(accountId, !accountIsMuted(accountId)));
+    refreshVolumePopoverUi();
+  });
+  head.append(title, valueEl, muteBtn);
+
+  const track = document.createElement('div');
+  track.className = 'volume-popover-track';
+  const trackBg = document.createElement('div');
+  trackBg.className = 'volume-popover-track-bg';
+  const mark = document.createElement('div');
+  mark.className = 'volume-popover-track-mark';
+  mark.title = '100%';
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '0';
+  slider.max = '200';
+  slider.step = '1';
+  slider.value = String(pct);
+  slider.className = 'volume-popover-slider' + (pct > 100 ? ' is-boost' : '');
+  slider.dataset.role = 'volume-slider';
+  slider.setAttribute('aria-label', 'Volume 0 a 200 por cento');
+  slider.addEventListener('input', () => {
+    const v = normalizeVolumeUi(slider.value);
+    valueEl.textContent = `${v}%`;
+    valueEl.classList.toggle('is-boost', v > 100);
+    slider.classList.toggle('is-boost', v > 100);
+  });
+  slider.addEventListener('change', async () => {
+    await setAccountVolume(accountId, slider.value);
+  });
+  slider.addEventListener('dblclick', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    slider.value = '100';
+    await setAccountVolume(accountId, 100);
+  });
+  track.append(trackBg, mark, slider);
+
+  const labels = document.createElement('div');
+  labels.className = 'volume-popover-labels';
+  labels.innerHTML = '<span>0%</span><span>100%</span><span class="boost-label">Reforço 200%</span>';
+
+  pop.append(head, track, labels);
+  pop.style.left = `${Math.max(8, Math.min(left, window.innerWidth - 236))}px`;
+  pop.style.top = `${Math.max(8, Math.min(top, window.innerHeight - 120))}px`;
+
+  const onWheel = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const step = e.shiftKey ? 5 : 1;
+    const cur = accountVolumePercent(accountId);
+    const next = normalizeVolumeUi(cur + (e.deltaY < 0 ? step : -step));
+    slider.value = String(next);
+    await setAccountVolume(accountId, next);
+  };
+  pop.addEventListener('wheel', onWheel, { passive: false });
+
+  const cancelHide = () => {
+    if (volumePopover && volumePopover.hideTimer) {
+      clearTimeout(volumePopover.hideTimer);
+      volumePopover.hideTimer = null;
+    }
+  };
+  const scheduleHide = () => {
+    cancelHide();
+    if (!volumePopover) return;
+    volumePopover.hideTimer = setTimeout(() => closeVolumePopover(), 280);
+  };
+  pop.addEventListener('mouseenter', cancelHide);
+  pop.addEventListener('mouseleave', scheduleHide);
+
+  document.body.appendChild(pop);
+  pushOverlay('volume-popover');
+  volumePopover = { accountId, el: pop, hideTimer: null };
+}
+
+/**
+ * @param {HTMLElement} anchor
+ * @param {string} accountId
+ */
+function bindVolumeHover(anchor, accountId) {
+  let showTimer = null;
+  const clearShow = () => {
+    if (showTimer) {
+      clearTimeout(showTimer);
+      showTimer = null;
+    }
+  };
+  anchor.addEventListener('mouseenter', () => {
+    clearShow();
+    showTimer = setTimeout(() => {
+      openVolumePopover(accountId, anchor.getBoundingClientRect());
+    }, 180);
+  });
+  anchor.addEventListener('mouseleave', () => {
+    clearShow();
+    if (volumePopover && volumePopover.accountId === accountId) {
+      if (volumePopover.hideTimer) clearTimeout(volumePopover.hideTimer);
+      volumePopover.hideTimer = setTimeout(() => closeVolumePopover(), 280);
+    }
+  });
+  anchor.addEventListener('focus', () => {
+    openVolumePopover(accountId, anchor.getBoundingClientRect());
+  });
 }
 
 async function openPanelExtensionsMenu(accountId, x, y) {
@@ -1188,6 +1417,25 @@ function renderSidebar() {
       proxyBadge.setAttribute('aria-label', proxyBadge.title);
     }
 
+    let audioBtn = null;
+    const isAudible = audibleAccounts.has(acc.id);
+    if (isAudible || accountIsMuted(acc.id)) {
+      audioBtn = document.createElement('button');
+      audioBtn.type = 'button';
+      audioBtn.className =
+        'sidebar-audio-btn' + (accountIsMuted(acc.id) ? ' is-muted' : '');
+      audioBtn.dataset.role = 'sidebar-volume';
+      audioBtn.dataset.accountId = acc.id;
+      audioBtn.title = 'Volume / Mudo';
+      audioBtn.setAttribute('aria-label', 'Volume da janela');
+      audioBtn.innerHTML = svg(accountIsMuted(acc.id) ? ICO.mute : ICO.unmute);
+      audioBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        applyState(await window.multiheiz.panelSetMuted(acc.id, !accountIsMuted(acc.id)));
+      });
+      bindVolumeHover(audioBtn, acc.id);
+    }
+
     const dot = document.createElement('span');
     dot.className = `status-dot ${st}`;
     dot.title = stLabel;
@@ -1199,8 +1447,11 @@ function renderSidebar() {
     const a11yLabel = `${acc.name} — ${stLabel}${proxyBit}`;
     item.title = a11yLabel;
     item.setAttribute('aria-label', a11yLabel);
-    if (proxyBadge) item.append(stripe, fav, body, proxyBadge, dot);
-    else item.append(stripe, fav, body, dot);
+    const parts = [stripe, fav, body];
+    if (proxyBadge) parts.push(proxyBadge);
+    if (audioBtn) parts.push(audioBtn);
+    parts.push(dot);
+    item.append(...parts);
     item.addEventListener('click', async () => {
       focusedAccountId = acc.id;
       await window.multiheiz.panelFocus(acc.id);
@@ -1427,9 +1678,14 @@ function buildPanelSlot(acc, tile) {
   });
   btnHome.dataset.role = 'panel-home';
   const btnReload = iconBtn(ICO.reload, 'Recarregar', () => window.multiheiz.panelReload(acc.id));
-  const btnMute = iconBtn(nav.muted ? ICO.mute : ICO.unmute, 'Mudo', async () => {
-    applyState(await window.multiheiz.panelSetMuted(acc.id, !nav.muted));
+  const volPct = normalizeVolumeUi(acc.volume != null ? acc.volume : 100);
+  const btnMute = iconBtn(nav.muted ? ICO.mute : ICO.unmute, 'Volume / Mudo', async (e) => {
+    e.stopPropagation();
+    applyState(await window.multiheiz.panelSetMuted(acc.id, !accountIsMuted(acc.id)));
   });
+  btnMute.dataset.role = 'panel-volume';
+  if (!nav.muted && volPct > 100) btnMute.classList.add('is-boost');
+  bindVolumeHover(btnMute, acc.id);
   const btnStar = iconBtn(ICO.star, 'Favoritar (Ctrl+D)', async (e) => {
     e.stopPropagation();
     focusedAccountId = acc.id;
@@ -3501,11 +3757,37 @@ window.multiheiz.onEvent((payload) => {
       const buttons = slot.querySelectorAll('.panel-header-actions .btn.icon');
       if (buttons[0]) buttons[0].disabled = !payload.canGoBack;
       if (buttons[1]) buttons[1].disabled = !payload.canGoForward;
-      const muteBtn = [...slot.querySelectorAll('.btn.icon')].find((b) => b.title === 'Mudo');
+      const muteBtn =
+        slot.querySelector('[data-role="panel-volume"]') ||
+        [...slot.querySelectorAll('.btn.icon')].find(
+          (b) => b.title === 'Mudo' || b.title === 'Volume / Mudo'
+        );
       if (muteBtn) muteBtn.innerHTML = svg(payload.muted ? ICO.mute : ICO.unmute);
       const loadSt = slot.querySelector('.panel-load-status');
       if (loadSt) loadSt.classList.add('hidden');
     }
+    if (volumePopover && volumePopover.accountId === payload.accountId) refreshVolumePopoverUi();
+  }
+  if (payload.type === 'panel:audible' && payload.accountId) {
+    const was = audibleAccounts.has(payload.accountId);
+    if (payload.audible) audibleAccounts.add(payload.accountId);
+    else audibleAccounts.delete(payload.accountId);
+    if (was !== !!payload.audible) renderSidebar();
+  }
+  if (payload.type === 'panel:volume' && payload.accountId) {
+    const acc = (state.accounts || []).find((a) => a.id === payload.accountId);
+    if (acc) acc.volume = normalizeVolumeUi(payload.volume);
+    const slot = el.grid.querySelector(`.panel-slot[data-account-id="${payload.accountId}"]`);
+    if (slot) {
+      const muteBtn = slot.querySelector('[data-role="panel-volume"]');
+      if (muteBtn) {
+        muteBtn.classList.toggle(
+          'is-boost',
+          !accountIsMuted(payload.accountId) && accountVolumePercent(payload.accountId) > 100
+        );
+      }
+    }
+    if (volumePopover && volumePopover.accountId === payload.accountId) refreshVolumePopoverUi();
   }
 });
 
@@ -4333,6 +4615,53 @@ Object.assign(window.__multiheizUi, {
   closeManager: () => window.MultiHeizV16 && window.MultiHeizV16.closeManager(),
   favoriteCurrent: () => window.MultiHeizV16 && window.MultiHeizV16.favoriteCurrentUrl(),
   getActiveModule: () => (window.MultiHeizV16 && window.MultiHeizV16.getActiveModule()) || null,
+  openVolumePopover: (accountId) => {
+    const id = String(accountId || '');
+    const anchor =
+      document.querySelector(`.panel-slot[data-account-id="${id}"] [data-role="panel-volume"]`) ||
+      document.querySelector(`[data-role="sidebar-volume"][data-account-id="${id}"]`);
+    if (anchor) {
+      openVolumePopover(id, anchor.getBoundingClientRect());
+    } else {
+      openVolumePopover(id, Math.round(window.innerWidth / 2 - 110), 120);
+    }
+    return { ok: true, percent: accountVolumePercent(id), anchored: !!anchor };
+  },
+  closeVolumePopover: () => {
+    closeVolumePopover();
+    return true;
+  },
+  getVolumePopover: () => {
+    const pop = document.querySelector('.volume-popover');
+    if (!pop) return null;
+    const slider = /** @type {HTMLInputElement|null} */ (pop.querySelector('[data-role="volume-slider"]'));
+    const valueEl = pop.querySelector('[data-role="volume-value"]');
+    return {
+      accountId: pop.dataset.accountId || '',
+      percent: slider ? normalizeVolumeUi(slider.value) : accountVolumePercent(pop.dataset.accountId || ''),
+      label: valueEl ? valueEl.textContent : '',
+      isBoost: !!(slider && slider.classList.contains('is-boost')),
+      open: true,
+    };
+  },
+  setVolumePercent: async (accountId, percent) => {
+    const p = await setAccountVolume(String(accountId || ''), percent);
+    return { ok: true, percent: p };
+  },
+  volumePopoverWheel: async (deltaY, shiftKey) => {
+    if (!volumePopover) return { ok: false, reason: 'closed' };
+    const step = shiftKey ? 5 : 1;
+    const cur = accountVolumePercent(volumePopover.accountId);
+    const next = normalizeVolumeUi(cur + (Number(deltaY) < 0 ? step : -step));
+    const p = await setAccountVolume(volumePopover.accountId, next);
+    return { ok: true, percent: p };
+  },
+  volumePopoverDblClick: async () => {
+    if (!volumePopover) return { ok: false, reason: 'closed' };
+    const p = await setAccountVolume(volumePopover.accountId, 100);
+    return { ok: true, percent: p };
+  },
+  getAccountVolume: (accountId) => accountVolumePercent(String(accountId || '')),
   isKofiVisible: () => {
     const btn = document.getElementById('btn-kofi');
     return !!(btn && !btn.classList.contains('hidden'));

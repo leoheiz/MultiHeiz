@@ -20,6 +20,8 @@ const PANEL_CHANNELS = new Set([
   'multiheiz/ext-early-done',
   // Indicador mic/câmera (panel-preload → main)
   'panel:media-use',
+  // Volume fino: bootstrap sync (fonte + ganho) do panel-preload
+  'panel:volume-sync',
 ]);
 
 const INDEX_HTML = path.resolve(__dirname, '..', 'renderer', 'index.html');

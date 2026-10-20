@@ -1344,6 +1344,163 @@ select {
   font-size: 12px;
 }
 
+/* Volume fino por janela (0–200% com reforço) */
+.volume-popover {
+  position: fixed;
+  z-index: 10060;
+  width: 220px;
+  padding: 10px 12px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-header-bg, var(--bg));
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
+  color: var(--text);
+  font-size: 12px;
+  user-select: none;
+}
+
+.volume-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.volume-popover-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.volume-popover-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 3.2em;
+  text-align: right;
+}
+
+.volume-popover-value.is-boost {
+  color: #e8a54b;
+}
+
+.volume-popover-mute {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.volume-popover-track {
+  position: relative;
+  height: 28px;
+  display: flex;
+  align-items: center;
+}
+
+.volume-popover-track-bg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent) 55%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 55%, transparent) 50%,
+    color-mix(in srgb, #e8a54b 45%, transparent) 50%,
+    color-mix(in srgb, #e8a54b 45%, transparent) 100%
+  );
+  pointer-events: none;
+}
+
+.volume-popover-track-mark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  background: color-mix(in srgb, var(--text) 35%, transparent);
+  pointer-events: none;
+}
+
+.volume-popover-slider {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 28px;
+  cursor: pointer;
+}
+
+.volume-popover-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  background: transparent;
+}
+
+.volume-popover-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 2px solid var(--panel-header-bg, var(--bg));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  margin-top: -4px;
+}
+
+.volume-popover-slider.is-boost::-webkit-slider-thumb {
+  background: #e8a54b;
+}
+
+.volume-popover-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.volume-popover-labels .boost-label {
+  color: #e8a54b;
+}
+
+.sidebar-audio-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.sidebar-audio-btn:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.sidebar-audio-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar-audio-btn.is-muted {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+.panel-header-actions .btn.icon[data-role='panel-volume'].is-boost {
+  color: #e8a54b;
+}
+
 .panel-site-perm-origin {
   font-weight: 600;
   font-size: 12px;

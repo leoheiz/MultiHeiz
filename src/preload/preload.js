@@ -52,6 +52,9 @@ contextBridge.exposeInMainWorld('multiheiz', {
   panelReload: (accountId) => ipcRenderer.invoke('panel:reload', accountId),
   panelSetMuted: (accountId, muted) =>
     ipcRenderer.invoke('panel:set-muted', { accountId, muted }),
+  panelSetVolume: (accountId, percent) =>
+    ipcRenderer.invoke('panel:set-volume', { accountId, percent }),
+  panelGetVolume: (accountId) => ipcRenderer.invoke('panel:get-volume', accountId),
   panelFocus: (accountId) => ipcRenderer.invoke('panel:focus', accountId),
   panelReactivate: (accountId) => ipcRenderer.invoke('panel:reactivate', accountId),
   panelSuspend: (accountId) => ipcRenderer.invoke('panel:suspend', accountId),

@@ -23,9 +23,14 @@ const permissions = require('./permissions');
 const chromeFullscreen = require('./chrome-fullscreen');
 const extensions = require('./extensions');
 const contextMenu = require('./context-menu');
+const volumeControl = require('./volume-control');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
+
+/** Contas com áudio tocando (indicador na UI). */
+/** @type {Set<string>} */
+const audibleAccounts = new Set();
 
 /** Accounts being removed (clear session / state); layout:sync must not recreate them. */
 /** @type {Set<string>} */
@@ -168,6 +173,10 @@ function initPanels(win, emit, opts) {
   if (opts && typeof opts.getPublicState === 'function') {
     getPublicState = opts.getPublicState;
   }
+  volumeControl.installVolumeIpc({
+    resolveAccountIdFromWebContents: accountIdForWebContents,
+    getAccount,
+  });
 }
 
 /**
@@ -194,6 +203,7 @@ function openUrlInNewPanel(fromAccountId, url) {
     startUrl: sanitizeUserStartUrl(raw, 'https://www.google.com'),
     workspaceId: (from && from.workspaceId) || st.activeWorkspaceId,
     muted: false,
+    volume: 100,
     pauseInBackground: false,
     keepAliveInBackground: false,
     privateHistory: false,
@@ -1031,6 +1041,12 @@ function createPanel(accountId) {
   }
 
   view.webContents.setAudioMuted(!!account.muted);
+  try {
+    const initialVol = volumeControl.volumeOfAccount(account);
+    volumeControl.pushVolumeToWebContents(view.webContents, initialVol);
+  } catch {
+    /* ignore */
+  }
 
   // Per-panel zoom (view bounds unaffected); disable Chromium pinch/visual zoom
   try {
@@ -1116,6 +1132,12 @@ function createPanel(accountId) {
     } catch {
       /* ignore */
     }
+    try {
+      const pct = volumeControl.volumeOfAccount(getAccount(accountId));
+      volumeControl.pushVolumeToWebContents(view.webContents, pct);
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('dom-ready', () => {
     signalLoadCommitted(accountId);
@@ -1124,7 +1146,41 @@ function createPanel(accountId) {
     } catch {
       /* ignore */
     }
+    try {
+      const pct = volumeControl.volumeOfAccount(getAccount(accountId));
+      volumeControl.pushVolumeToWebContents(view.webContents, pct);
+    } catch {
+      /* ignore */
+    }
   });
+  const emitAudible = () => {
+    let audible = false;
+    try {
+      audible = !!(
+        view.webContents &&
+        typeof view.webContents.isCurrentlyAudible === 'function' &&
+        view.webContents.isCurrentlyAudible()
+      );
+    } catch {
+      audible = false;
+    }
+    if (audible) audibleAccounts.add(accountId);
+    else audibleAccounts.delete(accountId);
+    emitToRenderer({ type: 'panel:audible', accountId, audible: !!audible });
+  };
+  try {
+    view.webContents.on('media-started-playing', emitAudible);
+    view.webContents.on('media-paused', emitAudible);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (typeof view.webContents.on === 'function') {
+      view.webContents.on('audio-state-changed', emitAudible);
+    }
+  } catch {
+    /* ignore */
+  }
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame || event.defaultPrevented) return;
     const codeStr = String(errorDescription || '');
@@ -2180,6 +2236,50 @@ function panelSetMuted(accountId, muted) {
 }
 
 /**
+ * Volume fino 0–200% (persistido em account.volume). Default 100.
+ * @param {string} accountId
+ * @param {unknown} percent
+ * @returns {number}
+ */
+function panelSetVolume(accountId, percent) {
+  const p = volumeControl.normalizeVolumePercent(percent);
+  updateState((s) => {
+    const acc = s.accounts.find((a) => a.id === accountId);
+    if (acc) acc.volume = p;
+  });
+  const entry = panels.get(accountId);
+  if (entry) volumeControl.pushVolumeToWebContents(entry.view.webContents, p);
+  emitToRenderer({ type: 'panel:volume', accountId, volume: p });
+  return p;
+}
+
+/**
+ * @param {string} accountId
+ * @returns {number}
+ */
+function panelGetVolume(accountId) {
+  return volumeControl.volumeOfAccount(getAccount(accountId));
+}
+
+/**
+ * @param {string} accountId
+ * @returns {boolean}
+ */
+function panelIsAudible(accountId) {
+  if (audibleAccounts.has(accountId)) return true;
+  const entry = panels.get(accountId);
+  if (!entry) return false;
+  try {
+    return !!(
+      typeof entry.view.webContents.isCurrentlyAudible === 'function' &&
+      entry.view.webContents.isCurrentlyAudible()
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Throttling rules (v1.3 + v1.8 presets):
  * - Never throttle the focused panel (unless frameCapAll).
  * - Presets: balanced (default) / always (all active) / max-save (throttle+suspend hidden).
@@ -2400,6 +2500,9 @@ module.exports = {
   panelCanGoBack,
   panelCanGoForward,
   panelSetMuted,
+  panelSetVolume,
+  panelGetVolume,
+  panelIsAudible,
   clearAccountSession,
   markAccountRemoving,
   unmarkAccountRemoving,
