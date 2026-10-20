@@ -142,7 +142,10 @@ async function runAbuSelftest(ctx) {
           path: r.path,
         }))
       : []),
-    dnr_stripped_for_electron: !!snap,
+    dnr_in_manifest: !!manifest.declarative_net_request,
+    dnr_snapshot: !!snap,
+    // prepare v2+ keeps DNR in the manifest; true only for legacy stripped installs
+    dnr_stripped_for_electron: !manifest.declarative_net_request && !!snap,
   };
   console.log(
     'Manifest MV' + results.manifest.manifest_version,

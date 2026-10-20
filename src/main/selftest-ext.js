@@ -228,6 +228,57 @@ async function runExtSelftest(ctx) {
   if (!fs.existsSync(rulesPath)) throw new Error('fixture rules.json missing');
   const snapPath = path.join(installed.path, 'multiheiz-dnr.json');
   if (!fs.existsSync(snapPath)) throw new Error('DNR snapshot missing after install');
+  const installedManifest = JSON.parse(
+    fs.readFileSync(path.join(installed.path, 'manifest.json'), 'utf8')
+  );
+  if (!installedManifest.declarative_net_request) {
+    throw new Error('FAIL: prepare stripped declarative_net_request (expected keep in manifest)');
+  }
+  if (
+    !Array.isArray(installedManifest.permissions) ||
+    !installedManifest.permissions.includes('declarativeNetRequest')
+  ) {
+    throw new Error('FAIL: prepare removed declarativeNetRequest permission');
+  }
+  console.log('PASS: DNR kept in installed manifest (prepare v2+)');
+
+  // Simulate prepare v1 stripped dir: restore from multiheiz-dnr.json
+  {
+    const os = require('node:os');
+    const { prepareExtensionDir } = require('./extensions/dnr-prepare');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-dnr-reprep-'));
+    try {
+      fs.cpSync(installed.path, tmp, { recursive: true });
+      const manPath = path.join(tmp, 'manifest.json');
+      const stripped = JSON.parse(fs.readFileSync(manPath, 'utf8'));
+      delete stripped.declarative_net_request;
+      stripped.permissions = (stripped.permissions || []).filter(
+        (p) => p !== 'declarativeNetRequest'
+      );
+      fs.writeFileSync(manPath, JSON.stringify(stripped, null, 2), 'utf8');
+      // Downgrade snap marker so restore path is exercised
+      const snap = JSON.parse(fs.readFileSync(path.join(tmp, 'multiheiz-dnr.json'), 'utf8'));
+      snap.prepareVersion = 1;
+      fs.writeFileSync(path.join(tmp, 'multiheiz-dnr.json'), JSON.stringify(snap, null, 2), 'utf8');
+      const r = prepareExtensionDir(tmp);
+      if (!r.restored) throw new Error('expected restored=true for stripped install');
+      const fixed = JSON.parse(fs.readFileSync(manPath, 'utf8'));
+      if (!fixed.declarative_net_request) {
+        throw new Error('reprepare did not restore declarative_net_request');
+      }
+      if (!(fixed.permissions || []).includes('declarativeNetRequest')) {
+        throw new Error('reprepare did not restore declarativeNetRequest permission');
+      }
+      console.log('PASS: reprepare restores DNR from snapshot (v1 → v2)');
+    } finally {
+      try {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   const eng = extensions.dnr.getEngine(installed.id);
   if (!eng || eng.ruleCount < 2) {
     throw new Error('DNR engine not loaded (rules=' + (eng && eng.ruleCount) + ')');

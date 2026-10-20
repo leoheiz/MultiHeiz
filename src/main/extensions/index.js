@@ -18,7 +18,7 @@ const loader = require('./loader');
 const popup = require('./popup');
 const dnr = require('./dnr-shim');
 const dnrApi = require('./dnr-api-stub');
-const { prepareExtensionDir } = require('./dnr-prepare');
+const { prepareExtensionDir, reprepareInstalled } = require('./dnr-prepare');
 
 /** @type {{ emit?: (p: object) => void, getAccountIds?: () => string[], getMainWindow?: () => Electron.BrowserWindow|null } | null} */
 let deps = null;
@@ -127,7 +127,7 @@ async function installFromUnpacked(srcDir, opts = {}) {
   });
   if (opts.applyTo != null) record.applyTo = opts.applyTo;
   materializeInstall(abs, record);
-  // Snapshot DNR for shim, strip from manifest so Electron loadExtension works
+  // Snapshot DNR for shim; keep declarative_net_request in the manifest (prepare v2+)
   prepareExtensionDir(record.path);
   // Rebuild warnings/icons from final path (reads multiheiz-dnr.json if present)
   const finalRec = buildRecord(record.path, {
@@ -267,6 +267,25 @@ async function loadAllAccountSessions() {
 function init(options) {
   deps = options || {};
   store.reloadFromDisk();
+  // Re-derive manifests that were stripped under prepare v1 (restore DNR from snapshot)
+  try {
+    const prep = reprepareInstalled(store.listRecords());
+    if (prep.restored.length) {
+      console.log(
+        '[extensions] restored declarative_net_request into',
+        prep.restored.length,
+        'install(s)'
+      );
+    }
+    if (prep.needsReinstall.length) {
+      console.warn(
+        '[extensions] DNR snapshot missing for stripped install(s); reinstall extension to restore DNR:',
+        prep.needsReinstall.join(', ')
+      );
+    }
+  } catch (err) {
+    console.warn('[extensions] reprepare', err && err.message ? err.message : err);
+  }
   registerIpc();
   // Load after a tick so accounts exist
   setTimeout(() => {

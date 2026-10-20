@@ -4,11 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { idFromManifestKey, idFromBytes } = require('./crx');
 
-/** Permissions / APIs Electron typically cannot honour (warn only). */
+/**
+ * Permissions / APIs Electron typically cannot honour (warn only).
+ * DNR perms are kept in the manifest (prepare v2+) and enforced via dnr-shim —
+ * do not list them here.
+ */
 const UNSUPPORTED = new Set([
-  'declarativeNetRequest',
-  'declarativeNetRequestWithHostAccess',
-  'declarativeNetRequestFeedback',
   'sidePanel',
   'offscreen',
   'proxy',
