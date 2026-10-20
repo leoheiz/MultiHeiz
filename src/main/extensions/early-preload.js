@@ -19,6 +19,26 @@ const { ipcRenderer, contextBridge } = require('electron');
     const list = ipcRenderer.sendSync('multiheiz/ext-early', href) || [];
     if (!Array.isArray(list) || !list.length) return;
 
+    // Shared with built-in cosmetic-preload: only one MAIN-world early path runs.
+    let claim = true;
+    try {
+      claim = !!contextBridge.executeInMainWorld({
+        func: () => {
+          try {
+            if (window.__mhEarlyMainWorldDone) return false;
+            window.__mhEarlyMainWorldDone = 1;
+            return true;
+          } catch (e) {
+            return true;
+          }
+        },
+        args: [],
+      });
+    } catch {
+      claim = true;
+    }
+    if (!claim) return;
+
     /** @type {string[]} */
     const keys = [];
     for (const it of list) {

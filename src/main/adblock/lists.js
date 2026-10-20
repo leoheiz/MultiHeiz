@@ -141,7 +141,7 @@ const LISTS = {
     group: 'ads',
     defaultOn: false,
     vendor: 'AdBlocker Ultimate',
-    note: '~6,1 MB',
+    note: '~6,1 MB; default OFF (+~183 MB RSS). YouTube uses MultiHeiz MIT scriptlets instead.',
   },
   abu_privacy: {
     id: 'abu_privacy',
@@ -220,6 +220,39 @@ const YOUTUBE_EXPERIMENTAL_FILTERS = `
 `.trim();
 
 /**
+ * Small MIT YouTube scriptlet/cosmetic set (written for MultiHeiz — not copied from
+ * ABU/AdGuard/uBO). Applied when cosmetics are on so the built-in engine can strip
+ * player ads without the ABU extension or the ~6 MB abu_ad list (+~183 MB RSS).
+ * Domains: youtube.com (incl. www/m/music subdomains), youtube-nocookie, youtubekids.
+ */
+const YOUTUBE_BUILTIN_SCRIPTLETS = `
+! MultiHeiz YouTube built-in (MIT)
+youtube.com,youtube-nocookie.com,youtubekids.com##+js(set-constant, google_ad_status, 1)
+youtube.com,youtube-nocookie.com,youtubekids.com##+js(set-constant, ytInitialPlayerResponse.adPlacements, undefined)
+youtube.com,youtube-nocookie.com,youtubekids.com##+js(set-constant, ytInitialPlayerResponse.adSlots, undefined)
+youtube.com,youtube-nocookie.com,youtubekids.com##+js(set-constant, ytInitialPlayerResponse.playerAds, undefined)
+youtube.com,youtube-nocookie.com,youtubekids.com##+js(set-constant, playerResponse.adPlacements, undefined)
+youtube.com,youtube-nocookie.com,youtubekids.com##+js(json-prune, playerResponse.adPlacements playerResponse.adSlots playerResponse.playerAds adPlacements playerAds adSlots)
+youtube.com##+js(json-prune-xhr-response, playerResponse.adPlacements playerResponse.playerAds playerResponse.adSlots adPlacements playerAds adSlots, , /playlist\\?list=|\\/player(?!.*(get_drm_license))|watch\\?[tv]=|get_watch\\?/)
+youtube.com##+js(json-prune-fetch-response, playerResponse.adPlacements playerResponse.playerAds playerResponse.adSlots adPlacements playerAds adSlots, , /playlist\\?list=|player\\?|watch\\?[tv]=/)
+m.youtube.com,youtube-nocookie.com,youtubekids.com##+js(json-prune, playerResponse.adPlacements playerResponse.playerAds playerResponse.adSlots adPlacements playerAds adSlots)
+www.youtube.com##+js(adjust-setTimeout, [native code], 17000, 0.001)
+youtube.com##+js(json-prune, entries.[-].command.reelWatchEndpoint.adClientParams.isAd)
+www.youtube.com##+js(json-prune, contents.twoColumnBrowseResultsRenderer.tabs.[].tabRenderer.content.richGridRenderer.contents.[-].richItemRenderer.content.adSlotRenderer)
+www.youtube.com##+js(json-prune, ytInitialData.contents.twoColumnBrowseResultsRenderer.tabs.[].tabRenderer.content.richGridRenderer.contents.[-].richItemRenderer.content.adSlotRenderer)
+www.youtube.com##+js(set-constant, ytcfg.data_.EXPERIMENT_FLAGS.web_streaming_watch, false)
+m.youtube.com##+js(json-prune-fetch-response, $..itemSectionRenderer.contents[?(@.adSlotRenderer)], , /get_watch)
+m.youtube.com##+js(json-prune, playerResponse.messages.[].youThereRenderer)
+youtube.com##ytd-rich-item-renderer:has(> #content > ytd-ad-slot-renderer)
+youtube.com##.ytd-watch-flexy > .ytd-watch-next-secondary-results-renderer > ytd-ad-slot-renderer
+youtube.com##.ytd-two-column-browse-results-renderer > ytd-rich-grid-renderer > #masthead-ad
+youtube.com##.ytd-section-list-renderer > .ytd-item-section-renderer > ytd-search-pyv-renderer
+m.youtube.com##lazy-list > ad-slot-renderer
+m.youtube.com##ytm-rich-item-renderer > ad-slot-renderer
+youtube-nocookie.com##.ytp-ad-progress-list
+`.trim();
+
+/**
  * Supplemental Google Search cosmetics (EasyList usually covers these; keep as
  * safety net + MutationObserver for dynamically inserted sponsored blocks).
  */
@@ -267,6 +300,7 @@ module.exports = {
   RESOURCES_URL,
   RESOURCES_FILE,
   YOUTUBE_EXPERIMENTAL_FILTERS,
+  YOUTUBE_BUILTIN_SCRIPTLETS,
   GOOGLE_SEARCH_COSMETICS,
   UPDATE_INTERVAL_HOURS_OPTIONS,
   DEFAULT_UPDATE_INTERVAL_HOURS,

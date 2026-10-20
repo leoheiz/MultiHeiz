@@ -121,6 +121,35 @@ function classifyAbuLine(trimmed) {
 }
 
 /**
+ * Post-agtree remaps for AdGuard-only scriptlet names / arg shapes that Ghostery’s
+ * uBO resources may not accept under the AG name. Never copies GPL scriptlet bodies.
+ * Keys = name as it appears inside ##+js(...).
+ */
+const SCRIPTLET_NAME_REMAP = {
+  // Ghostery resources include trusted-replace-fetch-response; keep when present.
+  // Fallback alias used if a future resources.json drops the trusted-* name:
+  'ubo-replace-fetch-response': 'trusted-replace-fetch-response',
+  // Older AG exports / converters:
+  'replace-fetch-response': 'trusted-replace-fetch-response',
+  'replace-xhr-response': 'trusted-replace-xhr-response',
+};
+
+/**
+ * Remap ##+js(name, ...) scriptlet name when needed.
+ * @param {string} line
+ * @returns {string}
+ */
+function remapUboScriptletLine(line) {
+  const m = String(line || '').match(/^(.*##\+js\()([^,\)]+)(.*)$/i);
+  if (!m) return line;
+  const rawName = m[2].trim();
+  const key = rawName.replace(/\.js$/i, '');
+  const mapped = SCRIPTLET_NAME_REMAP[key] || SCRIPTLET_NAME_REMAP[rawName];
+  if (!mapped || mapped === key || mapped === rawName) return line;
+  return m[1] + mapped + m[3];
+}
+
+/**
  * Convert one AdGuard scriptlet line to uBO ##+js(...) via agtree.
  * @param {string} line
  * @param {typeof import('@adguard/agtree')} agtree
@@ -136,7 +165,7 @@ function convertScriptletLine(line, agtree) {
     for (const r of results) {
       try {
         const gen = RuleGenerator.generate(r);
-        if (gen && String(gen).trim()) out.push(String(gen).trim());
+        if (gen && String(gen).trim()) out.push(remapUboScriptletLine(String(gen).trim()));
       } catch {
         /* drop this variant */
       }
@@ -218,6 +247,8 @@ module.exports = {
   shouldPreprocessList,
   classifyAbuLine,
   convertScriptletLine,
+  remapUboScriptletLine,
+  SCRIPTLET_NAME_REMAP,
   loadAgtree,
   resetAgtreeCache,
   emptyStats,

@@ -268,15 +268,45 @@ function applyUaPatchData(D) {
   }
 }
 
+/**
+ * Claim shared MAIN-world early slot (built-in + ABU early-replay).
+ * @returns {boolean} true if this preload should inject hostname scriptlets
+ */
+function claimEarlyMainWorldSlot() {
+  try {
+    return !!contextBridge.executeInMainWorld({
+      func: () => {
+        try {
+          if (window.__mhEarlyMainWorldDone) return false;
+          window.__mhEarlyMainWorldDone = 1;
+          return true;
+        } catch (e) {
+          return true;
+        }
+      },
+      args: [],
+    });
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Trusted-Types-safe scriptlet inject: compile in the isolated preload world,
+ * then run via executeInMainWorld (Electron compiles into MAIN; page TT/CSP
+ * do not apply). Do not call new Function inside the page.
+ * @param {string} source
+ */
 function injectInMainWorld(source) {
   if (!source) return;
   try {
-    contextBridge.executeInMainWorld({
-      func: (src) => {
-        try {
-          // eslint-disable-next-line no-new-func
-          new Function(src)();
-        } catch (e1) {
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(source);
+    contextBridge.executeInMainWorld({ func: fn, args: [] });
+  } catch {
+    try {
+      contextBridge.executeInMainWorld({
+        func: (src) => {
           try {
             const el = document.createElement('script');
             el.textContent = src;
@@ -287,12 +317,12 @@ function injectInMainWorld(source) {
           } catch (e2) {
             /* ignore */
           }
-        }
-      },
-      args: [String(source)],
-    });
-  } catch {
-    /* executeInMainWorld unavailable */
+        },
+        args: [String(source)],
+      });
+    } catch {
+      /* executeInMainWorld unavailable */
+    }
   }
 }
 
@@ -415,8 +445,21 @@ function injectEarlySync() {
   if (payload.styles) {
     injectInMainWorld(styleInjectSource('mh-adblock-css-early', payload.styles, 'append'));
   }
-  for (const script of payload.scripts || []) {
-    injectInMainWorld(script);
+  const scripts = payload.scripts || [];
+  // Prefer ABU early-replay when its per-host cache is warm (do not steal the slot).
+  let extEarly = false;
+  try {
+    const extList = ipcRenderer.sendSync('multiheiz/ext-early', window.location.href);
+    extEarly = Array.isArray(extList) && extList.length > 0;
+  } catch {
+    extEarly = false;
+  }
+  const runScripts =
+    scripts.length > 0 && !extEarly && claimEarlyMainWorldSlot();
+  if (runScripts) {
+    for (const script of scripts) {
+      injectInMainWorld(script);
+    }
   }
   if (payload.uaPatchData) {
     applyUaPatchData(payload.uaPatchData);
@@ -444,7 +487,7 @@ function injectEarlySync() {
     early: true,
     syncMs: t1 - t0,
     injectMs: t2 - t1,
-    scripts: (payload.scripts || []).length,
+    scripts: runScripts ? scripts.length : 0,
   };
 }
 

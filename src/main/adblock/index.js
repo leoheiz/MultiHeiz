@@ -15,6 +15,7 @@ const {
   RESOURCES_URL,
   RESOURCES_FILE,
   YOUTUBE_EXPERIMENTAL_FILTERS,
+  YOUTUBE_BUILTIN_SCRIPTLETS,
   GOOGLE_SEARCH_COSMETICS,
   UPDATE_INTERVAL_HOURS_OPTIONS,
   DEFAULT_UPDATE_INTERVAL_HOURS,
@@ -479,7 +480,7 @@ function listFingerprint() {
       .join('|'),
     crypto.createHash('sha1').update(ab.userRules || '').digest('hex').slice(0, 12),
     ab.youtubeExperimental ? 'yt1' : 'yt0',
-    ab.cosmetic !== false ? 'cos1' : 'cos0',
+    ab.cosmetic !== false ? 'cos1-ytb1' : 'cos0',
   ];
   return parts.join('::');
 }
@@ -660,7 +661,10 @@ async function gatherFilterText(opts = {}) {
     chunks.push(text);
     if (ab.userRules) chunks.push(ab.userRules);
     if (ab.youtubeExperimental) chunks.push(YOUTUBE_EXPERIMENTAL_FILTERS);
-    if (ab.cosmetic !== false) chunks.push(GOOGLE_SEARCH_COSMETICS);
+    if (ab.cosmetic !== false) {
+      chunks.push(YOUTUBE_BUILTIN_SCRIPTLETS);
+      chunks.push(GOOGLE_SEARCH_COSMETICS);
+    }
     listMeta.test = {
       ruleCount: countFilterLines(text),
       lastUpdateAt: Date.now(),
@@ -814,7 +818,10 @@ async function gatherFilterText(opts = {}) {
   }
 
   if (ab.youtubeExperimental) chunks.push(YOUTUBE_EXPERIMENTAL_FILTERS);
-  if (ab.cosmetic !== false) chunks.push(GOOGLE_SEARCH_COSMETICS);
+  if (ab.cosmetic !== false) {
+    chunks.push(YOUTUBE_BUILTIN_SCRIPTLETS);
+    chunks.push(GOOGLE_SEARCH_COSMETICS);
+  }
 
   lastPreprocessStats = preprocessTotals;
 
@@ -1112,6 +1119,56 @@ function tryLoadSerializedEngine() {
 }
 
 /**
+ * True for YouTube-family hosts (incl. music / m / nocookie / kids).
+ * @param {string} hostname
+ */
+function isYoutubeFamilyHost(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  if (!h) return false;
+  return (
+    h === 'youtube.com' ||
+    h.endsWith('.youtube.com') ||
+    h === 'youtube-nocookie.com' ||
+    h.endsWith('.youtube-nocookie.com') ||
+    h === 'youtubekids.com' ||
+    h.endsWith('.youtubekids.com') ||
+    h === 'youtu.be'
+  );
+}
+
+/**
+ * Resolve about:blank / about:srcdoc to a parent frame URL when possible
+ * so YouTube-hosted blank/srcdoc frames inherit hostname scriptlets.
+ * @param {string} url
+ * @param {Electron.IpcMainEvent} event
+ */
+function resolveFrameUrlForEarly(url, event) {
+  const raw = String(url || '');
+  const blank =
+    !raw ||
+    raw === 'about:blank' ||
+    raw === 'about:srcdoc' ||
+    raw.startsWith('about:srcdoc');
+  if (!blank) return raw;
+  try {
+    let frame = event && event.senderFrame;
+    let guard = 0;
+    while (frame && guard++ < 8) {
+      const parent = frame.parent;
+      if (!parent) break;
+      const pu = String(parent.url || '');
+      if (pu && pu !== 'about:blank' && !pu.startsWith('about:srcdoc')) {
+        return pu;
+      }
+      frame = parent;
+    }
+  } catch {
+    /* ignore */
+  }
+  return raw;
+}
+
+/**
  * Compute hostname scriptlets/styles for early sync injection (cached).
  * @param {string} url
  */
@@ -1126,8 +1183,9 @@ function computeEarlyPayload(url) {
   const hostname = parsed.hostname || '';
   const domain = parsed.domain || '';
   const cacheKey = hostname || url || '';
+  const ttlMs = isYoutubeFamilyHost(hostname) ? 5 * 60_000 : 60_000;
   const cached = earlyCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < 60_000) {
+  if (cached && Date.now() - cached.at < ttlMs) {
     return { ok: true, scripts: cached.scripts, styles: cached.styles, cached: true };
   }
   const { active, styles, scripts } = blocker.getCosmeticsFilters({
@@ -1215,7 +1273,8 @@ function handleEarlyScriptlets(event, url) {
   try {
     const wc = event.sender;
     const accountId = wc ? wcToAccount.get(wc.id) : null;
-    const patchUrl = url || '';
+    const resolvedUrl = resolveFrameUrlForEarly(url || '', event);
+    const patchUrl = resolvedUrl || url || '';
     const passkeyDisable = passkeyDisableIfNeeded();
     if (accountId && !isWindowBlockingEnabled(accountId)) {
       event.returnValue = {
@@ -1229,12 +1288,13 @@ function handleEarlyScriptlets(event, url) {
       };
       return;
     }
-    const early = computeEarlyPayload(url || '');
+    const early = computeEarlyPayload(resolvedUrl || '');
     event.returnValue = {
       ok: early.ok,
       scripts: early.scripts || [],
       styles: early.styles || '',
       cached: !!early.cached,
+      resolvedUrl,
       uaPatch: uaPatchIfNeeded(patchUrl),
       uaPatchData: uaPatchDataIfNeeded(patchUrl),
       passkeyDisable,
