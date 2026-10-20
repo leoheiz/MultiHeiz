@@ -115,8 +115,12 @@ const overlaySnapMap = new Map();
 /** Contas com áudio tocando (indicador na barra lateral). */
 /** @type {Set<string>} */
 const audibleAccounts = new Set();
-/** @type {{ accountId: string, el: HTMLElement, hideTimer: ReturnType<typeof setTimeout>|null } | null} */
+/** @type {{ accountId: string, hideTimer: ReturnType<typeof setTimeout>|null } | null} */
 let volumePopover = null;
+/** Id of the light popover currently open in the overlay WebContentsView */
+let activePopoverId = null;
+/** @type {{ accountId: string, origin: string } | null} */
+let lastSitePermPopover = null;
 /** @type {Set<string>} */
 let forceSuspended = new Set();
 /** @type {object | null} */
@@ -955,69 +959,57 @@ function showTabsOverflowMenu() {
   if (!el.btnTabsMore || !state.workspaces?.length) return;
   closeMenus();
   const r = el.btnTabsMore.getBoundingClientRect();
-  const menu = document.createElement('div');
-  menu.className = 'context-menu';
-  menu.setAttribute('role', 'menu');
-  menu.style.left = `${Math.max(8, r.left)}px`;
-  menu.style.top = `${r.bottom + 4}px`;
-  for (const ws of state.workspaces) {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.setAttribute('role', 'menuitem');
-    item.textContent = ws.name + (ws.id === state.activeWorkspaceId ? ' ✓' : '');
-    item.addEventListener('click', async () => {
-      closeMenus();
-      applyState(await window.multiheiz.setWorkspace(ws.id));
-    });
-    menu.appendChild(item);
-  }
-  document.body.appendChild(menu);
-  pushOverlay('context-menu');
+  const items = (state.workspaces || []).map((ws) => ({
+    id: 'ws:' + ws.id,
+    label: ws.name + (ws.id === state.activeWorkspaceId ? ' ✓' : ''),
+    data: { workspaceId: ws.id },
+  }));
+  showLightPopover({
+    id: 'context-menu',
+    kind: 'menu',
+    prefer: 'below',
+    anchor: {
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+    },
+    data: { items },
+  });
 }
 
 function showWsMenu(x, y, ws) {
   closeMenus();
-  const menu = document.createElement('div');
-  menu.className = 'context-menu';
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
-
-  const rename = document.createElement('button');
-  rename.type = 'button';
-  rename.textContent = 'Renomear';
-  rename.addEventListener('click', () => {
-    closeMenus();
-    openWorkspaceDialog(ws);
-  });
-  menu.appendChild(rename);
-
+  const items = [{ id: 'rename', label: 'Renomear', data: { workspaceId: ws.id } }];
   if (state.workspaces.length > 1) {
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.textContent = 'Excluir categoria';
-    del.addEventListener('click', () => {
-      closeMenus();
-      const n = state.accounts.filter((a) => a.workspaceId === ws.id).length;
-      confirmAction(workspaceDeleteConfirmMessage(ws.name, n), async () => {
-        applyState(await window.multiheiz.deleteWorkspace(ws.id));
-      });
-    });
-    menu.appendChild(del);
+    items.push({ id: 'delete', label: 'Excluir categoria', data: { workspaceId: ws.id } });
   }
-
-  document.body.appendChild(menu);
-  pushOverlay('context-menu');
+  showLightPopover({
+    id: 'context-menu',
+    kind: 'menu',
+    prefer: 'below',
+    anchor: { x: Math.round(x), y: Math.round(y), width: 0, height: 0 },
+    data: { items },
+  });
 }
 
 function closeMenus() {
-  const hadCtx = document.querySelectorAll('.context-menu').length > 0;
-  const hadExt = document.querySelectorAll('.panel-ext-menu').length > 0;
   document.querySelectorAll('.context-menu').forEach((n) => n.remove());
   document.querySelectorAll('.panel-ext-menu').forEach((n) => n.remove());
   document.querySelectorAll('.panel-site-perm-popover').forEach((n) => n.remove());
-  closeVolumePopover();
-  if (hadCtx) popOverlay('context-menu');
-  if (hadExt) popOverlay('panel-ext-menu');
+  const lightIds = new Set([
+    'volume-popover',
+    'context-menu',
+    'panel-ext-menu',
+    'site-perm-popover',
+    'layout-select',
+    'mem-popover',
+  ]);
+  if (activePopoverId && lightIds.has(activePopoverId)) {
+    hideLightPopover('close-menus');
+  } else {
+    closeVolumePopover();
+  }
 }
 
 function normalizeVolumeUi(v) {
@@ -1055,41 +1047,177 @@ async function setAccountVolume(accountId, percent) {
   return (res && res.volume != null ? res.volume : p);
 }
 
+function collectPopoverTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  const pick = (name, fallback) => {
+    const v = cs.getPropertyValue(name).trim();
+    return v || fallback;
+  };
+  return {
+    bg: pick('--bg', '#1a222c'),
+    'bg-elev': pick('--bg-elev', '#243040'),
+    surface: pick('--surface', '#243040'),
+    text: pick('--text', '#e8eef4'),
+    muted: pick('--muted', '#8a97a8'),
+    border: pick('--border', '#3a4654'),
+    accent: pick('--accent', '#2bb8a6'),
+    'panel-header-bg': pick('--panel-header-bg', '#1e2834'),
+  };
+}
+
+/**
+ * Show a light popover in the dedicated overlay WebContentsView (no panel freeze).
+ * @param {object} opts
+ */
+async function showLightPopover(opts) {
+  const id = String((opts && opts.id) || '').trim();
+  if (!id) return { ok: false };
+  activePopoverId = id;
+  const theme = collectPopoverTheme();
+  const res = await window.multiheiz.popoverShow({
+    ...opts,
+    id,
+    theme: { ...theme, ...(opts.theme || {}) },
+  });
+  if (!res || !res.ok) {
+    if (activePopoverId === id) activePopoverId = null;
+  }
+  return res;
+}
+
+async function hideLightPopover(reason) {
+  activePopoverId = null;
+  if (volumePopover && volumePopover.hideTimer) {
+    clearTimeout(volumePopover.hideTimer);
+    volumePopover.hideTimer = null;
+  }
+  volumePopover = null;
+  await window.multiheiz.popoverHide(reason || '');
+}
+
 function closeVolumePopover() {
   if (volumePopover && volumePopover.hideTimer) {
     clearTimeout(volumePopover.hideTimer);
     volumePopover.hideTimer = null;
   }
-  const existing = document.querySelectorAll('.volume-popover');
-  if (existing.length) {
-    existing.forEach((n) => n.remove());
-    popOverlay('volume-popover');
-  }
   volumePopover = null;
+  if (activePopoverId === 'volume-popover') {
+    activePopoverId = null;
+    window.multiheiz.popoverHide('volume-close');
+  }
+  document.querySelectorAll('.volume-popover').forEach((n) => n.remove());
 }
 
 function refreshVolumePopoverUi() {
-  if (!volumePopover || !volumePopover.el) return;
-  const pop = volumePopover.el;
+  if (!volumePopover) return;
   const accountId = volumePopover.accountId;
-  const pct = accountVolumePercent(accountId);
-  const muted = accountIsMuted(accountId);
-  const valueEl = pop.querySelector('[data-role="volume-value"]');
-  const slider = /** @type {HTMLInputElement|null} */ (pop.querySelector('[data-role="volume-slider"]'));
-  const muteBtn = pop.querySelector('[data-role="volume-mute"]');
-  if (valueEl) {
-    valueEl.textContent = muted ? 'Mudo' : `${pct}%`;
-    valueEl.classList.toggle('is-boost', !muted && pct > 100);
+  window.multiheiz.popoverUpdate({
+    percent: accountVolumePercent(accountId),
+    muted: accountIsMuted(accountId),
+    accountId,
+  });
+}
+
+function cancelVolumeHide() {
+  if (volumePopover && volumePopover.hideTimer) {
+    clearTimeout(volumePopover.hideTimer);
+    volumePopover.hideTimer = null;
   }
-  if (slider) {
-    slider.value = String(pct);
-    slider.classList.toggle('is-boost', pct > 100);
+}
+
+/**
+ * Actions from the popover overlay WebContentsView.
+ * @param {object} payload
+ */
+async function handlePopoverAction(payload) {
+  if (!payload || !payload.type) return;
+  const type = payload.type;
+  if (type === 'volume-set' || type === 'volume-input') {
+    const id = payload.accountId || (volumePopover && volumePopover.accountId);
+    if (!id) return;
+    await setAccountVolume(id, payload.percent);
+    return;
   }
-  if (muteBtn) {
-    muteBtn.innerHTML = svg(muted ? ICO.mute : ICO.unmute);
-    muteBtn.title = muted ? 'Ativar som' : 'Mudo';
-    muteBtn.setAttribute('aria-label', muteBtn.title);
+  if (type === 'volume-mute') {
+    const id = payload.accountId || (volumePopover && volumePopover.accountId);
+    if (!id) return;
+    applyState(await window.multiheiz.panelSetMuted(id, !!payload.muted));
+    refreshVolumePopoverUi();
+    return;
   }
+  if (type === 'layout-select') {
+    const chosen = normalizeLayout(payload.value);
+    if (el.layoutSelect) el.layoutSelect.value = chosen;
+    applyState(await window.multiheiz.setLayout(chosen));
+    return;
+  }
+  if (type === 'menu-click') {
+    const itemId = payload.itemId || '';
+    const data = payload.data || {};
+    if (itemId.startsWith('ws:') || (data && data.workspaceId && itemId.startsWith('ws:'))) {
+      const wsId = data.workspaceId || itemId.slice(3);
+      applyState(await window.multiheiz.setWorkspace(wsId));
+      return;
+    }
+    if (itemId === 'rename' && data.workspaceId) {
+      const ws = (state.workspaces || []).find((w) => w.id === data.workspaceId);
+      if (ws) openWorkspaceDialog(ws);
+      return;
+    }
+    if (itemId === 'delete' && data.workspaceId) {
+      const ws = (state.workspaces || []).find((w) => w.id === data.workspaceId);
+      if (!ws) return;
+      const n = state.accounts.filter((a) => a.workspaceId === ws.id).length;
+      confirmAction(workspaceDeleteConfirmMessage(ws.name, n), async () => {
+        applyState(await window.multiheiz.deleteWorkspace(ws.id));
+      });
+      return;
+    }
+    return;
+  }
+  if (type === 'perm-set') {
+    const res = await window.multiheiz.permissionsSet(
+      payload.accountId,
+      payload.origin,
+      payload.permission,
+      payload.value
+    );
+    if (res && res.needsReload) showToast('Recarregue a página para aplicar.');
+    return;
+  }
+  if (type === 'perm-reset') {
+    await window.multiheiz.permissionsReset(payload.accountId, payload.origin);
+    showToast('Permissões redefinidas. O site perguntará de novo.');
+    return;
+  }
+  if (type === 'ext-open-action') {
+    const r = await window.multiheiz.extensionsOpenAction(
+      payload.extId,
+      payload.accountId,
+      0,
+      0
+    );
+    if (r && !r.ok) showToast(r.error || 'Não foi possível abrir o popup');
+    return;
+  }
+  if (type === 'ext-set-active') {
+    const r = await window.multiheiz.extensionsSetActiveOnPanel(
+      payload.extId,
+      payload.accountId,
+      !!payload.active
+    );
+    if (r && r.note) showToast(r.note);
+    return;
+  }
+  if (type === 'ext-manage') {
+    openSettingsSection('extensoes');
+  }
+}
+
+function scheduleVolumeHide() {
+  cancelVolumeHide();
+  if (!volumePopover) return;
+  volumePopover.hideTimer = setTimeout(() => closeVolumePopover(), 280);
 }
 
 /**
@@ -1098,119 +1226,40 @@ function refreshVolumePopoverUi() {
  * @param {number} [y]
  */
 function openVolumePopover(accountId, anchorRectOrX, y) {
-  closeVolumePopover();
-  let left = 0;
-  let top = 0;
+  closeMenus();
+  let anchor;
   if (typeof anchorRectOrX === 'object' && anchorRectOrX && 'left' in anchorRectOrX) {
     const r = /** @type {DOMRect} */ (anchorRectOrX);
-    left = Math.round(r.left);
-    top = Math.round(r.bottom + 4);
+    anchor = {
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+    };
   } else {
-    left = Math.round(Number(anchorRectOrX) || 0);
-    top = Math.round(Number(y) || 0);
+    anchor = {
+      x: Math.round(Number(anchorRectOrX) || 0),
+      y: Math.round(Number(y) || 0),
+      width: 0,
+      height: 0,
+    };
   }
-  const pop = document.createElement('div');
-  pop.className = 'volume-popover';
-  pop.dataset.role = 'volume-popover';
-  pop.dataset.accountId = accountId;
-  pop.setAttribute('role', 'dialog');
-  pop.setAttribute('aria-label', 'Volume da janela');
-
   const pct = accountVolumePercent(accountId);
   const muted = accountIsMuted(accountId);
-
-  const head = document.createElement('div');
-  head.className = 'volume-popover-head';
-  const title = document.createElement('span');
-  title.className = 'volume-popover-title';
-  title.textContent = 'Volume';
-  const valueEl = document.createElement('span');
-  valueEl.className = 'volume-popover-value' + (!muted && pct > 100 ? ' is-boost' : '');
-  valueEl.dataset.role = 'volume-value';
-  valueEl.textContent = muted ? 'Mudo' : `${pct}%`;
-  const muteBtn = document.createElement('button');
-  muteBtn.type = 'button';
-  muteBtn.className = 'btn icon ghost volume-popover-mute';
-  muteBtn.dataset.role = 'volume-mute';
-  muteBtn.title = muted ? 'Ativar som' : 'Mudo';
-  muteBtn.setAttribute('aria-label', muteBtn.title);
-  muteBtn.innerHTML = svg(muted ? ICO.mute : ICO.unmute);
-  muteBtn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    applyState(await window.multiheiz.panelSetMuted(accountId, !accountIsMuted(accountId)));
-    refreshVolumePopoverUi();
-  });
-  head.append(title, valueEl, muteBtn);
-
-  const track = document.createElement('div');
-  track.className = 'volume-popover-track';
-  const trackBg = document.createElement('div');
-  trackBg.className = 'volume-popover-track-bg';
-  const mark = document.createElement('div');
-  mark.className = 'volume-popover-track-mark';
-  mark.title = '100%';
-  const slider = document.createElement('input');
-  slider.type = 'range';
-  slider.min = '0';
-  slider.max = '200';
-  slider.step = '1';
-  slider.value = String(pct);
-  slider.className = 'volume-popover-slider' + (pct > 100 ? ' is-boost' : '');
-  slider.dataset.role = 'volume-slider';
-  slider.setAttribute('aria-label', 'Volume 0 a 200 por cento');
-  slider.addEventListener('input', () => {
-    const v = normalizeVolumeUi(slider.value);
-    valueEl.textContent = `${v}%`;
-    valueEl.classList.toggle('is-boost', v > 100);
-    slider.classList.toggle('is-boost', v > 100);
-  });
-  slider.addEventListener('change', async () => {
-    await setAccountVolume(accountId, slider.value);
-  });
-  slider.addEventListener('dblclick', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    slider.value = '100';
-    await setAccountVolume(accountId, 100);
-  });
-  track.append(trackBg, mark, slider);
-
-  const labels = document.createElement('div');
-  labels.className = 'volume-popover-labels';
-  labels.innerHTML = '<span>0%</span><span>100%</span><span class="boost-label">Reforço 200%</span>';
-
-  pop.append(head, track, labels);
-  pop.style.left = `${Math.max(8, Math.min(left, window.innerWidth - 236))}px`;
-  pop.style.top = `${Math.max(8, Math.min(top, window.innerHeight - 120))}px`;
-
-  const onWheel = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const step = e.shiftKey ? 5 : 1;
-    const cur = accountVolumePercent(accountId);
-    const next = normalizeVolumeUi(cur + (e.deltaY < 0 ? step : -step));
-    slider.value = String(next);
-    await setAccountVolume(accountId, next);
-  };
-  pop.addEventListener('wheel', onWheel, { passive: false });
-
-  const cancelHide = () => {
-    if (volumePopover && volumePopover.hideTimer) {
-      clearTimeout(volumePopover.hideTimer);
-      volumePopover.hideTimer = null;
+  volumePopover = { accountId, hideTimer: null };
+  activePopoverId = 'volume-popover';
+  showLightPopover({
+    id: 'volume-popover',
+    kind: 'volume',
+    prefer: 'below',
+    anchor,
+    data: { accountId, percent: pct, muted },
+  }).then((res) => {
+    if (!res || !res.ok) {
+      volumePopover = null;
+      if (activePopoverId === 'volume-popover') activePopoverId = null;
     }
-  };
-  const scheduleHide = () => {
-    cancelHide();
-    if (!volumePopover) return;
-    volumePopover.hideTimer = setTimeout(() => closeVolumePopover(), 280);
-  };
-  pop.addEventListener('mouseenter', cancelHide);
-  pop.addEventListener('mouseleave', scheduleHide);
-
-  document.body.appendChild(pop);
-  pushOverlay('volume-popover');
-  volumePopover = { accountId, el: pop, hideTimer: null };
+  });
 }
 
 /**
@@ -1227,6 +1276,7 @@ function bindVolumeHover(anchor, accountId) {
   };
   anchor.addEventListener('mouseenter', () => {
     clearShow();
+    cancelVolumeHide();
     showTimer = setTimeout(() => {
       openVolumePopover(accountId, anchor.getBoundingClientRect());
     }, 180);
@@ -1234,8 +1284,7 @@ function bindVolumeHover(anchor, accountId) {
   anchor.addEventListener('mouseleave', () => {
     clearShow();
     if (volumePopover && volumePopover.accountId === accountId) {
-      if (volumePopover.hideTimer) clearTimeout(volumePopover.hideTimer);
-      volumePopover.hideTimer = setTimeout(() => closeVolumePopover(), 280);
+      scheduleVolumeHide();
     }
   });
   anchor.addEventListener('focus', () => {
@@ -1247,106 +1296,24 @@ async function openPanelExtensionsMenu(accountId, x, y) {
   closeMenus();
   if (!window.multiheiz.extensionsForPanel) return;
   const list = await window.multiheiz.extensionsForPanel(accountId);
-  const menu = document.createElement('div');
-  menu.className = 'panel-ext-menu';
-  menu.style.left = Math.max(8, x) + 'px';
-  menu.style.top = Math.max(8, y) + 'px';
-  const badge = document.createElement('div');
-  badge.className = 'badge-experimental panel-ext-badge';
-  badge.textContent = 'Experimental (em testes)';
-  menu.appendChild(badge);
-
-  if (!list || !list.length) {
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    empty.textContent = 'Nenhuma extensão instalada';
-    menu.appendChild(empty);
-    const addBtn = document.createElement('button');
-    addBtn.type = 'button';
-    addBtn.className = 'panel-ext-manage';
-    addBtn.textContent = 'Adicionar extensão';
-    addBtn.addEventListener('click', () => {
-      closeMenus();
-      openSettingsSection('extensoes');
-    });
-    menu.appendChild(addBtn);
-  } else {
-    for (const ext of list) {
-      const row = document.createElement('div');
-      row.className = 'panel-ext-row' + (ext.activeOnPanel ? '' : ' inactive');
-      if (ext.iconDataUrl) {
-        const img = document.createElement('img');
-        img.src = ext.iconDataUrl;
-        img.alt = '';
-        row.appendChild(img);
-      }
-      const nameBtn = document.createElement('button');
-      nameBtn.type = 'button';
-      nameBtn.className = 'panel-ext-name';
-      nameBtn.textContent = ext.name || ext.id;
-      nameBtn.disabled = !ext.activeOnPanel || !ext.hasAction;
-      nameBtn.title = ext.hasAction
-        ? 'Abrir popup da extensão'
-        : 'Esta extensão não tem popup';
-      nameBtn.addEventListener('click', async () => {
-        closeMenus();
-        const r = await window.multiheiz.extensionsOpenAction(ext.id, accountId, x, y);
-        if (r && !r.ok) showToast(r.error || 'Não foi possível abrir o popup');
-      });
-      row.appendChild(nameBtn);
-
-      const swLabel = document.createElement('label');
-      swLabel.className = 'panel-ext-switch';
-      swLabel.title = 'Ativa nesta janela';
-      const sw = document.createElement('input');
-      sw.type = 'checkbox';
-      sw.checked = !!ext.activeOnPanel;
-      sw.addEventListener('change', async () => {
-        const r = await window.multiheiz.extensionsSetActiveOnPanel(
-          ext.id,
-          accountId,
-          sw.checked
-        );
-        if (r && r.note) showToast(r.note);
-        closeMenus();
-        openPanelExtensionsMenu(accountId, x, y);
-      });
-      swLabel.append(sw, document.createTextNode(' Nesta janela'));
-      row.appendChild(swLabel);
-      menu.appendChild(row);
-    }
-  }
-
-  const footer = document.createElement('button');
-  footer.type = 'button';
-  footer.className = 'panel-ext-manage';
-  footer.textContent = 'Gerenciar extensões';
-  footer.addEventListener('click', () => {
-    closeMenus();
-    openSettingsSection('extensoes');
+  showLightPopover({
+    id: 'panel-ext-menu',
+    kind: 'ext-menu',
+    prefer: 'below',
+    anchor: { x: Math.round(x), y: Math.round(y), width: 0, height: 0 },
+    data: {
+      accountId,
+      list: (list || []).map((ext) => ({
+        id: ext.id,
+        name: ext.name,
+        iconDataUrl: ext.iconDataUrl || null,
+        activeOnPanel: !!ext.activeOnPanel,
+        hasAction: !!ext.hasAction,
+      })),
+      anchorX: x,
+      anchorY: y,
+    },
   });
-  menu.appendChild(footer);
-
-  document.body.appendChild(menu);
-  pushOverlay('panel-ext-menu');
-  const onDoc = (ev) => {
-    if (!menu.contains(ev.target)) {
-      closeMenus();
-      document.removeEventListener('mousedown', onDoc, true);
-      document.removeEventListener('keydown', onKey, true);
-    }
-  };
-  const onKey = (ev) => {
-    if (ev.key === 'Escape') {
-      closeMenus();
-      document.removeEventListener('mousedown', onDoc, true);
-      document.removeEventListener('keydown', onKey, true);
-    }
-  };
-  setTimeout(() => {
-    document.addEventListener('mousedown', onDoc, true);
-    document.addEventListener('keydown', onKey, true);
-  }, 0);
 }
 
 function openSettingsSection(section) {
@@ -2011,76 +1978,21 @@ async function openSitePermissionsPopover(accountId, x, y) {
 
   const data = await window.multiheiz.permissionsGet(accountId, origin);
   const states = (data && data.states) || {};
-
-  const pop = document.createElement('div');
-  pop.className = 'panel-site-perm-popover';
-  pop.dataset.role = 'site-perm-popover';
-  pop.style.left = `${Math.max(8, x)}px`;
-  pop.style.top = `${Math.max(8, y)}px`;
-
-  const title = document.createElement('div');
-  title.className = 'panel-site-perm-origin';
-  title.textContent = origin;
-
-  const list = document.createElement('div');
-  list.className = 'panel-site-perm-list';
-
   const keys = Object.keys(SITE_PERM_LABELS);
-  for (const key of keys) {
-    const row = document.createElement('div');
-    row.className = 'panel-site-perm-row';
-    const lab = document.createElement('span');
-    lab.className = 'panel-site-perm-name';
-    lab.textContent = SITE_PERM_LABELS[key];
-    const sel = document.createElement('select');
-    sel.className = 'panel-site-perm-select';
-    sel.dataset.permission = key;
-    for (const [val, text] of [
-      ['ask', 'Perguntar'],
-      ['allow', 'Permitir'],
-      ['deny', 'Bloquear'],
-    ]) {
-      const opt = document.createElement('option');
-      opt.value = val;
-      opt.textContent = text;
-      if ((states[key] || 'ask') === val) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    sel.addEventListener('change', async () => {
-      const res = await window.multiheiz.permissionsSet(
-        accountId,
-        origin,
-        key,
-        sel.value
-      );
-      if (res && res.needsReload) {
-        showToast('Recarregue a página para aplicar.');
-      }
-    });
-    row.append(lab, sel);
-    list.appendChild(row);
-  }
-
-  const resetBtn = document.createElement('button');
-  resetBtn.type = 'button';
-  resetBtn.className = 'btn ghost panel-site-perm-reset';
-  resetBtn.dataset.role = 'perm-reset';
-  resetBtn.textContent = 'Redefinir permissões';
-  resetBtn.addEventListener('click', async () => {
-    await window.multiheiz.permissionsReset(accountId, origin);
-    pop.remove();
-    showToast('Permissões redefinidas. O site perguntará de novo.');
+  lastSitePermPopover = { accountId, origin };
+  showLightPopover({
+    id: 'site-perm-popover',
+    kind: 'site-perm',
+    prefer: 'below',
+    anchor: { x: Math.round(x), y: Math.round(y), width: 0, height: 0 },
+    data: {
+      accountId,
+      origin,
+      states,
+      keys,
+      labels: { ...SITE_PERM_LABELS },
+    },
   });
-
-  pop.append(title, list, resetBtn);
-  document.body.appendChild(pop);
-
-  const onDoc = (ev) => {
-    if (pop.contains(ev.target)) return;
-    pop.remove();
-    document.removeEventListener('mousedown', onDoc, true);
-  };
-  setTimeout(() => document.addEventListener('mousedown', onDoc, true), 0);
 }
 
 /**
@@ -2735,15 +2647,44 @@ function confirmAction(message, onOk) {
 }
 
 function openMemPopover() {
-  el.memPopover.classList.remove('hidden');
-  pushOverlay('mem-popover');
-  renderMemPopover();
+  // Prefer overlay WebContentsView so panels stay live (no snapshot/park).
+  const btn = el.btnMemTotal || document.getElementById('btn-mem-total');
+  const r = btn ? btn.getBoundingClientRect() : { left: 8, top: window.innerHeight - 40, width: 80, height: 28 };
+  const rows = [];
+  let totalLabel = 'Coletando métricas…';
+  if (latestMetrics) {
+    const metric = metricName(latestMetrics);
+    totalLabel = `${latestMetrics.totalRamMb} MB (${metric})`;
+    for (const p of latestMetrics.panels || []) {
+      rows.push({
+        label: p.name,
+        value: `${p.ramMb} MB · ${p.cpu}%`,
+      });
+    }
+  }
+  // Keep legacy DOM hidden — content lives in the overlay view
+  if (el.memPopover) el.memPopover.classList.add('hidden');
+  showLightPopover({
+    id: 'mem-popover',
+    kind: 'mem',
+    prefer: 'above',
+    anchor: {
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+    },
+    data: { totalLabel, rows },
+  });
 }
 
 function closeMemPopover() {
-  if (el.memPopover.classList.contains('hidden')) return;
-  el.memPopover.classList.add('hidden');
-  popOverlay('mem-popover');
+  if (el.memPopover && !el.memPopover.classList.contains('hidden')) {
+    el.memPopover.classList.add('hidden');
+  }
+  if (activePopoverId === 'mem-popover') {
+    hideLightPopover('mem-close');
+  }
 }
 
 /* ---- Livre layout drag/resize ---- */
@@ -3084,10 +3025,12 @@ if (el.btnBannerLock) {
 
 el.btnMemTotal.addEventListener('click', (e) => {
   e.stopPropagation();
-  if (el.memPopover.classList.contains('hidden')) openMemPopover();
-  else closeMemPopover();
+  if (activePopoverId === 'mem-popover') closeMemPopover();
+  else openMemPopover();
 });
-el.btnMemClose.addEventListener('click', () => closeMemPopover());
+if (el.btnMemClose) {
+  el.btnMemClose.addEventListener('click', () => closeMemPopover());
+}
 
 el.dlgAccount.addEventListener('close', () => popOverlay('dlg-account'));
 el.dlgWorkspace.addEventListener('close', () => popOverlay('dlg-workspace'));
@@ -3190,9 +3133,42 @@ if (el.dlgProxy) {
   }
 }
 
-el.layoutSelect.addEventListener('mousedown', () => pushOverlay('layout-select'));
-el.layoutSelect.addEventListener('focus', () => pushOverlay('layout-select'));
-el.layoutSelect.addEventListener('blur', () => popOverlay('layout-select'));
+function openLayoutSelectPopover() {
+  if (!el.layoutSelect) return;
+  const r = el.layoutSelect.getBoundingClientRect();
+  const options = [...el.layoutSelect.options].map((o) => ({
+    value: o.value,
+    label: String(o.textContent || o.value).trim(),
+  }));
+  showLightPopover({
+    id: 'layout-select',
+    kind: 'layout',
+    prefer: 'below',
+    anchor: {
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+    },
+    data: { options, value: el.layoutSelect.value },
+  });
+}
+
+el.layoutSelect.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (activePopoverId === 'layout-select') {
+    hideLightPopover('layout-toggle');
+    return;
+  }
+  openLayoutSelectPopover();
+});
+el.layoutSelect.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    openLayoutSelectPopover();
+  }
+});
 
 el.btnFreeMem.addEventListener('click', async () => {
   el.btnFreeMem.disabled = true;
@@ -3215,7 +3191,7 @@ el.btnFreeMem.addEventListener('click', async () => {
 });
 
 el.layoutSelect.addEventListener('change', async () => {
-  popOverlay('layout-select');
+  if (activePopoverId === 'layout-select') hideLightPopover('layout-change');
   const chosen = normalizeLayout(el.layoutSelect.value);
   applyState(await window.multiheiz.setLayout(chosen));
 });
@@ -3394,28 +3370,51 @@ if (typeof ResizeObserver === 'function') {
 })();
 
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.context-menu')) {
-    // Defer so a same-tick opener can attach the menu before we tear it down
-    setTimeout(() => closeMenus(), 0);
+  if (e.target.closest('#layout-select') || e.target.closest('#btn-mem-total')) return;
+  if (e.target.closest('[data-role="panel-volume"]') || e.target.closest('[data-role="sidebar-volume"]')) {
+    return;
   }
-  if (
-    !el.memPopover.classList.contains('hidden') &&
-    !e.target.closest('#mem-popover') &&
-    !e.target.closest('#btn-mem-total')
-  ) {
-    closeMemPopover();
+  // Click on chrome outside light popovers closes them (panels close via overlay blur).
+  if (activePopoverId) {
+    setTimeout(() => {
+      if (activePopoverId) hideLightPopover('chrome-click');
+    }, 0);
   }
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeMenus();
+  if (e.key === 'Escape') {
+    if (activePopoverId) hideLightPopover('escape');
+    else closeMenus();
+  }
 });
 
 window.multiheiz.onEvent((payload) => {
   if (!payload) return;
+  if (payload.type === 'popover:pointer') {
+    if (payload.phase === 'enter') cancelVolumeHide();
+    else if (payload.phase === 'leave') scheduleVolumeHide();
+    return;
+  }
+  if (payload.type === 'popover:close-request' || payload.type === 'popover:closed') {
+    if (payload.id === 'volume-popover') {
+      if (volumePopover && volumePopover.hideTimer) clearTimeout(volumePopover.hideTimer);
+      volumePopover = null;
+    }
+    if (activePopoverId === payload.id) activePopoverId = null;
+    return;
+  }
+  if (payload.type === 'popover:action') {
+    handlePopoverAction(payload);
+    return;
+  }
   if (payload.type === 'state:changed' && payload.state) {
+    const prevWs = state && state.activeWorkspaceId;
     applyState(payload.state);
     scheduleSync();
+    if (prevWs && state.activeWorkspaceId !== prevWs && activePopoverId) {
+      hideLightPopover('workspace-change');
+    }
     return;
   }
   if (payload.type === 'ui:open-proxy' && payload.accountId) {
@@ -4467,27 +4466,46 @@ window.__multiheizUi = {
     );
     const r = btn ? btn.getBoundingClientRect() : { left: 80, bottom: 80 };
     await openSitePermissionsPopover(id, Math.round(r.left), Math.round(r.bottom + 4));
-    await new Promise((res) => setTimeout(res, 80));
-    const pop = document.querySelector('.panel-site-perm-popover');
-    if (!pop) return null;
-    const rows = [...pop.querySelectorAll('.panel-site-perm-row')].map((row) => {
-      const name = row.querySelector('.panel-site-perm-name');
-      const sel = row.querySelector('select');
-      return {
-        name: name ? name.textContent : '',
-        permission: sel ? sel.dataset.permission : '',
-        value: sel ? sel.value : '',
-      };
-    });
+    await new Promise((res) => setTimeout(res, 150));
+    const dbg = await window.multiheiz.popoverGet();
+    if (!dbg || !dbg.open || dbg.kind !== 'site-perm') return null;
+    const nav = navState.get(id) || {};
+    const acc = (state.accounts || []).find((a) => a.id === id);
+    let origin = '';
+    for (const raw of [nav.url, acc && acc.lastUrl, acc && acc.startUrl]) {
+      try {
+        const o = new URL(String(raw || '')).origin;
+        if (o.startsWith('http://') || o.startsWith('https://')) {
+          origin = o;
+          break;
+        }
+      } catch {
+        /* next */
+      }
+    }
+    const data = origin ? await window.multiheiz.permissionsGet(id, origin) : null;
+    const states = (data && data.states) || {};
+    const keys = Object.keys(SITE_PERM_LABELS);
     return {
-      origin: (pop.querySelector('.panel-site-perm-origin') || {}).textContent || '',
-      rows,
+      origin,
+      rows: keys.map((k) => ({
+        name: SITE_PERM_LABELS[k],
+        permission: k,
+        value: states[k] || 'ask',
+      })),
+      overlay: true,
+      bounds: dbg.bounds,
     };
   },
-  clickPermissionReset: () => {
-    const btn = document.querySelector('.panel-site-perm-popover [data-role="perm-reset"]');
-    if (btn) btn.click();
-    return !!btn;
+  clickPermissionReset: async () => {
+    const dbg = await window.multiheiz.popoverGet();
+    if (!dbg || !dbg.open || dbg.kind !== 'site-perm') return false;
+    const ctx = lastSitePermPopover;
+    if (ctx && ctx.accountId && ctx.origin) {
+      await window.multiheiz.permissionsReset(ctx.accountId, ctx.origin);
+    }
+    await hideLightPopover('perm-reset-test');
+    return true;
   },
   getMediaUseIcons: (accountId) => {
     const id = accountId || focusedAccountId;
@@ -4651,7 +4669,7 @@ Object.assign(window.__multiheizUi, {
   closeManager: () => window.MultiHeizV16 && window.MultiHeizV16.closeManager(),
   favoriteCurrent: () => window.MultiHeizV16 && window.MultiHeizV16.favoriteCurrentUrl(),
   getActiveModule: () => (window.MultiHeizV16 && window.MultiHeizV16.getActiveModule()) || null,
-  openVolumePopover: (accountId) => {
+  openVolumePopover: async (accountId) => {
     const id = String(accountId || '');
     const anchor =
       document.querySelector(`.panel-slot[data-account-id="${id}"] [data-role="panel-volume"]`) ||
@@ -4661,23 +4679,31 @@ Object.assign(window.__multiheizUi, {
     } else {
       openVolumePopover(id, Math.round(window.innerWidth / 2 - 110), 120);
     }
-    return { ok: true, percent: accountVolumePercent(id), anchored: !!anchor };
+    await new Promise((r) => setTimeout(r, 120));
+    const dbg = await window.multiheiz.popoverGet();
+    return {
+      ok: true,
+      percent: accountVolumePercent(id),
+      anchored: !!anchor,
+      overlay: !!(dbg && dbg.open),
+    };
   },
   closeVolumePopover: () => {
     closeVolumePopover();
     return true;
   },
-  getVolumePopover: () => {
-    const pop = document.querySelector('.volume-popover');
-    if (!pop) return null;
-    const slider = /** @type {HTMLInputElement|null} */ (pop.querySelector('[data-role="volume-slider"]'));
-    const valueEl = pop.querySelector('[data-role="volume-value"]');
+  getVolumePopover: async () => {
+    if (!volumePopover && activePopoverId !== 'volume-popover') return null;
+    const id = (volumePopover && volumePopover.accountId) || '';
+    const pct = accountVolumePercent(id);
+    const dbg = await window.multiheiz.popoverGet();
     return {
-      accountId: pop.dataset.accountId || '',
-      percent: slider ? normalizeVolumeUi(slider.value) : accountVolumePercent(pop.dataset.accountId || ''),
-      label: valueEl ? valueEl.textContent : '',
-      isBoost: !!(slider && slider.classList.contains('is-boost')),
-      open: true,
+      accountId: id,
+      percent: pct,
+      label: accountIsMuted(id) ? 'Mudo' : `${pct}%`,
+      isBoost: pct > 100 && !accountIsMuted(id),
+      open: !!(dbg && dbg.open && dbg.id === 'volume-popover'),
+      bounds: dbg && dbg.bounds,
     };
   },
   setVolumePercent: async (accountId, percent) => {
@@ -4696,6 +4722,11 @@ Object.assign(window.__multiheizUi, {
     if (!volumePopover) return { ok: false, reason: 'closed' };
     const p = await setAccountVolume(volumePopover.accountId, 100);
     return { ok: true, percent: p };
+  },
+  getPopoverOverlayDebug: async () => window.multiheiz.popoverSelftestDebug(),
+  openLayoutSelectPopover: () => {
+    openLayoutSelectPopover();
+    return true;
   },
   getAccountVolume: (accountId) => accountVolumePercent(String(accountId || '')),
   isKofiVisible: () => {

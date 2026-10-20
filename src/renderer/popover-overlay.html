@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>MultiHeiz popover</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent !important;
+    overflow: hidden;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 12px;
+    color: var(--text, #e8eef4);
+    user-select: none;
+  }
+  #root {
+    display: inline-block;
+    box-sizing: border-box;
+    max-width: 360px;
+  }
+  #root:empty { display: none; }
+
+  .volume-popover,
+  .panel-site-perm-popover,
+  .context-menu,
+  .panel-ext-menu,
+  .layout-menu,
+  .mem-popover-box {
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid var(--border, #3a4654);
+    background: var(--panel-header-bg, var(--bg, #1a222c));
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
+    color: var(--text, #e8eef4);
+  }
+
+  .volume-popover {
+    width: 220px;
+    padding: 10px 12px 12px;
+  }
+  .volume-popover-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .volume-popover-title { flex: 1; font-weight: 600; }
+  .volume-popover-value {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    min-width: 3.2em;
+    text-align: right;
+  }
+  .volume-popover-value.is-boost { color: #e8a54b; }
+  .volume-popover-mute {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .volume-popover-mute:hover { background: color-mix(in srgb, var(--text) 12%, transparent); }
+  .volume-popover-track {
+    position: relative;
+    height: 28px;
+    display: flex;
+    align-items: center;
+  }
+  .volume-popover-track-bg {
+    position: absolute;
+    left: 0; right: 0;
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(
+      to right,
+      color-mix(in srgb, var(--accent, #2bb8a6) 55%, transparent) 0%,
+      color-mix(in srgb, var(--accent, #2bb8a6) 55%, transparent) 50%,
+      color-mix(in srgb, #e8a54b 45%, transparent) 50%,
+      color-mix(in srgb, #e8a54b 45%, transparent) 100%
+    );
+    pointer-events: none;
+  }
+  .volume-popover-track-mark {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1px;
+    height: 14px;
+    transform: translate(-50%, -50%);
+    background: color-mix(in srgb, var(--text) 35%, transparent);
+    pointer-events: none;
+  }
+  .volume-popover-slider {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    margin: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    height: 28px;
+    cursor: pointer;
+  }
+  .volume-popover-slider::-webkit-slider-runnable-track {
+    height: 6px;
+    background: transparent;
+  }
+  .volume-popover-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text, #e8eef4);
+    border: 2px solid var(--panel-header-bg, var(--bg, #1a222c));
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    margin-top: -4px;
+  }
+  .volume-popover-slider.is-boost::-webkit-slider-thumb { background: #e8a54b; }
+  .volume-popover-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 2px;
+    font-size: 10px;
+    color: var(--muted, #8a97a8);
+  }
+  .volume-popover-labels .boost-label { color: #e8a54b; }
+
+  .panel-site-perm-popover {
+    min-width: 260px;
+    max-width: 340px;
+    padding: 10px 12px;
+  }
+  .panel-site-perm-origin {
+    font-weight: 600;
+    margin-bottom: 8px;
+    word-break: break-all;
+  }
+  .panel-site-perm-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 4px 0;
+  }
+  .panel-site-perm-name { flex: 1; }
+  .panel-site-perm-select {
+    min-width: 110px;
+    background: var(--bg, #1a222c);
+    color: var(--text, #e8eef4);
+    border: 1px solid var(--border, #3a4654);
+    border-radius: 4px;
+    padding: 2px 4px;
+  }
+  .panel-site-perm-reset {
+    margin-top: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border, #3a4654);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .context-menu, .layout-menu {
+    min-width: 140px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .context-menu button,
+  .layout-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+  }
+  .context-menu button:hover,
+  .layout-menu button:hover,
+  .layout-menu button.is-active {
+    background: color-mix(in srgb, var(--accent, #2bb8a6) 22%, transparent);
+  }
+
+  .panel-ext-menu {
+    min-width: 260px;
+    max-width: 320px;
+    padding: 8px;
+  }
+  .panel-ext-badge {
+    font-size: 10px;
+    opacity: 0.85;
+    margin-bottom: 6px;
+  }
+  .panel-ext-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+  }
+  .panel-ext-row img { width: 18px; height: 18px; }
+  .panel-ext-name {
+    flex: 1;
+    text-align: left;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+  }
+  .panel-ext-name:disabled { opacity: 0.5; cursor: default; }
+  .panel-ext-manage {
+    margin-top: 6px;
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border, #3a4654);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .empty { opacity: 0.7; padding: 6px 0; }
+
+  .mem-popover-box {
+    min-width: 240px;
+    padding: 10px 12px;
+  }
+  .mem-popover-head {
+    display: flex;
+    justify-content: space-between;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .mem-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 0;
+    font-size: 11px;
+  }
+  .mem-row .muted { color: var(--muted, #8a97a8); }
+</style>
+</head>
+<body>
+<div id="root" role="presentation"></div>
+<script>
+(function () {
+  const root = document.getElementById('root');
+  let current = null;
+
+  function applyTheme(theme) {
+    if (!theme || typeof theme !== 'object') return;
+    const r = document.documentElement;
+    for (const [k, v] of Object.entries(theme)) {
+      if (v == null || v === '') continue;
+      const name = k.startsWith('--') ? k : '--' + k;
+      r.style.setProperty(name, String(v));
+    }
+  }
+
+  function reportMeasure() {
+    const el = root.firstElementChild || root;
+    const r = el.getBoundingClientRect();
+    const w = Math.ceil(r.width) || Math.ceil(root.scrollWidth);
+    const h = Math.ceil(r.height) || Math.ceil(root.scrollHeight);
+    if (window.mhPopover && window.mhPopover.measure) {
+      window.mhPopover.measure({ width: w, height: h });
+    }
+  }
+
+  function scheduleMeasure() {
+    requestAnimationFrame(() => {
+      reportMeasure();
+      requestAnimationFrame(reportMeasure);
+    });
+  }
+
+  function svgSpeaker(muted) {
+    if (muted) {
+      return '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M16.5 12a4.5 4.5 0 0 0-2.5-4V5l-5 5H5v4h4l5 5v-3a4.5 4.5 0 0 0 2.5-4zM19.07 4.93l-1.41 1.41A7.97 7.97 0 0 1 20 12a7.97 7.97 0 0 1-2.34 5.66l1.41 1.41A9.97 9.97 0 0 0 22 12a9.97 9.97 0 0 0-2.93-7.07zM3.27 2L2 3.27 6.73 8H5v8h4l5 5v-6.73l4.25 4.25.48-.48L3.27 2z"/></svg>';
+    }
+    return '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.23v2.06A7.97 7.97 0 0 1 20 12a7.97 7.97 0 0 1-6 6.71v2.06A9.97 9.97 0 0 0 22 12a9.97 9.97 0 0 0-8-8.77z"/></svg>';
+  }
+
+  function clampVol(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 100;
+    return Math.max(0, Math.min(200, Math.round(n)));
+  }
+
+  function renderVolume(data) {
+    const pct = clampVol(data && data.percent);
+    const muted = !!(data && data.muted);
+    const accountId = (data && data.accountId) || '';
+    const pop = document.createElement('div');
+    pop.className = 'volume-popover';
+    pop.dataset.role = 'volume-popover';
+    pop.dataset.accountId = accountId;
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', 'Volume da janela');
+
+    const head = document.createElement('div');
+    head.className = 'volume-popover-head';
+    const title = document.createElement('span');
+    title.className = 'volume-popover-title';
+    title.textContent = 'Volume';
+    const valueEl = document.createElement('span');
+    valueEl.className = 'volume-popover-value' + (!muted && pct > 100 ? ' is-boost' : '');
+    valueEl.dataset.role = 'volume-value';
+    valueEl.textContent = muted ? 'Mudo' : pct + '%';
+    const muteBtn = document.createElement('button');
+    muteBtn.type = 'button';
+    muteBtn.className = 'volume-popover-mute';
+    muteBtn.dataset.role = 'volume-mute';
+    muteBtn.title = muted ? 'Ativar som' : 'Mudo';
+    muteBtn.innerHTML = svgSpeaker(muted);
+    muteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.mhPopover.action({ type: 'volume-mute', accountId, muted: !muted });
+    });
+    head.append(title, valueEl, muteBtn);
+
+    const track = document.createElement('div');
+    track.className = 'volume-popover-track';
+    const trackBg = document.createElement('div');
+    trackBg.className = 'volume-popover-track-bg';
+    const mark = document.createElement('div');
+    mark.className = 'volume-popover-track-mark';
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '0';
+    slider.max = '200';
+    slider.step = '1';
+    slider.value = String(pct);
+    slider.className = 'volume-popover-slider' + (pct > 100 ? ' is-boost' : '');
+    slider.dataset.role = 'volume-slider';
+    slider.setAttribute('aria-label', 'Volume 0 a 200 por cento');
+    slider.addEventListener('input', () => {
+      const v = clampVol(slider.value);
+      valueEl.textContent = v + '%';
+      valueEl.classList.toggle('is-boost', v > 100);
+      slider.classList.toggle('is-boost', v > 100);
+      window.mhPopover.action({ type: 'volume-input', accountId, percent: v });
+    });
+    slider.addEventListener('change', () => {
+      window.mhPopover.action({ type: 'volume-set', accountId, percent: clampVol(slider.value) });
+    });
+    slider.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      slider.value = '100';
+      window.mhPopover.action({ type: 'volume-set', accountId, percent: 100 });
+    });
+    track.append(trackBg, mark, slider);
+
+    const labels = document.createElement('div');
+    labels.className = 'volume-popover-labels';
+    labels.innerHTML = '<span>0%</span><span>100%</span><span class="boost-label">Reforço 200%</span>';
+
+    pop.append(head, track, labels);
+    pop.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const step = e.shiftKey ? 5 : 1;
+      const cur = clampVol(slider.value);
+      const next = clampVol(cur + (e.deltaY < 0 ? step : -step));
+      slider.value = String(next);
+      window.mhPopover.action({ type: 'volume-set', accountId, percent: next });
+    }, { passive: false });
+
+    return pop;
+  }
+
+  function updateVolume(data) {
+    const pop = root.querySelector('.volume-popover');
+    if (!pop) return;
+    const pct = clampVol(data && data.percent != null ? data.percent : 100);
+    const muted = !!(data && data.muted);
+    const valueEl = pop.querySelector('[data-role="volume-value"]');
+    const slider = pop.querySelector('[data-role="volume-slider"]');
+    const muteBtn = pop.querySelector('[data-role="volume-mute"]');
+    if (valueEl) {
+      valueEl.textContent = muted ? 'Mudo' : pct + '%';
+      valueEl.classList.toggle('is-boost', !muted && pct > 100);
+    }
+    if (slider) {
+      slider.value = String(pct);
+      slider.classList.toggle('is-boost', pct > 100);
+    }
+    if (muteBtn) {
+      muteBtn.innerHTML = svgSpeaker(muted);
+      muteBtn.title = muted ? 'Ativar som' : 'Mudo';
+    }
+  }
+
+  function renderSitePerm(data) {
+    const pop = document.createElement('div');
+    pop.className = 'panel-site-perm-popover';
+    pop.dataset.role = 'site-perm-popover';
+    const title = document.createElement('div');
+    title.className = 'panel-site-perm-origin';
+    title.textContent = (data && data.origin) || '';
+    const list = document.createElement('div');
+    const labels = (data && data.labels) || {};
+    const states = (data && data.states) || {};
+    const keys = (data && data.keys) || Object.keys(labels);
+    for (const key of keys) {
+      const row = document.createElement('div');
+      row.className = 'panel-site-perm-row';
+      const lab = document.createElement('span');
+      lab.className = 'panel-site-perm-name';
+      lab.textContent = labels[key] || key;
+      const sel = document.createElement('select');
+      sel.className = 'panel-site-perm-select';
+      for (const [val, text] of [['ask', 'Perguntar'], ['allow', 'Permitir'], ['deny', 'Bloquear']]) {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = text;
+        if ((states[key] || 'ask') === val) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      sel.addEventListener('change', () => {
+        window.mhPopover.action({
+          type: 'perm-set',
+          accountId: data.accountId,
+          origin: data.origin,
+          permission: key,
+          value: sel.value,
+        });
+      });
+      row.append(lab, sel);
+      list.appendChild(row);
+    }
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'panel-site-perm-reset';
+    resetBtn.textContent = 'Redefinir permissões';
+    resetBtn.addEventListener('click', () => {
+      window.mhPopover.action({
+        type: 'perm-reset',
+        accountId: data.accountId,
+        origin: data.origin,
+      });
+      window.mhPopover.close('action');
+    });
+    pop.append(title, list, resetBtn);
+    return pop;
+  }
+
+  function renderMenu(data) {
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.setAttribute('role', 'menu');
+    const items = (data && data.items) || [];
+    for (const item of items) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('role', 'menuitem');
+      btn.textContent = item.label || '';
+      btn.disabled = !!item.disabled;
+      btn.addEventListener('click', () => {
+        window.mhPopover.action({ type: 'menu-click', itemId: item.id, data: item.data || null });
+        window.mhPopover.close('action');
+      });
+      menu.appendChild(btn);
+    }
+    return menu;
+  }
+
+  function renderLayout(data) {
+    const menu = document.createElement('div');
+    menu.className = 'layout-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-label', 'Layout');
+    const options = (data && data.options) || [];
+    const value = (data && data.value) || '';
+    for (const opt of options) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('role', 'option');
+      btn.textContent = opt.label || opt.value;
+      if (opt.value === value) btn.classList.add('is-active');
+      btn.addEventListener('click', () => {
+        window.mhPopover.action({ type: 'layout-select', value: opt.value });
+        window.mhPopover.close('action');
+      });
+      menu.appendChild(btn);
+    }
+    return menu;
+  }
+
+  function renderExtMenu(data) {
+    const menu = document.createElement('div');
+    menu.className = 'panel-ext-menu';
+    const badge = document.createElement('div');
+    badge.className = 'panel-ext-badge';
+    badge.textContent = 'Experimental (em testes)';
+    menu.appendChild(badge);
+    const list = (data && data.list) || [];
+    const accountId = (data && data.accountId) || '';
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'Nenhuma extensão instalada';
+      menu.appendChild(empty);
+    } else {
+      for (const ext of list) {
+        const row = document.createElement('div');
+        row.className = 'panel-ext-row' + (ext.activeOnPanel ? '' : ' inactive');
+        if (ext.iconDataUrl) {
+          const img = document.createElement('img');
+          img.src = ext.iconDataUrl;
+          img.alt = '';
+          row.appendChild(img);
+        }
+        const nameBtn = document.createElement('button');
+        nameBtn.type = 'button';
+        nameBtn.className = 'panel-ext-name';
+        nameBtn.textContent = ext.name || ext.id;
+        nameBtn.disabled = !ext.activeOnPanel || !ext.hasAction;
+        nameBtn.addEventListener('click', () => {
+          window.mhPopover.action({
+            type: 'ext-open-action',
+            extId: ext.id,
+            accountId,
+          });
+          window.mhPopover.close('action');
+        });
+        row.appendChild(nameBtn);
+        const swLabel = document.createElement('label');
+        swLabel.className = 'panel-ext-switch';
+        const sw = document.createElement('input');
+        sw.type = 'checkbox';
+        sw.checked = !!ext.activeOnPanel;
+        sw.addEventListener('change', () => {
+          window.mhPopover.action({
+            type: 'ext-set-active',
+            extId: ext.id,
+            accountId,
+            active: sw.checked,
+          });
+        });
+        swLabel.append(sw, document.createTextNode(' Nesta janela'));
+        row.appendChild(swLabel);
+        menu.appendChild(row);
+      }
+    }
+    const footer = document.createElement('button');
+    footer.type = 'button';
+    footer.className = 'panel-ext-manage';
+    footer.textContent = 'Gerenciar extensões';
+    footer.addEventListener('click', () => {
+      window.mhPopover.action({ type: 'ext-manage' });
+      window.mhPopover.close('action');
+    });
+    menu.appendChild(footer);
+    return menu;
+  }
+
+  function renderMem(data) {
+    const box = document.createElement('div');
+    box.className = 'mem-popover-box';
+    const head = document.createElement('div');
+    head.className = 'mem-popover-head';
+    const t = document.createElement('span');
+    t.textContent = 'Memória';
+    const total = document.createElement('span');
+    total.textContent = (data && data.totalLabel) || '—';
+    head.append(t, total);
+    box.appendChild(head);
+    const rows = (data && data.rows) || [];
+    for (const row of rows) {
+      const el = document.createElement('div');
+      el.className = 'mem-row';
+      const a = document.createElement('span');
+      a.textContent = row.label || '';
+      const b = document.createElement('span');
+      b.className = 'muted';
+      b.textContent = row.value || '';
+      el.append(a, b);
+      box.appendChild(el);
+    }
+    return box;
+  }
+
+  function clear() {
+    current = null;
+    root.replaceChildren();
+  }
+
+  function render(payload) {
+    clear();
+    if (!payload || !payload.kind) return;
+    applyTheme(payload.theme);
+    current = payload;
+    let node = null;
+    if (payload.kind === 'volume') node = renderVolume(payload.data || {});
+    else if (payload.kind === 'site-perm') node = renderSitePerm(payload.data || {});
+    else if (payload.kind === 'menu') node = renderMenu(payload.data || {});
+    else if (payload.kind === 'layout') node = renderLayout(payload.data || {});
+    else if (payload.kind === 'ext-menu') node = renderExtMenu(payload.data || {});
+    else if (payload.kind === 'mem') node = renderMem(payload.data || {});
+    if (node) root.appendChild(node);
+    scheduleMeasure();
+  }
+
+  document.addEventListener('mouseenter', () => {
+    if (window.mhPopover) window.mhPopover.pointer('enter');
+  }, true);
+  document.addEventListener('mouseleave', () => {
+    if (window.mhPopover) window.mhPopover.pointer('leave');
+  }, true);
+
+  document.body.addEventListener('mouseenter', () => {
+    if (window.mhPopover) window.mhPopover.pointer('enter');
+  });
+  document.body.addEventListener('mouseleave', () => {
+    if (window.mhPopover) window.mhPopover.pointer('leave');
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      window.mhPopover.close('escape');
+    }
+  });
+
+  if (window.mhPopover) {
+    window.mhPopover.onRender(render);
+    window.mhPopover.onUpdate((data) => {
+      if (!current) return;
+      if (current.kind === 'volume') updateVolume(data || {});
+      else if (data) current.data = Object.assign({}, current.data || {}, data);
+    });
+    window.mhPopover.onClear(clear);
+    window.mhPopover.ready();
+  }
+})();
+</script>
+</body>
+</html>

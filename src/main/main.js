@@ -43,6 +43,7 @@ const catalog = require('./catalog');
 const proxy = require('./proxy');
 const doh = require('./doh');
 const settingsApply = require('./settings-apply');
+const popoverOverlay = require('./popover-overlay');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -234,6 +235,8 @@ const SELFTEST_SHEET = selftestMode === 'sheet';
 const SELFTEST_VOLUME = selftestMode === 'volume';
 const SELFTEST_SHOTS_VOLUME = selftestMode === 'shots-volume';
 const SELFTEST_LAYOUT_WORKSPACE = selftestMode === 'layout-workspace';
+const SELFTEST_POPOVER_OVERLAY = selftestMode === 'popover-overlay';
+const SELFTEST_REALHOVER_VOLUME = selftestMode === 'realhover-volume';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -279,7 +282,9 @@ const ANY_SELFTEST =
   SELFTEST_SHEET ||
   SELFTEST_VOLUME ||
   SELFTEST_SHOTS_VOLUME ||
-  SELFTEST_LAYOUT_WORKSPACE;
+  SELFTEST_LAYOUT_WORKSPACE ||
+  SELFTEST_POPOVER_OVERLAY ||
+  SELFTEST_REALHOVER_VOLUME;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -715,6 +720,13 @@ function createWindow() {
   }
 
   panels.initPanels(mainWindow, emitToRenderer, { getPublicState: publicState });
+  popoverOverlay.configure({
+    getMainWindow: () => mainWindow,
+    emitToRenderer,
+  });
+  popoverOverlay.setMainWindow(mainWindow);
+  popoverOverlay.attachWindowListeners(mainWindow);
+  popoverOverlay.ensureView();
   chromeFullscreen.init(mainWindow, emitToRenderer, notifyDisplayOrChromeChange, {
     getFocusedPanelId: () => panels.getFocusedAccountId(),
     focusPanelById: (accountId) => {
@@ -1833,6 +1845,58 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_POPOVER_OVERLAY) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runPopoverOverlaySelftest } = require('./selftest-popover-overlay');
+          runPopoverOverlaySelftest({
+            mainWindow,
+            panels,
+            popoverOverlay,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_REALHOVER_VOLUME) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runRealhoverVolumeSelftest } = require('./selftest-realhover-volume');
+          runRealhoverVolumeSelftest({
+            mainWindow,
+            panels,
+            popoverOverlay,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -2551,6 +2615,103 @@ function registerIpc() {
   });
 
   ipcMain.handle('overlay:count', () => panels.getOverlayCount());
+
+  ipcMain.handle('popover:show', async (_e, opts) => {
+    panels.clearOverlaySelftestSpies();
+    popoverOverlay.clearSelftestLog();
+    return popoverOverlay.show(opts || {});
+  });
+
+  ipcMain.handle('popover:hide', (_e, reason) => {
+    return popoverOverlay.hide(reason || '');
+  });
+
+  ipcMain.handle('popover:update', (_e, data) => {
+    return popoverOverlay.updateData(data || {});
+  });
+
+  ipcMain.handle('popover:get', () => {
+    const cur = popoverOverlay.getCurrent();
+    if (!cur) return { open: false };
+    return {
+      open: true,
+      ...cur,
+      zIndex: popoverOverlay.getZOrderIndex(),
+      childCount: (() => {
+        try {
+          return mainWindow && !mainWindow.isDestroyed()
+            ? (mainWindow.contentView.children || []).length
+            : 0;
+        } catch {
+          return 0;
+        }
+      })(),
+    };
+  });
+
+  ipcMain.handle('popover:selftest-debug', () => {
+    const cur = popoverOverlay.getCurrent();
+    const spies = panels.getOverlaySelftestSpies();
+    const overlayLog = popoverOverlay.getSelftestLog();
+    const panelStates = [];
+    const all =
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow.contentView.children || [] : [];
+    for (const id of panels.listActivePanelIds()) {
+      let bounds = null;
+      let visible = null;
+      let attached = false;
+      try {
+        const wc = panels.getPanelCapture(id);
+        for (const ch of all) {
+          try {
+            if (ch && ch.webContents === wc) {
+              attached = true;
+              bounds = ch.getBounds();
+              visible = typeof ch.getVisible === 'function' ? ch.getVisible() : true;
+              break;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      panelStates.push({ accountId: id, attached, bounds, visible });
+    }
+    return {
+      popover: cur,
+      zIndex: popoverOverlay.getZOrderIndex(),
+      spies,
+      overlayLog,
+      panelStates,
+      modalOverlayCount: panels.getModalOverlayCount(),
+      overlayCount: panels.getOverlayCount(),
+    };
+  });
+
+  ipcMain.on('popover:ready', () => {
+    /* overlay document loaded */
+  });
+
+  ipcMain.on('popover:measured', (_e, size) => {
+    popoverOverlay.applyMeasuredSize(size || {});
+  });
+
+  ipcMain.on('popover:close', (_e, payload) => {
+    popoverOverlay.requestClose((payload && payload.reason) || 'overlay');
+  });
+
+  ipcMain.on('popover:pointer', (_e, payload) => {
+    const phase = payload && payload.phase;
+    if (phase === 'enter' || phase === 'leave') {
+      popoverOverlay.forwardPointer(phase);
+    }
+  });
+
+  ipcMain.on('popover:action', (_e, payload) => {
+    popoverOverlay.forwardAction(payload || {});
+  });
 
   ipcMain.handle('menu:account', (_e, payload) => {
     return popupAccountMenu(payload || {});

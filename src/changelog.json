@@ -124,6 +124,10 @@
         {
           "tag": "Correção",
           "text": "Layout (grade, painel maximizado e modo Livre) passa a ser por área de trabalho: cada categoria guarda o seu; ao trocar de área o layout daquela área é aplicado. Nova área copia o layout da área atual. O seletor Layout na barra superior deixa de aparecer vazio."
+        },
+        {
+          "tag": "Correção",
+          "text": "Popovers e menus pequenos (volume, permissões do site, Layout, menus da barra superior/cabeçalhos, memória) deixam de congelar e borrar os painéis: abrem numa WebContentsView transparente só no retângulo do popover, sem capturar nem esconder as páginas."
         }
       ]
     },

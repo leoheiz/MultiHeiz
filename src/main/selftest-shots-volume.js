@@ -164,7 +164,13 @@ async function runShotsVolumeSelftest(ctx) {
     const pop = await rendererEval('window.__multiheizUi.getVolumePopover()');
     assert(pop && pop.open, 'popover visible for ' + name);
     const dest = path.join(outDir, name);
-    const img = await mainWindow.webContents.capturePage();
+    // Whole window (includes panel WebContentsViews + popover overlay) — must NOT be blurred.
+    let img;
+    if (typeof mainWindow.capturePage === 'function') {
+      img = await mainWindow.capturePage();
+    } else {
+      img = await mainWindow.webContents.capturePage();
+    }
     const png = img.toPNG();
     fs.writeFileSync(dest, png);
     console.log('wrote', dest, 'bytes', png.length, 'percent', pop.percent);

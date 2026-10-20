@@ -25,6 +25,7 @@ const PANEL_CHANNELS = new Set([
 ]);
 
 const INDEX_HTML = path.resolve(__dirname, '..', 'renderer', 'index.html');
+const POPOVER_HTML = path.resolve(__dirname, '..', 'renderer', 'popover-overlay.html');
 
 /** @type {(() => import('electron').BrowserWindow|null) | null} */
 let getMainWindow = null;
@@ -35,6 +36,19 @@ const extraUiWebContents = new Set();
 
 let installed = false;
 let rejectCount = 0;
+
+/**
+ * Local app UI HTML files (main chrome + popover overlay).
+ * @param {string} resolvedPath
+ * @returns {boolean}
+ */
+function isAllowedUiHtmlPath(resolvedPath) {
+  const n = path.normalize(resolvedPath).toLowerCase();
+  return (
+    n === path.normalize(INDEX_HTML).toLowerCase() ||
+    n === path.normalize(POPOVER_HTML).toLowerCase()
+  );
+}
 
 /**
  * @param {string} url
@@ -56,9 +70,7 @@ function isAppRendererUrl(url) {
   }
   try {
     const resolved = path.resolve(filePath);
-    if (resolved.toLowerCase() === INDEX_HTML.toLowerCase()) return true;
-    // Allow same file with different slash normalization
-    return path.normalize(resolved).toLowerCase() === path.normalize(INDEX_HTML).toLowerCase();
+    return isAllowedUiHtmlPath(resolved);
   } catch {
     return false;
   }
@@ -276,6 +288,7 @@ function resetRejectCountForTest() {
 module.exports = {
   PANEL_CHANNELS,
   INDEX_HTML,
+  POPOVER_HTML,
   isAppRendererUrl,
   getAppRendererFileUrl,
   isTrustedUiEvent,

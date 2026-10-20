@@ -41,6 +41,12 @@ contextBridge.exposeInMainWorld('multiheiz', {
   setOverlay: (id, active) => ipcRenderer.invoke('overlay:set', { id, active }),
   setOverlayIds: (ids) => ipcRenderer.invoke('overlay:set-ids', ids),
   getOverlayCount: () => ipcRenderer.invoke('overlay:count'),
+  /** Small popovers/menus: dedicated transparent WebContentsView (no panel freeze). */
+  popoverShow: (opts) => ipcRenderer.invoke('popover:show', opts || {}),
+  popoverHide: (reason) => ipcRenderer.invoke('popover:hide', reason || ''),
+  popoverUpdate: (data) => ipcRenderer.invoke('popover:update', data || {}),
+  popoverGet: () => ipcRenderer.invoke('popover:get'),
+  popoverSelftestDebug: () => ipcRenderer.invoke('popover:selftest-debug'),
   popupAccountMenu: (accountId, x, y) =>
     ipcRenderer.invoke('menu:account', { accountId, x, y }),
   popupTopMenu: (x, y) => ipcRenderer.invoke('menu:top', { x, y }),

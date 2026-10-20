@@ -24,9 +24,30 @@ const chromeFullscreen = require('./chrome-fullscreen');
 const extensions = require('./extensions');
 const contextMenu = require('./context-menu');
 const volumeControl = require('./volume-control');
+const popoverOverlay = require('./popover-overlay');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
+
+/**
+ * Selftest spies for park/capture/hide while small popovers are open
+ * (MULTIHEIZ_SELFTEST only).
+ * @type {Array<{ at: number, op: string, detail?: object }>}
+ */
+let overlaySelftestSpies = [];
+
+function clearOverlaySelftestSpies() {
+  overlaySelftestSpies = [];
+}
+
+function getOverlaySelftestSpies() {
+  return overlaySelftestSpies.slice();
+}
+
+function noteOverlaySpy(op, detail) {
+  if (!process.env.MULTIHEIZ_SELFTEST) return;
+  overlaySelftestSpies.push({ at: Date.now(), op, detail: detail || undefined });
+}
 
 /** Contas com áudio tocando (indicador na UI). */
 /** @type {Set<string>} */
@@ -261,8 +282,18 @@ function getOverlayCount() {
   return activeOverlays.size;
 }
 
+/** Modal overlays that park panel views + snapshots (not light popovers). */
+function getModalOverlayCount() {
+  let n = 0;
+  for (const id of activeOverlays) {
+    if (!popoverOverlay.isLightOverlayId(id)) n += 1;
+  }
+  return n;
+}
+
 function areOverlaysActive() {
-  return activeOverlays.size > 0;
+  // Light popovers use a dedicated transparent WebContentsView — never park panels.
+  return getModalOverlayCount() > 0;
 }
 
 /**
@@ -369,6 +400,7 @@ function compressSnapshotImage(img) {
  * @returns {Promise<Array<{ accountId: string, dataUrl: string|null, color: string }>>}
  */
 async function captureVisibleSnapshots() {
+  noteOverlaySpy('capturePage');
   const tasks = lastSlots.map(async (slot) => {
     const accountId = slot.accountId;
     const acc = getAccount(accountId);
@@ -448,18 +480,24 @@ function getOverlaySnapshotDebug() {
 async function setOverlay(id, active) {
   const key = String(id || '').trim();
   if (!key) return getOverlayCount();
-  // Toasts must never hide panel views
+  // Toasts / light popovers must never hide panel views
   if (key === 'toast' || key.startsWith('toast:')) {
     return getOverlayCount();
   }
-  const before = activeOverlays.size;
+  if (popoverOverlay.isLightOverlayId(key)) {
+    // Track for diagnostics only — never park/snapshot
+    if (active) activeOverlays.add(key);
+    else activeOverlays.delete(key);
+    return getOverlayCount();
+  }
+  const beforeModal = getModalOverlayCount();
   if (active) activeOverlays.add(key);
   else activeOverlays.delete(key);
-  const after = activeOverlays.size;
-  if (before === 0 && after > 0) {
+  const afterModal = getModalOverlayCount();
+  if (beforeModal === 0 && afterModal > 0) {
     const epoch = ++overlayParkEpoch;
     await prepareAndParkForOverlay(epoch);
-  } else if (before > 0 && after === 0) {
+  } else if (beforeModal > 0 && afterModal === 0) {
     overlayParkEpoch += 1;
     restoreViewsAfterOverlay();
   }
@@ -467,7 +505,7 @@ async function setOverlay(id, active) {
 }
 
 async function setOverlayCount(ids) {
-  const before = activeOverlays.size;
+  const beforeModal = getModalOverlayCount();
   activeOverlays.clear();
   if (Array.isArray(ids)) {
     for (const id of ids) {
@@ -476,11 +514,11 @@ async function setOverlayCount(ids) {
       activeOverlays.add(key);
     }
   }
-  const after = activeOverlays.size;
-  if (before === 0 && after > 0) {
+  const afterModal = getModalOverlayCount();
+  if (beforeModal === 0 && afterModal > 0) {
     const epoch = ++overlayParkEpoch;
     await prepareAndParkForOverlay(epoch);
-  } else if (after === 0) {
+  } else if (afterModal === 0 && beforeModal > 0) {
     overlayParkEpoch += 1;
     restoreViewsAfterOverlay();
   }
@@ -488,9 +526,10 @@ async function setOverlayCount(ids) {
 }
 
 async function prepareAndParkForOverlay(epoch) {
+  noteOverlaySpy('prepareAndParkForOverlay');
   const snaps = await captureVisibleSnapshots();
   // Overlay may have closed while capture was in flight — do not park/stuck-snap
-  if (activeOverlays.size === 0) return;
+  if (getModalOverlayCount() === 0) return;
   if (epoch != null && epoch !== overlayParkEpoch) return;
   emitOverlaySnapshots(snaps);
   parkViewsForOverlay();
@@ -500,6 +539,7 @@ async function prepareAndParkForOverlay(epoch) {
  * Park every attached view offscreen so modals are not covered, while media keeps running.
  */
 function parkViewsForOverlay() {
+  noteOverlaySpy('parkViewsForOverlay');
   for (const entry of panels.values()) {
     parkPanelOffscreen(entry);
   }
@@ -537,6 +577,7 @@ function setViewVisible(entry, visible) {
   } catch {
     /* ignore */
   }
+  if (!next) noteOverlaySpy('setVisible(false)', { accountId: entry.accountId });
   if (mutationLogEnabled && prev !== next) {
     let bounds = null;
     try {
@@ -1923,6 +1964,11 @@ function syncVisiblePanels(slots) {
 
   visibleAccountIds = new Set(lastSlots.map((s) => s.accountId));
   pruneStaleLoadQueue();
+  try {
+    popoverOverlay.onPanelsLayoutChanged();
+  } catch {
+    /* ignore */
+  }
 
   for (const id of [...panels.keys()]) {
     if (!visibleAccountIds.has(id)) {
@@ -2536,6 +2582,9 @@ module.exports = {
   hintGarbageCollection,
   setOverlay,
   setOverlayCount,
+  getModalOverlayCount,
+  clearOverlaySelftestSpies,
+  getOverlaySelftestSpies,
   getOverlayCount,
   areOverlaysActive,
   setSidebarOverlayWidth,
