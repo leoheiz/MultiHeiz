@@ -47,6 +47,10 @@
         },
         {
           "tag": "Correção",
+          "text": "Auto-esconder da barra lateral no Windows: zona quente mais fácil (polling no processo principal, inclusive sobre painéis); a barra não fecha ao ir até o pino (cabeçalho sem região de arraste + atraso de 700 ms); fixar pelo pino com a barra revelada não pisca."
+        },
+        {
+          "tag": "Correção",
           "text": "Excluir uma área de trabalho agora fecha e remove todas as janelas dela (em vez de movê-las para outra área), com confirmação mostrando a quantidade."
         }
       ]
