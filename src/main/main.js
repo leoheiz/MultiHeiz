@@ -526,6 +526,7 @@ function createWindow() {
     SELFTEST_FULLSCREEN ||
     SELFTEST_SIDEBAR ||
     SELFTEST_REALCLICK_SIDEBAR ||
+    SELFTEST_CONTEXTMENU ||
     SELFTEST_WORKSPACE_DELETE
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
@@ -591,6 +592,7 @@ function createWindow() {
       SELFTEST_FULLSCREEN ||
       SELFTEST_SIDEBAR ||
       SELFTEST_REALCLICK_SIDEBAR ||
+      SELFTEST_CONTEXTMENU ||
       SELFTEST_WORKSPACE_DELETE ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
@@ -1305,6 +1307,8 @@ function createWindow() {
             sleep,
             waitForUrl,
             rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
             app,
           }).catch(failSelftest);
         } catch (err) {

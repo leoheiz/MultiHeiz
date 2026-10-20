@@ -16,6 +16,25 @@ function electronApi() {
 
 const SEARCH_SNIPPET_MAX = 30;
 
+/** @type {{ onPopup?: Function|null, onTemplate?: Function|null }} */
+let selftestHooks = { onPopup: null, onTemplate: null };
+
+/**
+ * Selftest-only spies (MULTIHEIZ_SELFTEST). Ignorado fora de selftest.
+ * @param {{ onPopup?: Function|null, onTemplate?: Function|null } | null} hooks
+ */
+function setSelftestHooks(hooks) {
+  if (!process.env.MULTIHEIZ_SELFTEST) {
+    selftestHooks = { onPopup: null, onTemplate: null };
+    return false;
+  }
+  selftestHooks = {
+    onPopup: hooks && typeof hooks.onPopup === 'function' ? hooks.onPopup : null,
+    onTemplate: hooks && typeof hooks.onTemplate === 'function' ? hooks.onTemplate : null,
+  };
+  return true;
+}
+
 /**
  * @param {string} text
  * @param {number} [max]
@@ -62,6 +81,62 @@ function isOpenableHttpUrl(url) {
 }
 
 /**
+ * Campo editável via isEditable ou formControlType (textarea/input/contenteditable).
+ * @param {object} params
+ * @returns {boolean}
+ */
+function isEditableContext(params) {
+  const p = params || {};
+  if (p.isEditable) return true;
+  const f = String(p.formControlType || '')
+    .toLowerCase()
+    .replace(/_/g, '-');
+  if (!f || f === 'none' || f === 'button' || f === 'checkbox' || f === 'radio' || f === 'submit') {
+    return false;
+  }
+  return (
+    f === 'text-field' ||
+    f === 'text-area' ||
+    f === 'text' ||
+    f === 'textarea' ||
+    f === 'search' ||
+    f === 'email' ||
+    f === 'password' ||
+    f === 'number' ||
+    f === 'telephone' ||
+    f === 'tel' ||
+    f === 'url' ||
+    f.includes('text')
+  );
+}
+
+/**
+ * Converte params.x/y (relativos ao WebContentsView) em coordenadas do
+ * BrowserWindow para Menu.popup({ window }).
+ *
+ * Electron 44: params.x/y já vêm em DIP do view com o hit-test (zoom da página
+ * já refletido). NÃO multiplicar de novo por zoomFactor — o fator opcional só
+ * existe para experimentos; default 1.
+ *
+ * @param {{ x?: number, y?: number } | null | undefined} viewBounds
+ * @param {{ x?: number, y?: number } | null | undefined} params
+ * @param {number} [zoomFactor=1]
+ * @returns {{ x: number, y: number }}
+ */
+function computeContextMenuPopupPoint(viewBounds, params, zoomFactor = 1) {
+  const vx = Number(viewBounds && viewBounds.x) || 0;
+  const vy = Number(viewBounds && viewBounds.y) || 0;
+  const px = Number(params && params.x) || 0;
+  const py = Number(params && params.y) || 0;
+  const z = Number(zoomFactor);
+  const scale = Number.isFinite(z) && z > 0 ? z : 1;
+  return {
+    x: Math.round(vx + px * scale),
+    y: Math.round(vy + py * scale),
+  };
+}
+
+/**
  * Gera o template do menu a partir dos params do evento context-menu e do
  * estado de navegação. Puro / testável (sem Menu.popup).
  *
@@ -80,6 +155,7 @@ function isOpenableHttpUrl(url) {
 function buildContextMenuTemplate(params, nav = {}) {
   const p = params || {};
   const editFlags = p.editFlags || {};
+  const editable = isEditableContext(p);
   const items = [];
 
   const misspelled = String(p.misspelledWord || '');
@@ -122,7 +198,7 @@ function buildContextMenuTemplate(params, nav = {}) {
     }
   );
 
-  if (p.isEditable) {
+  if (editable) {
     items.push({ type: 'separator' });
     items.push(
       {
@@ -165,7 +241,7 @@ function buildContextMenuTemplate(params, nav = {}) {
 
   const selection = String(p.selectionText || '').trim();
   if (selection) {
-    if (!p.isEditable) {
+    if (!editable) {
       items.push({ type: 'separator' });
       items.push({
         id: 'copy',
@@ -404,13 +480,26 @@ function runContextAction(d, wc, params, openInNewWindow) {
 
 /**
  * Liga o menu de contexto ao webContents.
- * Em MULTIHEIZ_SELFTEST não chama menu.popup (nada visível na tela).
+ * Em MULTIHEIZ_SELFTEST não chama menu.popup (nada visível na tela);
+ * ainda calcula coordenadas e notifica onPopup/onTemplate.
  *
  * @param {import('electron').WebContents} webContents
  * @param {{
  *   openInNewWindow?: (url: string) => void,
  *   getWindow?: () => import('electron').BrowserWindow | null,
+ *   getViewBounds?: () => { x: number, y: number, width?: number, height?: number } | null,
+ *   getZoomFactor?: () => number,
  *   onTemplate?: (template: ReturnType<typeof buildContextMenuTemplate>, params: object) => void,
+ *   onPopup?: (info: {
+ *     x: number,
+ *     y: number,
+ *     viewBounds: object,
+ *     zoomFactor: number,
+ *     params: object,
+ *     descriptors: ReturnType<typeof buildContextMenuTemplate>,
+ *     webContents: import('electron').WebContents,
+ *     window: import('electron').BrowserWindow | null,
+ *   }) => void,
  * }} [options]
  * @returns {() => void} detach
  */
@@ -425,6 +514,69 @@ function attachContextMenu(webContents, options = {}) {
     if (typeof options.onTemplate === 'function') {
       try {
         options.onTemplate(descriptors, params || {});
+      } catch {
+        /* ignore */
+      }
+    }
+    if (selftestHooks.onTemplate) {
+      try {
+        selftestHooks.onTemplate(descriptors, params || {}, webContents);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    let viewBounds = { x: 0, y: 0 };
+    if (typeof options.getViewBounds === 'function') {
+      try {
+        const b = options.getViewBounds();
+        if (b && typeof b === 'object') {
+          viewBounds = {
+            x: Number(b.x) || 0,
+            y: Number(b.y) || 0,
+            width: Number(b.width) || 0,
+            height: Number(b.height) || 0,
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Electron 44: params já em DIP do view — zoomFactor efetivo = 1 no popup.
+    let zoomFactor = 1;
+    if (typeof options.getZoomFactor === 'function') {
+      try {
+        const z = Number(options.getZoomFactor());
+        if (Number.isFinite(z) && z > 0) zoomFactor = z;
+      } catch {
+        /* ignore */
+      }
+    }
+    // Coordenadas de popup: offset do view + params (sem * zoom — ver computeContextMenuPopupPoint).
+    const point = computeContextMenuPopupPoint(viewBounds, params || {}, 1);
+    const win = typeof options.getWindow === 'function' ? options.getWindow() : null;
+
+    const popupInfo = {
+      x: point.x,
+      y: point.y,
+      viewBounds,
+      zoomFactor,
+      params: params || {},
+      descriptors,
+      webContents,
+      window: win && !win.isDestroyed() ? win : null,
+    };
+    if (typeof options.onPopup === 'function') {
+      try {
+        options.onPopup(popupInfo);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (selftestHooks.onPopup) {
+      try {
+        selftestHooks.onPopup(popupInfo);
       } catch {
         /* ignore */
       }
@@ -446,10 +598,9 @@ function attachContextMenu(webContents, options = {}) {
     );
     const { Menu } = electronApi();
     const menu = Menu.buildFromTemplate(electronTemplate);
-    const win = typeof options.getWindow === 'function' ? options.getWindow() : null;
     const popupOpts = {
-      x: Math.round(Number(params && params.x) || 0),
-      y: Math.round(Number(params && params.y) || 0),
+      x: point.x,
+      y: point.y,
     };
     if (win && !win.isDestroyed()) {
       popupOpts.window = win;
@@ -475,5 +626,8 @@ module.exports = {
   truncateForLabel,
   compactSeparators,
   isOpenableHttpUrl,
+  isEditableContext,
+  computeContextMenuPopupPoint,
   readNavState,
+  setSelftestHooks,
 };

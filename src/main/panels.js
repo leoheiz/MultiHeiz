@@ -220,6 +220,25 @@ function wireContextMenu(wc, accountId) {
   if (!wc) return;
   contextMenu.attachContextMenu(wc, {
     getWindow: () => mainWindow,
+    getViewBounds: () => {
+      const entry = panels.get(accountId);
+      if (!entry || !entry.view) return { x: 0, y: 0, width: 0, height: 0 };
+      try {
+        return entry.view.getBounds();
+      } catch {
+        return { x: 0, y: 0, width: 0, height: 0 };
+      }
+    },
+    getZoomFactor: () => {
+      try {
+        if (wc && !wc.isDestroyed() && typeof wc.getZoomFactor === 'function') {
+          return wc.getZoomFactor();
+        }
+      } catch {
+        /* ignore */
+      }
+      return 1;
+    },
     openInNewWindow: (url) => {
       openUrlInNewPanel(accountId, url);
     },

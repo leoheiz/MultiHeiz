@@ -33,7 +33,35 @@ function runNodeTemplateChecks() {
   const {
     buildContextMenuTemplate,
     truncateForLabel,
+    computeContextMenuPopupPoint,
+    isEditableContext,
   } = require('../src/main/context-menu');
+
+  // Coordenadas: painel direito = viewBounds + params (sem zoom extra)
+  {
+    const left = computeContextMenuPopupPoint({ x: 250, y: 80 }, { x: 10, y: 20 }, 1);
+    assert(left.x === 260 && left.y === 100, 'left panel coords');
+    const right = computeContextMenuPopupPoint({ x: 850, y: 80 }, { x: 10, y: 20 }, 1);
+    assert(right.x === 860 && right.y === 100, 'right panel coords');
+    assert(right.x !== left.x, 'left/right differ');
+    // Bare params (bug antigo) cairiam no painel esquerdo
+    assert(right.x !== 10, 'must not use bare params.x');
+    console.log('PASS: popup coords viewBounds+params');
+  }
+
+  // formControlType / isEditable
+  {
+    assert(isEditableContext({ isEditable: true }) === true, 'isEditable');
+    assert(isEditableContext({ isEditable: false, formControlType: 'text-area' }) === true, 'textarea');
+    assert(isEditableContext({ isEditable: false, formControlType: 'text-field' }) === true, 'text-field');
+    assert(isEditableContext({ isEditable: false, formControlType: 'none' }) === false, 'none');
+    const t = buildContextMenuTemplate(
+      { isEditable: false, formControlType: 'text-area', editFlags: { canPaste: true } },
+      {}
+    );
+    assert(idsOf(t).includes('paste'), 'formControlType yields paste');
+    console.log('PASS: isEditableContext + formControlType');
+  }
 
   // Página simples
   {
@@ -192,6 +220,8 @@ function runElectron() {
       ...process.env,
       MULTIHEIZ_USERDATA: userdata,
       MULTIHEIZ_SELFTEST: 'contextmenu',
+      MULTIHEIZ_UI_WIDTH: '1400',
+      MULTIHEIZ_UI_HEIGHT: '900',
       ELECTRON_ENABLE_LOGGING: '1',
     };
     const child = spawn(electronBin, ['.'], {
