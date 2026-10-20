@@ -162,7 +162,8 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (!(hidden.bounds.x <= 10) || !(hidden.bounds.width > fixedW)) {
+  // Hot-zone (~5) + grid padding/gap + focus frame → content x often ~12–20, not 0.
+  if (!(hidden.bounds.x <= 24) || !(hidden.bounds.width > fixedW + 50)) {
     console.log('FAIL: auto-hidden panels should use nearly full width', {
       hidden: hidden.bounds,
       fixedX,
@@ -352,8 +353,16 @@ async function runSidebarSelftest(ctx) {
  * Phase 2: app restarted with same userdata — auto-hide must still be on.
  */
 async function runPhase2Persistence(ctx) {
-  const { sleep, rendererEval, waitForLayoutSettle, flushSave, publicState } = ctx;
-  await sleep(800);
+  const { sleep, rendererEval, waitForLayoutSettle, flushSave, publicState, updateState, emitToRenderer } =
+    ctx;
+  // Avoid reloading phase-1 localhost URLs (server already gone).
+  updateState((s) => {
+    s.accounts = [];
+    s.maximizedAccountId = null;
+  });
+  flushSave();
+  emitToRenderer({ type: 'state:changed', state: publicState() });
+  await sleep(600);
   await waitForLayoutSettle();
   const st = publicState();
   if (!st.ui || st.ui.sidebarAutoHide !== true) {
