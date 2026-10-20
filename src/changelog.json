@@ -43,7 +43,7 @@
         },
         {
           "tag": "Novo",
-          "text": "Barra lateral: a seta agora ativa o modo esconder automaticamente (zona quente na borda, overlay sobre os painéis) ou fixa de novo; o modo antigo \"recolhido\" é migrado."
+          "text": "Barra lateral: padrão fixa; a seta alterna para esconder automaticamente (zona quente + overlay). Em Configurações → Aparência: \"Manter barra lateral sempre ativa (modo legado)\" restaura o recolhimento antigo."
         }
       ]
     },
