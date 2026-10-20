@@ -339,8 +339,56 @@ function hookClientHints(ses) {
   });
 }
 
+/** Top-level Google sign-in paths where GlifWebSignIn → WebLiteSignIn is safe. */
+const GLIF_REWRITE_PATHS = [
+  '/v3/signin/identifier',
+  '/ServiceLogin',
+  '/signin/v2/identifier',
+  '/AccountChooser',
+];
+
 /**
- * Prefer WebLiteSignIn over GlifWebSignIn (lighter checks on embedded Chromium).
+ * Whether to rewrite GlifWebSignIn → WebLiteSignIn.
+ * Only top-level (mainFrame) navigations on accounts.google.com sign-in pages —
+ * never OAuth/GIS (/gsi/*, /o/oauth2/*, /signin/oauth/*), GeneralOAuthFlow, or
+ * any URL with client_id=.
+ * @param {string} url
+ * @param {{ resourceType?: string }} [details]
+ */
+function shouldRewriteGlifWebSignIn(url, details) {
+  try {
+    if (details && details.resourceType && details.resourceType !== 'mainFrame') {
+      return false;
+    }
+    const raw = String(url || '');
+    if (!/accounts\.google\.com/i.test(raw)) return false;
+    if (!/flowName=GlifWebSignIn/i.test(raw)) return false;
+    if (/flowName=GeneralOAuthFlow/i.test(raw)) return false;
+    if (/[?&#]client_id=/i.test(raw)) return false;
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    if (host !== 'accounts.google.com' && host !== 'account.google.com') return false;
+    const path = u.pathname || '/';
+    if (/^\/gsi(\/|$)/i.test(path)) return false;
+    if (/^\/o\/oauth2(\/|$)/i.test(path)) return false;
+    if (/^\/signin\/oauth(\/|$)/i.test(path)) return false;
+    return GLIF_REWRITE_PATHS.some(
+      (p) => path === p || path.startsWith(p + '/') || path.toLowerCase() === p.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} url
+ */
+function rewriteGlifWebSignInUrl(url) {
+  return String(url || '').replace(/flowName=GlifWebSignIn/gi, 'flowName=WebLiteSignIn');
+}
+
+/**
+ * Prefer WebLiteSignIn over GlifWebSignIn on embedded Chromium sign-in pages only.
  * @param {Electron.Session} ses
  */
 function hookGoogleSignInFlow(ses) {
@@ -348,10 +396,8 @@ function hookGoogleSignInFlow(ses) {
   hub.addBeforeRequest(ses, GOOGLE_FLOW_HUB_ID, (details, callback) => {
     try {
       const url = String(details.url || '');
-      if (/accounts\.google\.com/i.test(url) && /flowName=GlifWebSignIn/i.test(url)) {
-        callback({
-          redirectURL: url.replace(/flowName=GlifWebSignIn/gi, 'flowName=WebLiteSignIn'),
-        });
+      if (shouldRewriteGlifWebSignIn(url, details)) {
+        callback({ redirectURL: rewriteGlifWebSignInUrl(url) });
         return;
       }
     } catch {
@@ -379,9 +425,12 @@ module.exports = {
   applyAppUserAgentFallback,
   hookClientHints,
   hookGoogleSignInFlow,
+  shouldRewriteGlifWebSignIn,
+  rewriteGlifWebSignInUrl,
   reapplyAllSessions,
   readIdentity,
   chromiumVersionFromUa,
   isGoogleAuthUrl,
   GREASE_BRAND,
+  GLIF_REWRITE_PATHS,
 };

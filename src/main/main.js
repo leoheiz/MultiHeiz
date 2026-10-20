@@ -178,6 +178,7 @@ const SELFTEST_EXT = selftestMode === 'ext';
 const SELFTEST_ABU = selftestMode === 'abu';
 const SELFTEST_SECURITY = selftestMode === 'security';
 const SELFTEST_UA = selftestMode === 'ua';
+const SELFTEST_GIS = selftestMode === 'gis';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -198,7 +199,8 @@ const ANY_SELFTEST =
   SELFTEST_EXT ||
   SELFTEST_ABU ||
   SELFTEST_SECURITY ||
-  SELFTEST_UA;
+  SELFTEST_UA ||
+  SELFTEST_GIS;
 
 /** @type {object|null} recorded BrowserWindow chrome options for selftests / diagnostics */
 let recordedWindowChrome = null;
@@ -1042,6 +1044,32 @@ function createWindow() {
         try {
           const { runUaSelftest } = require('./selftest-ua');
           runUaSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            adblock,
+            userAgent,
+            sessionPersist,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_GIS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runGisSelftest } = require('./selftest-gis');
+          runGisSelftest({
             mainWindow,
             panels,
             getState,

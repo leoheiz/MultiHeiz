@@ -16,11 +16,11 @@ const AUTO_ALLOW = new Set([
   'fullscreen',
   'pointerLock',
   'pointer-lock',
-  // Google / IdP sign-in: allow WebAuthn + FedCM checks so cancelling a passkey
-  // dialog can fall through to password (v1.2.0 default-deny blocked these).
+  // Google / IdP sign-in: allow WebAuthn so cancelling a passkey dialog can
+  // fall through to password (v1.2.0 default-deny blocked these).
+  // FedCM (identity-credentials-get) is always denied — Electron has no FedCM UI.
   'publickey-credentials-get',
   'publickey-credentials-create',
-  'identity-credentials-get',
 ]);
 
 /** Ask the user; remember per origin+permission+account. */
@@ -54,6 +54,8 @@ const ALWAYS_DENY = new Set([
   'localFonts',
   'speaker-selection',
   'speakerSelection',
+  // No FedCM UI in Electron — force GIS/OAuth popup or redirect fallback.
+  'identity-credentials-get',
 ]);
 
 /** @type {Map<string, 'allow'|'deny'>} */
@@ -191,12 +193,8 @@ function classifyPermission(permission, requestingOrigin, details = {}) {
       }
       return 'deny';
     }
-    // WebAuthn / FedCM: https IdPs only
-    if (
-      perm === 'publickey-credentials-get' ||
-      perm === 'publickey-credentials-create' ||
-      perm === 'identity-credentials-get'
-    ) {
+    // WebAuthn: https IdPs only
+    if (perm === 'publickey-credentials-get' || perm === 'publickey-credentials-create') {
       if (origin.startsWith('https://')) return 'allow';
       return 'deny';
     }

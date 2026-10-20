@@ -16,6 +16,10 @@
         {
           "tag": "Melhoria",
           "text": "User-Agent e Client Hints coerentes (incluindo popups de login); permissões WebAuthn liberadas para o fluxo cair em senha ao cancelar a chave de acesso."
+        },
+        {
+          "tag": "Correção",
+          "text": "Corrigido: popups de \"Entrar com Google\" em sites (ex.: Continuar como...) ficavam em branco e se acumulavam."
         }
       ]
     },

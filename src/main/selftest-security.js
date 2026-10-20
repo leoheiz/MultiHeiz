@@ -168,7 +168,11 @@ async function runSecuritySelftest(ctx) {
     permissions.checkPermission('acc-sec-a', 'publickey-credentials-create', origin) === true,
     'webauthn create allowed for https'
   );
-  console.log('PASS: permission policy geo/media ask, usb/hid/serial deny, webauthn allow');
+  assert(
+    permissions.checkPermission('acc-sec-a', 'identity-credentials-get', origin) === false,
+    'FedCM identity-credentials-get denied'
+  );
+  console.log('PASS: permission policy geo/media ask, usb/hid/serial deny, webauthn allow, FedCM deny');
 
   // Live session has handlers
   const ses = require('electron').session.fromPartition(panels.partitionFor('acc-sec-a'));

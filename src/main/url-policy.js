@@ -103,7 +103,8 @@ function parseUrl(url) {
  */
 function isAboutBlank(url) {
   const s = String(url || '').trim().toLowerCase();
-  return s === 'about:blank' || s === 'about:blank/';
+  // GIS often window.open('') then navigates the blank popup.
+  return !s || s === 'about:blank' || s === 'about:blank/';
 }
 
 /**

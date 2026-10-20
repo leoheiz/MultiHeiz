@@ -103,6 +103,13 @@ const loadRetries = new Map();
 /** @type {Set<import('electron').BrowserWindow>} */
 const childPopups = new Set();
 
+/**
+ * Login/OAuth popups keyed by accountId → frameName → BrowserWindow.
+ * Used to reuse/focus instead of piling blank GIS windows on repeated clicks.
+ * @type {Map<string, Map<string, import('electron').BrowserWindow>>}
+ */
+const loginPopupsByAccount = new Map();
+
 /** When true, createPanel skips initial loadURL (staggered queue). */
 let deferNextCreateLoad = false;
 
@@ -417,6 +424,172 @@ function isOauthOrLoginUrl(url) {
 }
 
 /**
+ * GIS/OAuth often opens about:blank (or '') with size features, then navigates.
+ * @param {string} url
+ * @param {string} [disposition]
+ * @param {string} [features]
+ */
+function isLoginStylePopup(url, disposition, features) {
+  if (isOauthOrLoginUrl(url)) return true;
+  if (!isAboutBlank(url)) return false;
+  if (disposition === 'new-window') return true;
+  const f = String(features || '');
+  return /\b(width|height)\s*=/i.test(f);
+}
+
+/**
+ * @param {string} accountId
+ * @returns {Map<string, import('electron').BrowserWindow>}
+ */
+function loginPopupMapFor(accountId) {
+  let m = loginPopupsByAccount.get(accountId);
+  if (!m) {
+    m = new Map();
+    loginPopupsByAccount.set(accountId, m);
+  }
+  return m;
+}
+
+/**
+ * Reuse an open login popup for the same account (+ frameName when set).
+ * @param {string} accountId
+ * @param {string} [frameName]
+ */
+function findReusableLoginPopup(accountId, frameName) {
+  const m = loginPopupsByAccount.get(accountId);
+  if (!m) return null;
+  const name = String(frameName || '');
+  const named = m.get(name);
+  if (named && !named.isDestroyed()) return named;
+  // _blank / empty: avoid piling windows on repeated GIS clicks
+  if (!name || name === '_blank') {
+    for (const w of m.values()) {
+      if (w && !w.isDestroyed()) return w;
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {string} accountId
+ * @param {string} frameName
+ * @param {import('electron').BrowserWindow} win
+ */
+function trackLoginPopup(accountId, frameName, win) {
+  const m = loginPopupMapFor(accountId);
+  const key = String(frameName || '');
+  m.set(key, win);
+  childPopups.add(win);
+  win.on('closed', () => {
+    childPopups.delete(win);
+    const map = loginPopupsByAccount.get(accountId);
+    if (map) {
+      for (const [k, v] of [...map.entries()]) {
+        if (v === win) map.delete(k);
+      }
+      if (map.size === 0) loginPopupsByAccount.delete(accountId);
+    }
+    emitToRenderer({ type: 'toast', message: 'Login fechado — voltando ao painel' });
+  });
+}
+
+/**
+ * BrowserWindow options for GIS/OAuth popups (same partition as the panel).
+ * @param {Electron.Session} ses
+ */
+function loginPopupBrowserOptions(ses) {
+  return {
+    width: 520,
+    height: 720,
+    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+    modal: false,
+    show: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      session: ses,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      nodeIntegrationInSubFrames: true,
+      preload: PANEL_PRELOAD,
+      backgroundThrottling: false,
+    },
+  };
+}
+
+/**
+ * Bind adblock/permissions/UA + nested window.open for a login popup.
+ * Keeps header UA, webContents UA and navigator patch consistent (Electron UA
+ * on accounts.google.com so Botguard does not show "may not be secure").
+ * @param {string} accountId
+ * @param {import('electron').BrowserWindow} child
+ * @param {Electron.Session} ses
+ * @param {string} [initialUrl]
+ */
+function wireLoginPopupWindow(accountId, child, ses, initialUrl) {
+  if (!child || child.isDestroyed()) return;
+  permissions.attachToSession(ses, accountId);
+  userAgent.applySessionUserAgent(ses);
+  try {
+    adblock.attachSession(ses, accountId);
+  } catch {
+    /* ignore */
+  }
+  try {
+    adblock.bindWebContents(accountId, child.webContents);
+  } catch {
+    /* ignore */
+  }
+
+  const applyUaForUrl = (navUrl) => {
+    try {
+      if (userAgent.isGoogleAuthUrl(navUrl)) {
+        child.webContents.setUserAgent(userAgent.buildGoogleAuthUserAgent());
+      } else {
+        child.webContents.setUserAgent(chromeUserAgent());
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  applyUaForUrl(initialUrl || '');
+
+  child.webContents.on('did-navigate', (_e, navUrl) => applyUaForUrl(navUrl));
+  child.webContents.on('did-navigate-in-page', (_e, navUrl) => applyUaForUrl(navUrl));
+
+  child.webContents.on('will-navigate', (e, navUrl) => {
+    if (!isNavigableUrl(navUrl, { allowData: allowInternalDataUrls() })) {
+      e.preventDefault();
+    }
+  });
+  child.webContents.on('will-redirect', (e, navUrl) => {
+    if (!isNavigableUrl(navUrl, { allowData: allowInternalDataUrls() })) {
+      e.preventDefault();
+    }
+  });
+
+  // Nested popups from the login window (account chooser → consent, etc.)
+  child.webContents.setWindowOpenHandler((details) =>
+    handlePanelWindowOpen(accountId, details, ses, child.webContents)
+  );
+  child.webContents.on('did-create-window', (nested, details) => {
+    onDidCreateLoginWindow(accountId, nested, ses, details);
+  });
+}
+
+/**
+ * @param {string} accountId
+ * @param {import('electron').BrowserWindow} childWin
+ * @param {Electron.Session} ses
+ * @param {{ url?: string, frameName?: string }} [details]
+ */
+function onDidCreateLoginWindow(accountId, childWin, ses, details) {
+  if (!childWin || childWin.isDestroyed()) return;
+  trackLoginPopup(accountId, (details && details.frameName) || '', childWin);
+  wireLoginPopupWindow(accountId, childWin, ses, (details && details.url) || '');
+}
+
+/**
  * Ask the user before opening a known external scheme via the OS handler.
  * @param {string} url
  */
@@ -448,13 +621,23 @@ async function confirmOpenExternal(url) {
 
 /**
  * Handle window.open / target=_blank according to URL policy.
+ * GIS/OAuth: action 'allow' so Chromium keeps window.opener (postMessage back).
  * @param {string} accountId
- * @param {string} url
+ * @param {string|{ url?: string, frameName?: string, features?: string, disposition?: string }} detailsOrUrl
  * @param {Electron.Session} ses
  * @param {import('electron').WebContents} wc
  */
-function handlePanelWindowOpen(accountId, url, ses, wc) {
-  const kind = classifyScheme(url);
+function handlePanelWindowOpen(accountId, detailsOrUrl, ses, wc) {
+  const details =
+    typeof detailsOrUrl === 'string'
+      ? { url: detailsOrUrl, frameName: '', features: '', disposition: 'new-window' }
+      : detailsOrUrl || {};
+  const url = String(details.url || '');
+  const frameName = String(details.frameName || '');
+  const features = String(details.features || '');
+  const disposition = String(details.disposition || '');
+
+  const kind = classifyScheme(isAboutBlank(url) ? 'about:blank' : url);
   if (kind === 'blocked') {
     return { action: 'deny' };
   }
@@ -462,11 +645,34 @@ function handlePanelWindowOpen(accountId, url, ses, wc) {
     confirmOpenExternal(url).catch(() => {});
     return { action: 'deny' };
   }
-  // web (http/https/about:blank)
-  if (isOauthOrLoginUrl(url)) {
-    openLoginPopup(accountId, url, ses);
-    return { action: 'deny' };
+
+  // GIS/OAuth: keep opener via Chromium-owned popup (not a detached BrowserWindow).
+  if (isLoginStylePopup(url, disposition, features)) {
+    const existing = findReusableLoginPopup(accountId, frameName);
+    if (existing && !existing.isDestroyed()) {
+      try {
+        existing.focus();
+      } catch {
+        /* ignore */
+      }
+      // Named target: Chromium would reuse on allow; for _blank pile-up we deny
+      // and optionally navigate the existing window to the new IdP URL.
+      if (url && !isAboutBlank(url) && isNavigableUrl(url)) {
+        try {
+          const cur = existing.webContents.getURL();
+          if (cur !== url) existing.loadURL(url).catch(() => {});
+        } catch {
+          existing.loadURL(url).catch(() => {});
+        }
+      }
+      return { action: 'deny' };
+    }
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: loginPopupBrowserOptions(ses),
+    };
   }
+
   if (!isNavigableUrl(url)) {
     return { action: 'deny' };
   }
@@ -480,70 +686,29 @@ function handlePanelWindowOpen(accountId, url, ses, wc) {
 }
 
 /**
- * Open login/OAuth popup in a child BrowserWindow with the SAME partition.
+ * Open login/OAuth popup programmatically (selftests / internal).
+ * Prefer window.open → setWindowOpenHandler(action allow) for real GIS so opener is set.
  * @param {string} accountId
  * @param {string} url
  * @param {Electron.Session} ses
  */
 function openLoginPopup(accountId, url, ses) {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
-  permissions.attachToSession(ses, accountId);
-  userAgent.applySessionUserAgent(ses);
-  try {
-    adblock.attachSession(ses, accountId);
-  } catch {
-    /* ignore */
-  }
-  const child = new BrowserWindow({
-    width: 520,
-    height: 720,
-    parent: mainWindow,
-    modal: false,
-    show: true,
-    autoHideMenuBar: true,
-    webPreferences: {
-      session: ses,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      nodeIntegrationInSubFrames: true,
-      preload: PANEL_PRELOAD,
-      backgroundThrottling: false,
-    },
-  });
-  childPopups.add(child);
-  try {
-    child.webContents.setUserAgent(chromeUserAgent());
-  } catch {
-    /* ignore */
-  }
-  try {
-    adblock.bindWebContents(accountId, child.webContents);
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (userAgent.isGoogleAuthUrl(url)) {
-      child.webContents.setUserAgent(userAgent.buildGoogleAuthUserAgent());
-    }
-  } catch {
-    /* ignore */
-  }
-  child.webContents.on('did-navigate', (_e, navUrl) => {
+  const existing = findReusableLoginPopup(accountId, '');
+  if (existing && !existing.isDestroyed()) {
     try {
-      if (userAgent.isGoogleAuthUrl(navUrl)) {
-        child.webContents.setUserAgent(userAgent.buildGoogleAuthUserAgent());
-      } else {
-        child.webContents.setUserAgent(chromeUserAgent());
-      }
+      existing.focus();
     } catch {
       /* ignore */
     }
-  });
-  child.on('closed', () => {
-    childPopups.delete(child);
-    emitToRenderer({ type: 'toast', message: 'Login fechado — voltando ao painel' });
-  });
+    if (url && isNavigableUrl(url)) {
+      existing.loadURL(url).catch(() => {});
+    }
+    return existing;
+  }
+  const child = new BrowserWindow(loginPopupBrowserOptions(ses));
+  trackLoginPopup(accountId, '', child);
+  wireLoginPopupWindow(accountId, child, ses, url);
   if (isNavigableUrl(url)) {
     child.loadURL(url).catch(() => {});
   }
@@ -876,9 +1041,12 @@ function createPanel(accountId) {
       e.preventDefault();
     }
   });
-  view.webContents.setWindowOpenHandler(({ url }) =>
-    handlePanelWindowOpen(accountId, url, ses, view.webContents)
+  view.webContents.setWindowOpenHandler((details) =>
+    handlePanelWindowOpen(accountId, details, ses, view.webContents)
   );
+  view.webContents.on('did-create-window', (childWin, details) => {
+    onDidCreateLoginWindow(accountId, childWin, ses, details);
+  });
 
   mainWindow.contentView.addChildView(view);
   const entry = {
@@ -2034,4 +2202,7 @@ module.exports = {
   OVERLAY_SNAPSHOT_MAX_WIDTH,
   OVERLAY_SNAPSHOT_MAX_CHARS,
   childPopups,
+  handlePanelWindowOpen,
+  findReusableLoginPopup,
+  isLoginStylePopup,
 };

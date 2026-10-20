@@ -1,7 +1,7 @@
 'use strict';
 
 const http = require('node:http');
-const { app, session } = require('electron');
+const { app, BrowserWindow, session } = require('electron');
 
 /**
  * Offline selftest: Chrome UA / Client Hints on panel + login popup (real openLoginPopup path).
@@ -49,6 +49,21 @@ async function runUaSelftest(ctx) {
       if (u === '/home') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end('<html><body id="home">home-ok</body></html>');
+        return;
+      }
+      if (u === '/oauth-opener' || u === '/blank-opener') {
+        const target =
+          u === '/blank-opener'
+            ? 'about:blank'
+            : 'https://accounts.google.com/o/oauth2/v2/auth?client_id=ua-selftest.apps.googleusercontent.com&redirect_uri=http%3A%2F%2F127.0.0.1&response_type=token&scope=openid&flowName=GeneralOAuthFlow';
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(
+          '<!DOCTYPE html><html><body><button id="go">go</button><pre id="msg">waiting</pre>' +
+            '<script>window.addEventListener("message",function(e){document.getElementById("msg").textContent="msg:"+e.data;});' +
+            'document.getElementById("go").onclick=function(){window.open(' +
+            JSON.stringify(target) +
+            ',"ua_oauth_probe","width=520,height=720");};</script></body></html>'
+        );
         return;
       }
       res.writeHead(404);
@@ -348,6 +363,166 @@ async function runUaSelftest(ctx) {
     s.settings.windowsPasskeys = true;
   });
   flushSave();
+
+  // --- GIS/OAuth popup opener + Glif rewrite scope + reuse ---
+  {
+    // Handler must allow IdP URLs (Chromium keeps opener; deny+detached BrowserWindow breaks GIS).
+    const sesProbe = session.fromPartition(panels.partitionFor('acc-ua-a'));
+    const allowResp = panels.handlePanelWindowOpen(
+      'acc-ua-a',
+      {
+        url: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&flowName=GeneralOAuthFlow',
+        frameName: 'ua_oauth_probe',
+        features: 'width=520,height=720',
+        disposition: 'new-window',
+      },
+      sesProbe,
+      panels.getPanelCapture('acc-ua-a')
+    );
+    if (!allowResp || allowResp.action !== 'allow' || !allowResp.overrideBrowserWindowOptions) {
+      console.log('FAIL: IdP window.open handler must action=allow', allowResp);
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: IdP window.open handler returns action=allow (keeps opener)');
+
+    // (a) about:blank login-style popup keeps opener + postMessage (COOP-safe local check)
+    panels.panelNavigate('acc-ua-a', base + '/blank-opener');
+    await waitForUrl('acc-ua-a', (u) => u.includes('/blank-opener'), 20000);
+    await sleep(400);
+
+    const beforeCount = [...panels.childPopups].filter((w) => w && !w.isDestroyed()).length;
+    await panels.getPanelCapture('acc-ua-a').executeJavaScript(
+      'document.getElementById("go").click()'
+    );
+    await sleep(600);
+
+    let oauthWin = null;
+    for (let i = 0; i < 30; i++) {
+      await sleep(100);
+      for (const w of panels.childPopups) {
+        if (w && !w.isDestroyed()) {
+          oauthWin = w;
+          break;
+        }
+      }
+      if (oauthWin) break;
+    }
+    if (!oauthWin) {
+      console.log('FAIL: window.open login-style popup not created');
+      app.exit(1);
+      return;
+    }
+    let openerProbe = null;
+    try {
+      openerProbe = await oauthWin.webContents.executeJavaScript(
+        '({ opener: !!(window.opener), href: location.href })'
+      );
+    } catch (err) {
+      console.log('FAIL: opener probe', err && err.message);
+      app.exit(1);
+      return;
+    }
+    if (!openerProbe || !openerProbe.opener) {
+      console.log('FAIL: login popup missing window.opener', openerProbe);
+      app.exit(1);
+      return;
+    }
+    await oauthWin.webContents.executeJavaScript(
+      'window.opener && window.opener.postMessage("ua-opener-ok","*")'
+    );
+    await sleep(200);
+    const msg = await panels.getPanelCapture('acc-ua-a').executeJavaScript(
+      '(document.getElementById("msg")&&document.getElementById("msg").textContent)||""'
+    );
+    if (!String(msg).includes('ua-opener-ok')) {
+      console.log('FAIL: postMessage to opener failed', msg);
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: login-style window.open keeps opener + postMessage');
+
+    // (c) repeated open does not create a second window
+    await panels.getPanelCapture('acc-ua-a').executeJavaScript(
+      'document.getElementById("go").click()'
+    );
+    await sleep(500);
+    const afterCount = [...panels.childPopups].filter((w) => w && !w.isDestroyed()).length;
+    if (afterCount > beforeCount + 1) {
+      console.log('FAIL: repeated open piled popups', {
+        beforeCount,
+        afterCount,
+        wins: BrowserWindow.getAllWindows().length,
+      });
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: repeated IdP popup open does not pile windows');
+
+    try {
+      oauthWin.close();
+    } catch {
+      /* ignore */
+    }
+    await sleep(200);
+  }
+
+  {
+    // (b) Glif rewrite: OAuth/GIS untouched; identifier Glif rewritten
+    const cases = [
+      {
+        url: 'https://accounts.google.com/o/oauth2/v2/auth?flowName=GlifWebSignIn&client_id=x',
+        expect: false,
+        label: 'oauth + client_id',
+      },
+      {
+        url: 'https://accounts.google.com/o/oauth2/v2/auth?flowName=GeneralOAuthFlow',
+        expect: false,
+        label: 'GeneralOAuthFlow',
+      },
+      {
+        url: 'https://accounts.google.com/gsi/select?flowName=GlifWebSignIn',
+        expect: false,
+        label: '/gsi/select',
+      },
+      {
+        url: 'https://accounts.google.com/signin/oauth/id?flowName=GlifWebSignIn',
+        expect: false,
+        label: '/signin/oauth/id',
+      },
+      {
+        url: 'https://accounts.google.com/v3/signin/identifier?flowName=GlifWebSignIn&continue=https%3A%2F%2Fwww.google.com',
+        expect: true,
+        label: '/v3/signin/identifier Glif',
+      },
+    ];
+    for (const c of cases) {
+      const got = userAgent.shouldRewriteGlifWebSignIn(c.url, { resourceType: 'mainFrame' });
+      if (got !== c.expect) {
+        console.log('FAIL: Glif rewrite', c.label, { expect: c.expect, got, url: c.url });
+        app.exit(1);
+        return;
+      }
+      if (c.expect) {
+        const rewritten = userAgent.rewriteGlifWebSignInUrl(c.url);
+        if (!/flowName=WebLiteSignIn/i.test(rewritten) || /flowName=GlifWebSignIn/i.test(rewritten)) {
+          console.log('FAIL: rewrite output', rewritten);
+          app.exit(1);
+          return;
+        }
+      }
+      // Subresource must never rewrite
+      if (
+        userAgent.shouldRewriteGlifWebSignIn(c.url, { resourceType: 'xhr' }) ||
+        userAgent.shouldRewriteGlifWebSignIn(c.url, { resourceType: 'script' })
+      ) {
+        console.log('FAIL: Glif rewrite must not touch non-mainFrame', c.label);
+        app.exit(1);
+        return;
+      }
+    }
+    console.log('PASS: Glif rewrite scoped (OAuth/GIS untouched, identifier rewritten)');
+  }
 
   try {
     server.close();

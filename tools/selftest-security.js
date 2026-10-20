@@ -216,7 +216,11 @@ async function runNodeChecks() {
     permissions.checkPermission('a', 'publickey-credentials-get', 'https://a.com') === true,
     'webauthn get'
   );
-  console.log('PASS: permissions geo/media not auto, usb/hid/serial deny');
+  assert(
+    permissions.checkPermission('a', 'identity-credentials-get', 'https://a.com') === false,
+    'FedCM identity-credentials-get denied (no Electron UI)'
+  );
+  console.log('PASS: permissions geo/media not auto, usb/hid/serial deny, FedCM deny');
 
   clearModuleMatch(/\/src\/main\/portable-update/);
   installElectronStub({ tempDir: tempRoot, userData, isPackaged: true });
