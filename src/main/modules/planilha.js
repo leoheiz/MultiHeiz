@@ -20,8 +20,115 @@ function makeId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const MIN_COL_WIDTH = 30;
+const MIN_ROW_HEIGHT = 18;
+const DEFAULT_COL_WIDTH = 88;
+const DEFAULT_ROW_HEIGHT = 26;
+const ROW_HDR_WIDTH = 44;
+const MAX_SHEET_NAME = 40;
+
 function emptySheet(name = 'Planilha1') {
-  return { id: makeId('sheet'), name, cells: {} };
+  return {
+    id: makeId('sheet'),
+    name,
+    cells: {},
+    colWidths: {},
+    rowHeights: {},
+  };
+}
+
+/**
+ * Validate sheet tab name.
+ * @returns {{ ok: true, name: string } | { ok: false, error: string }}
+ */
+function validateSheetName(raw, sheets, excludeId) {
+  let name = String(raw == null ? '' : raw).trim();
+  if (!name) return { ok: false, error: 'Nome não pode ser vazio.' };
+  if (name.length > MAX_SHEET_NAME) {
+    return { ok: false, error: `Nome com no máximo ${MAX_SHEET_NAME} caracteres.` };
+  }
+  if (/[\u0000-\u001f\u007f]/.test(name)) {
+    return { ok: false, error: 'Nome contém caracteres inválidos.' };
+  }
+  const dup = (sheets || []).some(
+    (s) => s.id !== excludeId && String(s.name || '').toLowerCase() === name.toLowerCase()
+  );
+  if (dup) return { ok: false, error: 'Já existe uma aba com esse nome.' };
+  return { ok: true, name };
+}
+
+function getColWidth(sheet, col) {
+  const w = sheet && sheet.colWidths && sheet.colWidths[String(col)];
+  const n = Number(w);
+  return Number.isFinite(n) && n >= MIN_COL_WIDTH ? n : DEFAULT_COL_WIDTH;
+}
+
+function getRowHeight(sheet, row) {
+  const h = sheet && sheet.rowHeights && sheet.rowHeights[String(row)];
+  const n = Number(h);
+  return Number.isFinite(n) && n >= MIN_ROW_HEIGHT ? n : DEFAULT_ROW_HEIGHT;
+}
+
+function setColWidth(workbookId, sheetId, col, width) {
+  const wb = loadWorkbook(workbookId);
+  if (!wb) return null;
+  const sheet = (wb.sheets || []).find((s) => s.id === sheetId);
+  if (!sheet) return null;
+  if (!sheet.colWidths) sheet.colWidths = {};
+  const w = Math.max(MIN_COL_WIDTH, Math.round(Number(width) || DEFAULT_COL_WIDTH));
+  sheet.colWidths[String(col)] = w;
+  saveWorkbook(wb);
+  return getEvaluatedWorkbook(workbookId);
+}
+
+function setRowHeight(workbookId, sheetId, row, height) {
+  const wb = loadWorkbook(workbookId);
+  if (!wb) return null;
+  const sheet = (wb.sheets || []).find((s) => s.id === sheetId);
+  if (!sheet) return null;
+  if (!sheet.rowHeights) sheet.rowHeights = {};
+  const h = Math.max(MIN_ROW_HEIGHT, Math.round(Number(height) || DEFAULT_ROW_HEIGHT));
+  sheet.rowHeights[String(row)] = h;
+  saveWorkbook(wb);
+  return getEvaluatedWorkbook(workbookId);
+}
+
+/**
+ * Auto-fit column width from cell content (approx char width).
+ */
+function autoFitColWidth(workbookId, sheetId, col, opts) {
+  const wb = loadWorkbook(workbookId);
+  if (!wb) return null;
+  const sheet = (wb.sheets || []).find((s) => s.id === sheetId);
+  if (!sheet) return null;
+  const maxRows = Math.max(1, Number((opts && opts.maxRows) || 100));
+  let maxLen = 2;
+  const letter = colToLetters(col);
+  maxLen = Math.max(maxLen, letter.length);
+  for (let r = 0; r < maxRows; r++) {
+    const key = cellKey(col, r);
+    const raw = (sheet.cells && sheet.cells[key] && sheet.cells[key].raw) || '';
+    maxLen = Math.max(maxLen, String(raw || '').length);
+  }
+  const width = Math.max(MIN_COL_WIDTH, Math.min(400, 12 + maxLen * 8));
+  return setColWidth(workbookId, sheetId, col, width);
+}
+
+function autoFitRowHeight(workbookId, sheetId, row, opts) {
+  const wb = loadWorkbook(workbookId);
+  if (!wb) return null;
+  const sheet = (wb.sheets || []).find((s) => s.id === sheetId);
+  if (!sheet) return null;
+  const maxCols = Math.max(1, Number((opts && opts.maxCols) || 26));
+  let lines = 1;
+  for (let c = 0; c < maxCols; c++) {
+    const key = cellKey(c, row);
+    const raw = (sheet.cells && sheet.cells[key] && sheet.cells[key].raw) || '';
+    const n = String(raw).split(/\r?\n/).length;
+    if (n > lines) lines = n;
+  }
+  const height = Math.max(MIN_ROW_HEIGHT, Math.min(120, 10 + lines * 16));
+  return setRowHeight(workbookId, sheetId, row, height);
 }
 
 function emptyWorkbook(name = 'Pasta de trabalho') {
@@ -577,7 +684,9 @@ function renameSheet(workbookId, sheetId, name) {
   if (!wb) return null;
   const sheet = (wb.sheets || []).find((s) => s.id === sheetId);
   if (!sheet) return null;
-  sheet.name = String(name || '').trim() || sheet.name;
+  const v = validateSheetName(name, wb.sheets, sheetId);
+  if (!v.ok) return { ok: false, error: v.error, workbook: getEvaluatedWorkbook(workbookId) };
+  sheet.name = v.name;
   saveWorkbook(wb);
   return getEvaluatedWorkbook(workbookId);
 }
@@ -760,6 +869,13 @@ module.exports = {
   renameSheet,
   deleteSheet,
   setActiveSheet,
+  setColWidth,
+  setRowHeight,
+  autoFitColWidth,
+  autoFitRowHeight,
+  getColWidth,
+  getRowHeight,
+  validateSheetName,
   exportXlsx,
   importXlsx,
   exportXlsxToPath,
@@ -775,4 +891,10 @@ module.exports = {
   formatColumnRef,
   insertFormulaRef,
   isFormulaMode,
+  MIN_COL_WIDTH,
+  MIN_ROW_HEIGHT,
+  DEFAULT_COL_WIDTH,
+  DEFAULT_ROW_HEIGHT,
+  ROW_HDR_WIDTH,
+  MAX_SHEET_NAME,
 };

@@ -806,17 +806,35 @@
       (planilhaWb.sheets || [])[0];
     const tabs = h('div', { className: 'planilha-tabs' });
 
-    async function renameSheetUi(sh) {
-      const next = window.prompt('Renomear aba:', sh.name || '');
-      if (next == null) return;
+    async function renameSheetUi(sh, suggested) {
+      const next =
+        suggested != null
+          ? suggested
+          : window.prompt('Renomear aba:', sh.name || '');
+      if (next == null) return { ok: false, canceled: true };
       const name = String(next).trim();
-      if (!name || name === sh.name) return;
-      planilhaWb = await window.multiheiz.planilhaRenameSheet({
+      if (name === sh.name) return { ok: true, unchanged: true };
+      const check = await window.multiheiz.planilhaValidateSheetName({
+        name,
+        workbookId: planilhaWb.id,
+        excludeId: sh.id,
+      });
+      if (!check || !check.ok) {
+        window.alert((check && check.error) || 'Nome inválido.');
+        return { ok: false, error: (check && check.error) || 'Nome inválido.' };
+      }
+      const result = await window.multiheiz.planilhaRenameSheet({
         workbookId: planilhaWb.id,
         sheetId: sh.id,
-        name,
+        name: check.name,
       });
+      if (result && result.ok === false) {
+        window.alert(result.error || 'Não foi possível renomear.');
+        return result;
+      }
+      planilhaWb = result;
       renderModule();
+      return { ok: true };
     }
 
     async function deleteSheetUi(sh) {
@@ -843,8 +861,8 @@
 
     for (const sh of planilhaWb.sheets || []) {
       const wrap = h('div', {
-        className: 'planilha-tab-wrap',
-        style: 'display:inline-flex;align-items:center;gap:0',
+        className: 'planilha-tab-wrap' + (sh.id === sheet.id ? ' active' : ''),
+        'data-sheet-id': sh.id,
       });
       const openSheetMenu = (x, y) => {
         showV16ContextMenu(x, y, [
@@ -854,15 +872,23 @@
       };
       const tabBtn = h('button', {
         type: 'button',
-        className: 'btn ghost' + (sh.id === sheet.id ? ' active' : ''),
+        className: 'btn ghost planilha-tab-btn' + (sh.id === sheet.id ? ' active' : ''),
         text: sh.name,
+        'data-role': 'sheet-tab',
+        'data-sheet-id': sh.id,
         onClick: async () => {
+          if (sh.id === sheet.id) return;
           planilhaWb = await window.multiheiz.planilhaSetActiveSheet({
             workbookId: planilhaWb.id,
             sheetId: sh.id,
           });
           renderModule();
         },
+      });
+      tabBtn.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startInlineTabRename(sh, wrap, tabBtn);
       });
       tabBtn.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -882,6 +908,40 @@
       wrap.append(tabBtn, more);
       tabs.appendChild(wrap);
     }
+
+    function startInlineTabRename(sh, wrap, tabBtn) {
+      if (wrap.querySelector('.planilha-tab-rename')) return;
+      tabBtn.hidden = true;
+      const inp = h('input', {
+        type: 'text',
+        className: 'planilha-tab-rename',
+        value: sh.name || '',
+        maxlength: '40',
+        'data-role': 'sheet-tab-rename',
+      });
+      wrap.insertBefore(inp, tabBtn);
+      inp.focus();
+      inp.select();
+      let done = false;
+      const finish = async (commit) => {
+        if (done) return;
+        done = true;
+        const val = inp.value;
+        inp.remove();
+        tabBtn.hidden = false;
+        if (commit) await renameSheetUi(sh, val);
+      };
+      inp.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          finish(true);
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          finish(false);
+        }
+      });
+      inp.addEventListener('blur', () => finish(true));
+    }
     tabs.appendChild(h('button', {
       type: 'button', className: 'btn ghost', text: '+',
       onClick: async () => {
@@ -895,8 +955,25 @@
     }));
     main.appendChild(tabs);
 
-    const rows = 20;
+    const ROW_HDR_W = 44;
+    const MIN_COL_W = 30;
+    const MIN_ROW_H = 18;
+    const DEFAULT_COL_W = 88;
+    const DEFAULT_ROW_H = 26;
     const cols = 10;
+    const rows = 60;
+
+    function colWidthOf(c) {
+      const w = sheet.colWidths && sheet.colWidths[String(c)];
+      const n = Number(w);
+      return Number.isFinite(n) && n >= MIN_COL_W ? n : DEFAULT_COL_W;
+    }
+    function rowHeightOf(r) {
+      const hh = sheet.rowHeights && sheet.rowHeights[String(r)];
+      const n = Number(hh);
+      return Number.isFinite(n) && n >= MIN_ROW_H ? n : DEFAULT_ROW_H;
+    }
+
     const formulaBar = h('div', { className: 'sheet-formula-bar' });
     const formulaLabel = h('span', { className: 'muted-note', text: 'fx' });
     const formulaInput = h('input', {
@@ -907,11 +984,28 @@
     formulaBar.append(formulaLabel, formulaInput);
     main.appendChild(formulaBar);
 
-    const grid = h('div', { className: 'sheet-grid', tabIndex: 0 });
+    const grid = h('div', { className: 'sheet-grid', tabIndex: 0, 'data-role': 'sheet-grid' });
+    const table = h('table', { className: 'sheet-table', 'data-role': 'sheet-table' });
+    const colgroup = h('colgroup');
+    const colHdrCol = h('col', { className: 'sheet-col-rowhdr' });
+    colHdrCol.style.width = ROW_HDR_W + 'px';
+    colgroup.appendChild(colHdrCol);
+    /** @type {HTMLElement[]} */
+    const colEls = [];
+    for (let c = 0; c < cols; c++) {
+      const colEl = h('col', { 'data-col': String(c) });
+      colEl.style.width = colWidthOf(c) + 'px';
+      colEls.push(colEl);
+      colgroup.appendChild(colEl);
+    }
+    table.appendChild(colgroup);
+
     /** @type {Map<string, HTMLInputElement>} */
     const cellInputs = new Map();
     /** @type {HTMLElement[]} */
     const colHeaders = [];
+    /** @type {HTMLElement[]} */
+    const rowHeaders = [];
 
     function paintSelection() {
       for (const [ref, el] of cellInputs) {
@@ -983,15 +1077,113 @@
       renderModule();
     }
 
-    const headerRow = h('div', { className: 'sheet-row header' });
-    headerRow.appendChild(h('div', { className: 'sheet-cell corner', text: '' }));
-    for (let c = 0; c < cols; c++) {
-      const head = h('div', {
-        className: 'sheet-cell head',
-        text: colLetters(c),
-        'data-col': String(c),
+    function applyColWidthLocal(c, width) {
+      const w = Math.max(MIN_COL_W, Math.round(width));
+      if (colEls[c]) colEls[c].style.width = w + 'px';
+      return w;
+    }
+    function applyRowHeightLocal(r, height) {
+      const hh = Math.max(MIN_ROW_H, Math.round(height));
+      const tr = table.querySelector(`tr[data-row="${r}"]`);
+      if (tr) tr.style.height = hh + 'px';
+      return hh;
+    }
+
+    async function persistColWidth(c, width) {
+      planilhaWb = await window.multiheiz.planilhaSetColWidth({
+        workbookId: planilhaWb.id,
+        sheetId: sheet.id,
+        col: c,
+        width,
       });
+      const sh =
+        (planilhaWb.sheets || []).find((s) => s.id === sheet.id) || (planilhaWb.sheets || [])[0];
+      if (sh) Object.assign(sheet, sh);
+    }
+    async function persistRowHeight(r, height) {
+      planilhaWb = await window.multiheiz.planilhaSetRowHeight({
+        workbookId: planilhaWb.id,
+        sheetId: sheet.id,
+        row: r,
+        height,
+      });
+      const sh =
+        (planilhaWb.sheets || []).find((s) => s.id === sheet.id) || (planilhaWb.sheets || [])[0];
+      if (sh) Object.assign(sheet, sh);
+    }
+
+    function startColResize(c, startX, startW) {
+      planilhaSel.skipBlur = true;
+      const onMove = (ev) => {
+        applyColWidthLocal(c, startW + (ev.clientX - startX));
+      };
+      const onUp = async (ev) => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        const w = applyColWidthLocal(c, startW + (ev.clientX - startX));
+        await persistColWidth(c, w);
+        setTimeout(() => {
+          planilhaSel.skipBlur = false;
+        }, 0);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+
+    function startRowResize(r, startY, startH) {
+      planilhaSel.skipBlur = true;
+      const onMove = (ev) => {
+        applyRowHeightLocal(r, startH + (ev.clientY - startY));
+      };
+      const onUp = async (ev) => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        const hh = applyRowHeightLocal(r, startH + (ev.clientY - startY));
+        await persistRowHeight(r, hh);
+        setTimeout(() => {
+          planilhaSel.skipBlur = false;
+        }, 0);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+
+    const thead = h('thead');
+    const headerRow = h('tr', { className: 'sheet-header-row' });
+    headerRow.appendChild(h('th', { className: 'sheet-corner', text: '' }));
+    for (let c = 0; c < cols; c++) {
+      const head = h('th', {
+        className: 'sheet-col-head',
+        'data-col': String(c),
+        'data-role': 'sheet-col-head',
+      });
+      head.appendChild(h('span', { className: 'sheet-head-label', text: colLetters(c) }));
+      const grip = h('span', {
+        className: 'sheet-col-resize',
+        'data-role': 'sheet-col-resize',
+        'data-col': String(c),
+        title: 'Arrastar para redimensionar',
+      });
+      grip.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startColResize(c, e.clientX, colWidthOf(c));
+      });
+      grip.addEventListener('dblclick', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        planilhaWb = await window.multiheiz.planilhaAutofitCol({
+          workbookId: planilhaWb.id,
+          sheetId: sheet.id,
+          col: c,
+        });
+        renderModule();
+      });
+      head.appendChild(grip);
       head.addEventListener('mousedown', (e) => {
+        if (e.target === grip || (e.target && e.target.classList && e.target.classList.contains('sheet-col-resize'))) {
+          return;
+        }
         e.preventDefault();
         planilhaSel.sel = { c0: c, r0: 0, c1: c, r1: rows - 1 };
         planilhaSel.anchor = { c, r: 0 };
@@ -1003,19 +1195,57 @@
       colHeaders.push(head);
       headerRow.appendChild(head);
     }
-    grid.appendChild(headerRow);
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
 
+    const tbody = h('tbody');
     planilhaPaintSelection = paintSelection;
     planilhaInsertRef = insertRefIntoFormula;
 
     for (let r = 0; r < rows; r++) {
-      const row = h('div', { className: 'sheet-row' });
-      row.appendChild(h('div', { className: 'sheet-cell head', text: String(r + 1) }));
+      const tr = h('tr', { 'data-row': String(r), 'data-role': 'sheet-row' });
+      tr.style.height = rowHeightOf(r) + 'px';
+      const rowHead = h('th', {
+        className: 'sheet-row-head',
+        'data-row': String(r),
+        'data-role': 'sheet-row-head',
+      });
+      rowHead.appendChild(h('span', { className: 'sheet-head-label', text: String(r + 1) }));
+      const rowGrip = h('span', {
+        className: 'sheet-row-resize',
+        'data-role': 'sheet-row-resize',
+        'data-row': String(r),
+      });
+      rowGrip.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startRowResize(r, e.clientY, rowHeightOf(r));
+      });
+      rowGrip.addEventListener('dblclick', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        planilhaWb = await window.multiheiz.planilhaAutofitRow({
+          workbookId: planilhaWb.id,
+          sheetId: sheet.id,
+          row: r,
+        });
+        renderModule();
+      });
+      rowHead.appendChild(rowGrip);
+      rowHeaders.push(rowHead);
+      tr.appendChild(rowHead);
+
       for (let c = 0; c < cols; c++) {
         const ref = cellRefAt(c, r);
         const disp = (sheet.display && sheet.display[ref]) || {};
         const raw = disp.raw || (sheet.cells && sheet.cells[ref] && sheet.cells[ref].raw) || '';
         const val = disp.value != null ? disp.value : raw;
+        const td = h('td', {
+          className: 'sheet-td',
+          'data-c': String(c),
+          'data-r': String(r),
+          'data-role': 'sheet-td',
+        });
         const input = h('input', {
           className: 'sheet-cell',
           value: String(val === 0 && !raw ? '' : val ?? ''),
@@ -1023,6 +1253,7 @@
           'data-ref': ref,
           'data-c': String(c),
           'data-r': String(r),
+          'data-role': 'sheet-cell',
         });
         cellInputs.set(ref, input);
 
@@ -1038,7 +1269,6 @@
         });
         input.addEventListener('keydown', (e) => {
           if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
-            // Inside cell editor: select text (default) — do not select all sheet cells
             return;
           }
           if (e.key === 'Enter') {
@@ -1093,16 +1323,18 @@
           };
           paintSelection();
         });
-        row.appendChild(input);
+        td.appendChild(input);
+        tr.appendChild(td);
       }
-      grid.appendChild(row);
+      tbody.appendChild(tr);
     }
+    table.appendChild(tbody);
+    grid.appendChild(table);
 
     grid.addEventListener('keydown', (e) => {
       if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
         const active = document.activeElement;
         if (active && active.tagName === 'INPUT' && active.classList.contains('sheet-cell')) {
-          // editor: select text only
           return;
         }
         e.preventDefault();
@@ -1110,6 +1342,9 @@
         planilhaSel.anchor = { c: 0, r: 0 };
         paintSelection();
       }
+    });
+    grid.addEventListener('mouseup', () => {
+      planilhaSel.dragging = false;
     });
 
     formulaInput.addEventListener('focus', () => {
@@ -1139,6 +1374,61 @@
       cellRefAt,
       getSel: () => ({ ...planilhaSel }),
       insertRefIntoFormula,
+      rows,
+      cols,
+      renameSheetUi,
+      simulateColResize: async (c, deltaPx) => {
+        const start = colWidthOf(c);
+        const w = applyColWidthLocal(c, start + deltaPx);
+        await persistColWidth(c, w);
+        return w;
+      },
+      simulateRowResize: async (r, deltaPx) => {
+        const start = rowHeightOf(r);
+        const hh = applyRowHeightLocal(r, start + deltaPx);
+        await persistRowHeight(r, hh);
+        return hh;
+      },
+      autofitCol: async (c) => {
+        planilhaWb = await window.multiheiz.planilhaAutofitCol({
+          workbookId: planilhaWb.id,
+          sheetId: sheet.id,
+          col: c,
+        });
+        renderModule();
+      },
+      measureAlign: () => {
+        const out = [];
+        for (let c = 0; c < cols; c++) {
+          const head = colHeaders[c];
+          const cell1 = cellInputs.get(cellRefAt(c, 0));
+          const cell50 = cellInputs.get(cellRefAt(c, 49));
+          if (!head || !cell1 || !cell50) continue;
+          const hr = head.getBoundingClientRect();
+          const r1 = cell1.getBoundingClientRect();
+          const r50 = cell50.getBoundingClientRect();
+          out.push({
+            col: c,
+            head: { x: hr.left, w: hr.width },
+            r1: { x: r1.left, w: r1.width },
+            r50: { x: r50.left, w: r50.width },
+          });
+        }
+        const rowsOut = [];
+        for (let r of [0, 49]) {
+          const rh = rowHeaders[r];
+          const cell = cellInputs.get(cellRefAt(0, r));
+          if (!rh || !cell) continue;
+          const a = rh.getBoundingClientRect();
+          const b = cell.getBoundingClientRect();
+          rowsOut.push({
+            row: r,
+            head: { y: a.top, h: a.height },
+            cell: { y: b.top, h: b.height },
+          });
+        }
+        return { cols: out, rows: rowsOut };
+      },
       setFormulaMode: (on) => {
         planilhaSel.formulaMode = !!on;
       },

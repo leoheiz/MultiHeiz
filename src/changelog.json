@@ -100,6 +100,18 @@
         {
           "tag": "Novo",
           "text": "Catálogo de apps prontos ao criar janela: WhatsApp, Telegram, Discord, Slack, Instagram, Messenger, Facebook, X, Gmail, Outlook, Teams, Spotify, YouTube Music, Notion, ChatGPT, Gemini, LinkedIn e TikTok, com busca, ícone e nome prontos, além de Site personalizado."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Notas no estilo Google Keep: título editável no cartão e no editor, paleta de cores por nota (tema claro/escuro), Fixadas acima de Outras, com migração das notas antigas."
+        },
+        {
+          "tag": "Correção",
+          "text": "Alarmes e lembretes com layout refeito: lista alinhada (hora, rótulo, repetição legível, interruptor, editar/excluir), formulário com validação, estado vazio e uso estreito sem overflow."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Planilha: renomear abas (duplo clique e menu), redimensionar colunas/linhas (arraste e auto-ajuste), cabeçalhos A/B/C alinhados às células na mesma grade."
         }
       ]
     },

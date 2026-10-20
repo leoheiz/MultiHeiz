@@ -182,6 +182,11 @@ contextBridge.exposeInMainWorld('multiheiz', {
   planilhaRenameSheet: (opts) => ipcRenderer.invoke('planilha:rename-sheet', opts),
   planilhaDeleteSheet: (opts) => ipcRenderer.invoke('planilha:delete-sheet', opts),
   planilhaSetActiveSheet: (opts) => ipcRenderer.invoke('planilha:set-active-sheet', opts),
+  planilhaSetColWidth: (opts) => ipcRenderer.invoke('planilha:set-col-width', opts),
+  planilhaSetRowHeight: (opts) => ipcRenderer.invoke('planilha:set-row-height', opts),
+  planilhaAutofitCol: (opts) => ipcRenderer.invoke('planilha:autofit-col', opts),
+  planilhaAutofitRow: (opts) => ipcRenderer.invoke('planilha:autofit-row', opts),
+  planilhaValidateSheetName: (opts) => ipcRenderer.invoke('planilha:validate-sheet-name', opts),
   planilhaExport: (id) => ipcRenderer.invoke('planilha:export', id),
   planilhaImport: () => ipcRenderer.invoke('planilha:import'),
 

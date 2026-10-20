@@ -27,12 +27,20 @@ async function runShotsToolsSelftest(ctx) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const phases =
+  let phases =
     phaseEnv === 'all'
       ? ['before', 'after']
       : phaseEnv === 'before' || phaseEnv === 'after'
         ? [phaseEnv]
-        : ['before', 'after'];
+        : ['after'];
+  // Não sobrescrever ANTES já capturados quando phase=all
+  if (phases.includes('before') && phaseEnv === 'all') {
+    const probe = path.join(outDir, 'before-notas-default.png');
+    if (fs.existsSync(probe)) {
+      console.log('shots-tools: before-* já existem — pulando fase before (use MULTIHEIZ_SHOTS_PHASE=before para forçar)');
+      phases = phases.filter((p) => p !== 'before');
+    }
+  }
 
   console.log('SELFTEST shots-tools');
   console.log('outDir:', outDir);

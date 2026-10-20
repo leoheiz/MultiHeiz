@@ -233,6 +233,22 @@ function initV16(ctx) {
     ipcMain.handle('planilha:set-active-sheet', (_e, { workbookId, sheetId }) =>
       planilha.setActiveSheet(workbookId, sheetId)
     );
+    ipcMain.handle('planilha:set-col-width', (_e, { workbookId, sheetId, col, width }) =>
+      planilha.setColWidth(workbookId, sheetId, col, width)
+    );
+    ipcMain.handle('planilha:set-row-height', (_e, { workbookId, sheetId, row, height }) =>
+      planilha.setRowHeight(workbookId, sheetId, row, height)
+    );
+    ipcMain.handle('planilha:autofit-col', (_e, { workbookId, sheetId, col }) =>
+      planilha.autoFitColWidth(workbookId, sheetId, col)
+    );
+    ipcMain.handle('planilha:autofit-row', (_e, { workbookId, sheetId, row }) =>
+      planilha.autoFitRowHeight(workbookId, sheetId, row)
+    );
+    ipcMain.handle('planilha:validate-sheet-name', (_e, { name, workbookId, excludeId }) => {
+      const wb = workbookId ? planilha.loadWorkbook(workbookId) : null;
+      return planilha.validateSheetName(name, (wb && wb.sheets) || [], excludeId);
+    });
     ipcMain.handle('planilha:export', (_e, workbookId) =>
       planilha.exportXlsx(workbookId, getMainWindow())
     );

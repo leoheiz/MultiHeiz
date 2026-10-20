@@ -2556,39 +2556,134 @@ dialog label.check-row input[type='checkbox'],
   background: var(--accent-dim);
   border-color: var(--border);
 }
-.planilha-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
-.sheet-grid { overflow: auto; max-height: calc(100vh - 220px); }
-.sheet-row { display: flex; }
-.sheet-cell {
-  width: 88px;
-  min-width: 88px;
-  height: 26px;
+.planilha-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.planilha-tab-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+.planilha-tab-rename {
+  width: 110px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 4px;
+}
+.sheet-grid {
+  overflow: auto;
+  max-height: calc(100vh - 220px);
   border: 1px solid var(--border);
+  border-radius: 6px;
   background: var(--surface);
+}
+.sheet-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+}
+.sheet-table col.sheet-col-rowhdr { width: 44px; }
+.sheet-table th,
+.sheet-table td {
+  box-sizing: border-box;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0;
+  margin: 0;
+  vertical-align: middle;
+  position: relative;
+}
+.sheet-corner,
+.sheet-col-head,
+.sheet-row-head {
+  background: color-mix(in srgb, var(--bg) 60%, var(--surface));
+  color: var(--muted);
+  font-weight: 600;
+  text-align: center;
+  user-select: none;
+}
+.sheet-col-head,
+.sheet-corner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 26px;
+}
+.sheet-row-head,
+.sheet-corner {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 44px;
+  min-width: 44px;
+}
+.sheet-corner { z-index: 4; }
+.sheet-col-head.col-selected {
+  background: color-mix(in srgb, var(--accent) 28%, var(--surface));
+  color: var(--text);
+}
+.sheet-head-label {
+  display: block;
+  padding: 2px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sheet-col-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sheet-row-resize {
+  position: absolute;
+  left: 0;
+  bottom: -3px;
+  width: 100%;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 5;
+}
+.sheet-td {
+  height: inherit;
+}
+.sheet-cell {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 24px;
+  border: none;
+  background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 12px;
   padding: 2px 4px;
+  margin: 0;
+  outline: none;
 }
-.sheet-cell.head, .sheet-cell.corner {
-  width: 36px;
-  min-width: 36px;
-  text-align: center;
-  background: color-mix(in srgb, var(--bg) 60%, var(--surface));
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.sheet-cell.corner { width: 36px; }
 .sheet-cell.selected {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
   z-index: 1;
-}
-.sheet-cell.head.col-selected {
-  background: color-mix(in srgb, var(--accent) 28%, var(--surface));
-  color: var(--text);
+  position: relative;
 }
 .sheet-formula-bar {
   display: flex;
