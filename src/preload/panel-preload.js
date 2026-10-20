@@ -128,6 +128,78 @@ function injectInMainWorld(source) {
   }
 }
 
+/**
+ * When Windows passkeys are disabled in settings: hide platform authenticator
+ * and reject publicKey credentials.get/create with NotAllowedError (no Windows UI).
+ * Trusted-Types-safe (func+args, no new Function).
+ */
+function applyPasskeyDisablePatch() {
+  try {
+    contextBridge.executeInMainWorld({
+      func: () => {
+        try {
+          window.__MH_PASSKEYS_DISABLED__ = true;
+        } catch (e0) {
+          /* ignore */
+        }
+        try {
+          if (typeof PublicKeyCredential !== 'undefined') {
+            if (
+              typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable ===
+              'function'
+            ) {
+              PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = function () {
+                return Promise.resolve(false);
+              };
+            }
+            if (typeof PublicKeyCredential.isConditionalMediationAvailable === 'function') {
+              PublicKeyCredential.isConditionalMediationAvailable = function () {
+                return Promise.resolve(false);
+              };
+            }
+          }
+        } catch (e1) {
+          /* ignore */
+        }
+        try {
+          if (!navigator.credentials) return;
+          var origGet = navigator.credentials.get
+            ? navigator.credentials.get.bind(navigator.credentials)
+            : null;
+          var origCreate = navigator.credentials.create
+            ? navigator.credentials.create.bind(navigator.credentials)
+            : null;
+          function notAllowed() {
+            return Promise.reject(
+              new DOMException(
+                'The operation either timed out or was not allowed.',
+                'NotAllowedError'
+              )
+            );
+          }
+          if (origGet) {
+            navigator.credentials.get = function (opts) {
+              if (opts && opts.publicKey) return notAllowed();
+              return origGet(opts);
+            };
+          }
+          if (origCreate) {
+            navigator.credentials.create = function (opts) {
+              if (opts && opts.publicKey) return notAllowed();
+              return origCreate(opts);
+            };
+          }
+        } catch (e2) {
+          /* ignore */
+        }
+      },
+      args: [],
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Never append to Document — that can make the style the documentElement. */
 function styleInjectSource(id, css, mode) {
   const op = mode === 'append' ? '+=' : '=';
@@ -167,6 +239,7 @@ function injectEarlySync() {
   if (!payload || !payload.ok) {
     if (payload && payload.uaPatchData) applyUaPatchData(payload.uaPatchData);
     else if (payload && payload.uaPatch) injectInMainWorld(payload.uaPatch);
+    if (payload && payload.passkeyDisable) applyPasskeyDisablePatch();
     if (payload && payload.lightModeCss) {
       injectInMainWorld(styleInjectSource('mh-light-mode', payload.lightModeCss, 'set'));
     }
@@ -180,6 +253,7 @@ function injectEarlySync() {
   }
   if (payload.uaPatchData) applyUaPatchData(payload.uaPatchData);
   else if (payload.uaPatch) injectInMainWorld(payload.uaPatch);
+  if (payload.passkeyDisable) applyPasskeyDisablePatch();
   if (payload.lightModeCss) {
     injectInMainWorld(styleInjectSource('mh-light-mode', payload.lightModeCss, 'set'));
   }

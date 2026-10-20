@@ -1199,6 +1199,15 @@ function uaPatchDataIfNeeded(url) {
   }
 }
 
+function passkeyDisableIfNeeded() {
+  try {
+    const passkeys = require('../passkeys');
+    return passkeys.shouldDisablePasskeysInMainWorld();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Sync IPC handler — must return before page scripts run.
  */
@@ -1207,6 +1216,7 @@ function handleEarlyScriptlets(event, url) {
     const wc = event.sender;
     const accountId = wc ? wcToAccount.get(wc.id) : null;
     const patchUrl = url || '';
+    const passkeyDisable = passkeyDisableIfNeeded();
     if (accountId && !isWindowBlockingEnabled(accountId)) {
       event.returnValue = {
         ok: true,
@@ -1214,6 +1224,7 @@ function handleEarlyScriptlets(event, url) {
         styles: '',
         uaPatch: uaPatchIfNeeded(patchUrl),
         uaPatchData: uaPatchDataIfNeeded(patchUrl),
+        passkeyDisable,
         lightModeCss: lightModeCssIfEnabled(),
       };
       return;
@@ -1226,6 +1237,7 @@ function handleEarlyScriptlets(event, url) {
       cached: !!early.cached,
       uaPatch: uaPatchIfNeeded(patchUrl),
       uaPatchData: uaPatchDataIfNeeded(patchUrl),
+      passkeyDisable,
       lightModeCss: lightModeCssIfEnabled(),
     };
   } catch (err) {
@@ -1237,6 +1249,7 @@ function handleEarlyScriptlets(event, url) {
       styles: '',
       uaPatch: uaPatchIfNeeded(patchUrl),
       uaPatchData: uaPatchDataIfNeeded(patchUrl),
+      passkeyDisable: passkeyDisableIfNeeded(),
     };
   }
 }

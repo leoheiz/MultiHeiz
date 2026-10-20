@@ -78,6 +78,8 @@ function defaultState() {
       persistSessions: true,
       openLastPageLabel: true, // Continuar de onde parou (alias openLastPage)
       uaIdentity: 'chrome', // chrome | edge
+      /** Usar passkeys/WebAuthn do Windows nas sessões de conta (default ON) */
+      windowsPasskeys: true,
       blankLinkMode: 'same', // same | new-panel
       lightMode: false,
       backgroundPreset: 'balanced', // balanced | always | max-save
@@ -256,6 +258,9 @@ function migrate(parsed) {
     next.settings.persistSessions = true;
   }
   if (!next.settings.uaIdentity) next.settings.uaIdentity = 'chrome';
+  if (typeof next.settings.windowsPasskeys !== 'boolean') {
+    next.settings.windowsPasskeys = true;
+  }
   if (!next.settings.blankLinkMode) next.settings.blankLinkMode = 'same';
   if (typeof next.settings.lightMode !== 'boolean') next.settings.lightMode = false;
   if (!next.settings.backgroundPreset) next.settings.backgroundPreset = 'balanced';

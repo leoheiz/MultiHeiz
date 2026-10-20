@@ -254,6 +254,101 @@ async function runUaSelftest(ctx) {
     console.log('PASS: google auth UA exception');
   }
 
+  // --- Passkey preference (windowsPasskeys) ---
+  // Default ON: patch must NOT be injected (do not call real WebAuthn API).
+  {
+    const onFlag = await panels.getPanelCapture('acc-ua-a').executeJavaScript(
+      'typeof window.__MH_PASSKEYS_DISABLED__ !== "undefined" && !!window.__MH_PASSKEYS_DISABLED__'
+    );
+    if (onFlag) {
+      console.log('FAIL: passkey disable patch present while windowsPasskeys default ON');
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: passkeys ON — disable patch absent');
+  }
+
+  updateState((s) => {
+    s.settings.windowsPasskeys = false;
+  });
+  flushSave();
+
+  // New navigation so early-scriptlets re-runs with passkeyDisable
+  panels.panelNavigate('acc-ua-a', base + '/home');
+  await waitForUrl('acc-ua-a', (u) => u.includes('/home'), 20000);
+  await sleep(400);
+
+  const offProbe = await panels.getPanelCapture('acc-ua-a').executeJavaScript(`(async () => {
+    const flag = !!window.__MH_PASSKEYS_DISABLED__;
+    let cond = null;
+    try {
+      if (window.PublicKeyCredential && PublicKeyCredential.isConditionalMediationAvailable) {
+        cond = await PublicKeyCredential.isConditionalMediationAvailable();
+      }
+    } catch (e) {
+      cond = 'err:' + (e && e.name);
+    }
+    let uvpa = null;
+    try {
+      if (window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+        uvpa = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      }
+    } catch (e) {
+      uvpa = 'err:' + (e && e.name);
+    }
+    const t0 = Date.now();
+    let getName = null;
+    try {
+      await navigator.credentials.get({
+        publicKey: {
+          challenge: new Uint8Array(32),
+          timeout: 60000,
+          rpId: location.hostname,
+          userVerification: 'preferred',
+          allowCredentials: []
+        }
+      });
+      getName = 'resolved';
+    } catch (e) {
+      getName = (e && e.name) || String(e);
+    }
+    const ms = Date.now() - t0;
+    return { flag, cond, uvpa, getName, ms };
+  })()`);
+
+  if (!offProbe || !offProbe.flag) {
+    console.log('FAIL: passkey disable patch missing when windowsPasskeys OFF', offProbe);
+    app.exit(1);
+    return;
+  }
+  if (offProbe.cond !== false) {
+    console.log('FAIL: isConditionalMediationAvailable should be false', offProbe);
+    app.exit(1);
+    return;
+  }
+  if (offProbe.uvpa !== false) {
+    console.log('FAIL: isUserVerifyingPlatformAuthenticatorAvailable should be false', offProbe);
+    app.exit(1);
+    return;
+  }
+  if (offProbe.getName !== 'NotAllowedError') {
+    console.log('FAIL: credentials.get(publicKey) should reject NotAllowedError', offProbe);
+    app.exit(1);
+    return;
+  }
+  if (offProbe.ms > 3000) {
+    console.log('FAIL: passkey reject too slow (dialog?)', offProbe.ms);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: passkeys OFF — NotAllowedError fast + platform auth hidden');
+
+  // Restore default for any later suites sharing userdata
+  updateState((s) => {
+    s.settings.windowsPasskeys = true;
+  });
+  flushSave();
+
   try {
     server.close();
   } catch {

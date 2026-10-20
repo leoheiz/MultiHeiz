@@ -1844,6 +1844,7 @@
           suspendDelayMs: Number(form.suspendDelayMs.value) || 0,
           homepage: form.homepage.value || 'https://www.google.com',
           uaIdentity: (form.uaIdentity && form.uaIdentity.value) || 'chrome',
+          windowsPasskeys: !(form.windowsPasskeys && form.windowsPasskeys.checked === false),
           blankLinkMode: (form.blankLinkMode && form.blankLinkMode.value) || 'same',
           searchEngine: form.searchEngine.value || 'google',
           searchTemplate: form.searchTemplate.value || '',
@@ -2055,6 +2056,7 @@
     form.suspendDelayMs.value = Number(s.suspendDelayMs) || 0;
     form.homepage.value = s.homepage || 'https://www.google.com';
     if (form.uaIdentity) form.uaIdentity.value = s.uaIdentity || 'chrome';
+    if (form.windowsPasskeys) form.windowsPasskeys.checked = s.windowsPasskeys !== false;
     if (form.blankLinkMode) form.blankLinkMode.value = s.blankLinkMode || 'same';
     form.searchEngine.value = s.searchEngine || 'google';
     form.searchTemplate.value = s.searchTemplate || '';

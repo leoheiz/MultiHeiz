@@ -1,6 +1,25 @@
 {
   "versions": [
     {
+      "version": "1.2.1",
+      "date": "2026-10-19",
+      "title": "Login do Google e passkeys",
+      "entries": [
+        {
+          "tag": "Correção",
+          "text": "Corrigido login do Google bloqueado ('navegador pode não ser seguro')."
+        },
+        {
+          "tag": "Novo",
+          "text": "Opção em Configurações → Navegação: \"Usar chaves de acesso (passkeys) do Windows\" (ligada por padrão). Desligue para ir direto à senha no Google e outros sites."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "User-Agent e Client Hints coerentes (incluindo popups de login); permissões WebAuthn liberadas para o fluxo cair em senha ao cancelar a chave de acesso."
+        }
+      ]
+    },
+    {
       "version": "1.2.0",
       "date": "2026-10-19",
       "title": "Electron 44, segurança, desempenho e Linux",

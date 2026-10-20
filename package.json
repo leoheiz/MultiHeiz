@@ -1,7 +1,7 @@
 {
   "name": "multiheiz",
   "productName": "MultiHeiz",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Navegador multi-janela com painéis e sessões independentes",
   "homepage": "https://github.com/leoheiz/MultiHeiz",
   "repository": "github:leoheiz/MultiHeiz",
