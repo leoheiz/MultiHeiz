@@ -116,6 +116,18 @@ function getAllowedRoots() {
   } catch {
     /* ignore */
   }
+  // Portable exe folder + last downloaded update (same-folder or Downloads)
+  try {
+    const portable = require('./portable-update');
+    const target = portable.portableTargetPath && portable.portableTargetPath();
+    if (target) push(path.dirname(target));
+    const envDir = portable.portableEnvDir && portable.portableEnvDir();
+    if (envDir) push(envDir);
+    const dl = portable.getDownloadedPath && portable.getDownloadedPath();
+    if (dl) push(path.dirname(dl));
+  } catch {
+    /* ignore */
+  }
   // Optional releases folder under userData (if app creates one later)
   try {
     push(path.join(app.getPath('userData'), 'releases'));

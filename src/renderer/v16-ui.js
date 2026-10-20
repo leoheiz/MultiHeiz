@@ -1571,6 +1571,7 @@
     applyUpdateButton(document.getElementById('btn-install-update'), buttons.install);
     const btnFolder = document.getElementById('btn-open-download-folder');
     // Portable download folder is Windows-only; never show on Linux.
+    // notWritable: pasta do exe sem permissão (salvo em Downloads) ou caminho portátil desconhecido.
     const showFolder =
       typeof navigator !== 'undefined' &&
       /Win/i.test(navigator.platform || '') &&

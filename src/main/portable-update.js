@@ -3,6 +3,12 @@
 /**
  * Portable Windows self-update: download MultiHeiz-*-portable.exe from GitHub
  * releases, verify cryptographic hash, replace PORTABLE_EXECUTABLE_FILE via helper script.
+ *
+ * Destination policy (final .exe never stays in temp):
+ * - Prefer the same folder as PORTABLE_EXECUTABLE_FILE / DIR (or MULTIHEIZ_FAKE_PORTABLE_FILE).
+ * - If that folder is not writable → app.getPath('downloads'), relaunch from there, warn in pt-BR.
+ * - If portable path is unknown → Downloads (safe: user still gets a verified file; no in-place replace).
+ * Helper .ps1 and apply logs may live under temp (MultiHeiz-update-*).
  */
 
 const crypto = require('node:crypto');
@@ -32,10 +38,12 @@ const GITHUB_UPDATE_HOSTS = new Set([
 let activeAbort = null;
 /** @type {string | null} */
 let downloadedExePath = null;
-/** @type {string | null} unique mkdtemp dir for current/last download */
+/** @type {string | null} unique mkdtemp dir for helper .ps1 / logs (not the final exe) */
 let activeTempDir = null;
-/** @type {{ version: string, size: number, digest?: string, sha512?: string } | null} */
+/** @type {{ version: string, size: number, digest?: string, sha512?: string, name?: string, url?: string } | null} */
 let pendingAsset = null;
+/** @type {ReturnType<typeof resolvePortableUpdateDestination> | null} */
+let activeDest = null;
 
 function log(logger, level, msg, meta) {
   if (logger && typeof logger[level] === 'function') {
@@ -101,6 +109,7 @@ function tempUpdateDir() {
   return path.join(app.getPath('temp'), 'MultiHeiz-update');
 }
 
+/** Temp dir for helper script / logs only — never the final portable .exe. */
 function ensureUniqueTempDir() {
   if (activeTempDir && fs.existsSync(activeTempDir)) return activeTempDir;
   activeTempDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'MultiHeiz-update-'));
@@ -113,6 +122,140 @@ function portableTargetPath() {
   const envPath = process.env.PORTABLE_EXECUTABLE_FILE;
   if (envPath) return path.resolve(envPath);
   return null;
+}
+
+function portableEnvDir() {
+  const file = portableTargetPath();
+  if (file) return path.dirname(file);
+  const envDir = process.env.PORTABLE_EXECUTABLE_DIR;
+  if (envDir) return path.resolve(envDir);
+  return null;
+}
+
+function downloadsDirPath() {
+  try {
+    return app.getPath('downloads');
+  } catch {
+    return path.join(app.getPath('temp'), 'Downloads');
+  }
+}
+
+/**
+ * Pure destination resolver for portable updates (testable without Electron I/O).
+ *
+ * @param {{
+ *   envFile?: string | null,
+ *   envDir?: string | null,
+ *   downloadsDir?: string | null,
+ *   canWrite?: boolean | ((dir: string) => boolean),
+ *   version?: string,
+ *   assetName?: string,
+ * }} opts
+ * @returns {{
+ *   dir: string | null,
+ *   finalPath: string | null,
+ *   mode: 'same-folder' | 'downloads' | 'none',
+ *   relaunchPath: string | null,
+ *   originalExe: string | null,
+ *   message?: string,
+ * }}
+ */
+function resolvePortableUpdateDestination(opts = {}) {
+  const downloadsDir = opts.downloadsDir ? path.resolve(String(opts.downloadsDir)) : null;
+  const envFile = opts.envFile ? path.resolve(String(opts.envFile)) : null;
+  const envDir = opts.envDir ? path.resolve(String(opts.envDir)) : null;
+  const version = opts.version || '0.0.0';
+  const finalName =
+    opts.assetName || `MultiHeiz-${version}-portable.exe`;
+
+  const portableDir = envFile ? path.dirname(envFile) : envDir;
+  const originalExe = envFile || (envDir ? path.join(envDir, 'MultiHeiz-portable.exe') : null);
+
+  const checkWrite = (dir) => {
+    if (typeof opts.canWrite === 'function') return !!opts.canWrite(dir);
+    if (typeof opts.canWrite === 'boolean') return opts.canWrite;
+    return canWriteDir(dir);
+  };
+
+  if (!portableDir) {
+    // Safest when path unknown: Downloads (verified file for the user; no in-place replace).
+    if (!downloadsDir) {
+      return {
+        dir: null,
+        finalPath: null,
+        mode: 'none',
+        relaunchPath: null,
+        originalExe: null,
+        message: 'Caminho do executável portátil desconhecido',
+      };
+    }
+    const finalPath = path.join(downloadsDir, finalName);
+    return {
+      dir: downloadsDir,
+      finalPath,
+      mode: 'downloads',
+      relaunchPath: finalPath,
+      originalExe: null,
+      message:
+        'Caminho do executável portátil desconhecido; a nova versão será salva em Downloads: ' +
+        finalPath,
+    };
+  }
+
+  if (checkWrite(portableDir)) {
+    let finalPath = path.join(portableDir, finalName);
+    // Avoid overwriting the running exe during download — keep a distinct name.
+    if (originalExe && path.resolve(finalPath) === path.resolve(originalExe)) {
+      finalPath = originalExe + '.new';
+    }
+    return {
+      dir: portableDir,
+      finalPath,
+      mode: 'same-folder',
+      relaunchPath: originalExe || finalPath,
+      originalExe,
+    };
+  }
+
+  if (!downloadsDir) {
+    return {
+      dir: null,
+      finalPath: null,
+      mode: 'none',
+      relaunchPath: null,
+      originalExe,
+      message: 'Sem permissão para escrever na pasta do executável',
+    };
+  }
+
+  const finalPath = path.join(downloadsDir, finalName);
+  return {
+    dir: downloadsDir,
+    finalPath,
+    mode: 'downloads',
+    relaunchPath: finalPath,
+    originalExe,
+    message:
+      'Sem permissão na pasta do MultiHeiz; a nova versão foi salva em Downloads: ' + finalPath,
+  };
+}
+
+/**
+ * Resolve destination using live env + disk write check.
+ * @param {{ version?: string, assetName?: string, canWrite?: boolean | ((dir: string) => boolean) }} [opts]
+ */
+function resolveLivePortableDestination(opts = {}) {
+  return resolvePortableUpdateDestination({
+    envFile:
+      process.env.MULTIHEIZ_FAKE_PORTABLE_FILE ||
+      process.env.PORTABLE_EXECUTABLE_FILE ||
+      null,
+    envDir: process.env.PORTABLE_EXECUTABLE_DIR || null,
+    downloadsDir: downloadsDirPath(),
+    canWrite: opts.canWrite != null ? opts.canWrite : canWriteDir,
+    version: opts.version,
+    assetName: opts.assetName,
+  });
 }
 
 function feedUrl() {
@@ -400,7 +543,7 @@ async function checkPortableUpdate(opts = {}) {
  * @param {{ onProgress?: Function, logger?: object }} [opts]
  */
 async function downloadPortableAsset(asset, opts = {}) {
-  const { onProgress, logger } = opts;
+  const { onProgress, logger, canWrite } = opts;
   if (!asset || !asset.url) {
     return { ok: false, error: 'Asset inválido' };
   }
@@ -411,10 +554,34 @@ async function downloadPortableAsset(asset, opts = {}) {
   const controller = new AbortController();
   activeAbort = controller;
 
-  const dir = ensureUniqueTempDir();
   const finalName = asset.name || `MultiHeiz-${asset.version}-portable.exe`;
-  const partPath = path.join(dir, finalName + '.part');
-  const finalPath = path.join(dir, finalName);
+  const dest = resolveLivePortableDestination({
+    version: asset.version,
+    assetName: finalName,
+    canWrite: canWrite != null ? canWrite : canWriteDir,
+  });
+  activeDest = dest;
+
+  if (dest.mode === 'none' || !dest.finalPath || !dest.dir) {
+    activeAbort = null;
+    return {
+      ok: false,
+      error: dest.message || 'Caminho do executável portátil desconhecido',
+    };
+  }
+
+  try {
+    fs.mkdirSync(dest.dir, { recursive: true });
+  } catch (err) {
+    activeAbort = null;
+    return {
+      ok: false,
+      error: (err && err.message) || 'Não foi possível criar a pasta de destino',
+    };
+  }
+
+  const finalPath = dest.finalPath;
+  const partPath = finalPath + '.part';
 
   try {
     if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
@@ -426,6 +593,7 @@ async function downloadPortableAsset(asset, opts = {}) {
     url: asset.url,
     size: asset.size,
     dest: finalPath,
+    mode: dest.mode,
   });
 
   let downloadUrl;
@@ -456,7 +624,7 @@ async function downloadPortableAsset(asset, opts = {}) {
   try {
     st = fs.statSync(partPath);
   } catch (err) {
-    return { ok: false, error: (err && err.message) || 'Arquivo temporário ausente' };
+    return { ok: false, error: (err && err.message) || 'Arquivo parcial ausente' };
   }
   if (asset.size > 0 && st.size !== asset.size) {
     log(logger, 'error', 'portable size mismatch', {
@@ -489,13 +657,57 @@ async function downloadPortableAsset(asset, opts = {}) {
     if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
     fs.renameSync(partPath, finalPath);
   } catch (err) {
-    return { ok: false, error: (err && err.message) || 'Falha ao finalizar download' };
+    // If rename across volumes fails, try copy+unlink
+    try {
+      fs.copyFileSync(partPath, finalPath);
+      fs.unlinkSync(partPath);
+    } catch (err2) {
+      return {
+        ok: false,
+        error: (err2 && err2.message) || (err && err.message) || 'Falha ao finalizar download',
+      };
+    }
+  }
+
+  // Safety: final exe must not remain under the helper temp prefix
+  try {
+    const tempRoot = path.resolve(app.getPath('temp'));
+    const resolvedFinal = path.resolve(finalPath);
+    if (
+      resolvedFinal.toLowerCase().startsWith(path.join(tempRoot, 'MultiHeiz-update').toLowerCase())
+    ) {
+      log(logger, 'error', 'portable final path under update temp — refusing', {
+        path: finalPath,
+      });
+      try {
+        fs.unlinkSync(finalPath);
+      } catch {
+        /* ignore */
+      }
+      return {
+        ok: false,
+        error: 'Destino inválido: o executável final não pode ficar na pasta temporária',
+      };
+    }
+  } catch {
+    /* ignore temp check failures */
   }
 
   downloadedExePath = finalPath;
   pendingAsset = asset;
-  log(logger, 'info', 'portable download complete', { path: finalPath });
-  return { ok: true, path: finalPath, asset };
+  log(logger, 'info', 'portable download complete', {
+    path: finalPath,
+    mode: dest.mode,
+  });
+  return {
+    ok: true,
+    path: finalPath,
+    asset,
+    mode: dest.mode,
+    message: dest.message || null,
+    relaunchPath: dest.relaunchPath,
+    notWritable: dest.mode === 'downloads',
+  };
 }
 
 /**
@@ -681,19 +893,17 @@ function wipeDownloaded(filePath) {
 }
 
 /**
- * Write helper .ps1 and spawn detached. On success quits the app.
+ * Write helper .ps1 (in temp) and spawn detached. On success quits the app.
  * Re-verifies hash immediately before writing/running the helper.
+ * same-folder: replace original exe then relaunch it.
+ * downloads: relaunch the Downloads copy (no replace of the non-writable original).
  * @param {{ logger?: object, skipQuit?: boolean }} [opts]
  */
 function applyPortableAndRelaunch(opts = {}) {
   const { logger, skipQuit } = opts;
-  const target = portableTargetPath();
   const source = downloadedExePath;
   if (!source || !fs.existsSync(source)) {
     return { ok: false, error: 'Arquivo de atualização não encontrado' };
-  }
-  if (!target) {
-    return { ok: false, error: 'Caminho do executável portátil desconhecido' };
   }
 
   const asset = pendingAsset;
@@ -710,21 +920,37 @@ function applyPortableAndRelaunch(opts = {}) {
     return recheck;
   }
 
-  const targetDir = path.dirname(target);
-  if (!canWriteDir(targetDir)) {
-    return {
-      ok: false,
-      error: 'Sem permissão para escrever na pasta do executável',
-      notWritable: true,
-      downloadPath: source,
-      downloadDir: path.dirname(source),
-    };
+  const dest =
+    activeDest && activeDest.finalPath
+      ? activeDest
+      : resolveLivePortableDestination({
+          version: asset.version,
+          assetName: asset.name,
+        });
+
+  const replaceInPlace = dest.mode === 'same-folder' && !!dest.originalExe;
+  const target = replaceInPlace ? dest.originalExe : source;
+  const relaunchPath = dest.relaunchPath || source;
+
+  if (replaceInPlace) {
+    const targetDir = path.dirname(target);
+    if (!canWriteDir(targetDir)) {
+      return {
+        ok: false,
+        error:
+          dest.message ||
+          'Sem permissão na pasta do MultiHeiz; a nova versão foi salva em: ' + source,
+        notWritable: true,
+        downloadPath: source,
+        downloadDir: path.dirname(source),
+      };
+    }
   }
 
-  const dir = path.dirname(source);
-  fs.mkdirSync(dir, { recursive: true });
-  const helperPath = path.join(dir, `apply-update-${process.pid}.ps1`);
-  const backupPath = target + '.old';
+  const helperDir = ensureUniqueTempDir();
+  fs.mkdirSync(helperDir, { recursive: true });
+  const helperPath = path.join(helperDir, `apply-update-${process.pid}.ps1`);
+  const backupPath = replaceInPlace ? target + '.old' : null;
   const skipPidWait = process.env.MULTIHEIZ_PORTABLE_SKIP_PID_WAIT === '1';
   const pid = skipPidWait ? -1 : process.pid;
   const relaunchCmd =
@@ -733,15 +959,17 @@ function applyPortableAndRelaunch(opts = {}) {
       : null;
 
   const psEscape = (p) => String(p).replace(/'/g, "''");
-  const logPath = path.join(dir, `apply-update-${process.pid}.log`);
+  const logPath = path.join(helperDir, `apply-update-${process.pid}.log`);
   const ps = [
     '$ErrorActionPreference = "Continue"',
     `$target = '${psEscape(target)}'`,
     `$source = '${psEscape(source)}'`,
-    `$backup = '${psEscape(backupPath)}'`,
+    `$relaunch = '${psEscape(relaunchPath)}'`,
+    `$backup = '${psEscape(backupPath || '')}'`,
     `$pidWait = ${pid}`,
     `$helper = '${psEscape(helperPath)}'`,
     `$logFile = '${psEscape(logPath)}'`,
+    `$doReplace = $${replaceInPlace ? 'true' : 'false'}`,
     'function Log($m) { Add-Content -LiteralPath $logFile -Value $m -ErrorAction SilentlyContinue }',
     'Log "start"',
     'if ($pidWait -gt 0) {',
@@ -752,34 +980,47 @@ function applyPortableAndRelaunch(opts = {}) {
     '  }',
     '}',
     'Log "after-wait"',
-    '$ok = $false',
-    'for ($c = 0; $c -lt 15; $c++) {',
-    '  try {',
-    '    if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }',
-    '    if (Test-Path -LiteralPath $target) { Move-Item -LiteralPath $target -Destination $backup -Force }',
-    '    Copy-Item -LiteralPath $source -Destination $target -Force',
-    '    $ok = $true',
-    '    Log "copied try=$c"',
-    '    break',
-    '  } catch {',
-    '    Log ("copy-fail " + $_.Exception.Message)',
-    '    Start-Sleep -Seconds 1',
-    '  }',
-    '}',
-    'if (-not $ok) {',
-    '  if (Test-Path -LiteralPath $backup) { Move-Item -LiteralPath $backup -Destination $target -Force -ErrorAction SilentlyContinue }',
-    '  Log "fail"',
-    '  exit 1',
-    '}',
-    'if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }',
   ];
+
+  if (replaceInPlace) {
+    ps.push(
+      '$ok = $false',
+      'for ($c = 0; $c -lt 15; $c++) {',
+      '  try {',
+      '    if ($backup -and (Test-Path -LiteralPath $backup)) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }',
+      '    if (Test-Path -LiteralPath $target) { Move-Item -LiteralPath $target -Destination $backup -Force }',
+      '    Copy-Item -LiteralPath $source -Destination $target -Force',
+      '    $ok = $true',
+      '    Log "copied try=$c"',
+      '    break',
+      '  } catch {',
+      '    Log ("copy-fail " + $_.Exception.Message)',
+      '    Start-Sleep -Seconds 1',
+      '  }',
+      '}',
+      'if (-not $ok) {',
+      '  if ($backup -and (Test-Path -LiteralPath $backup)) { Move-Item -LiteralPath $backup -Destination $target -Force -ErrorAction SilentlyContinue }',
+      '  Log "fail"',
+      '  exit 1',
+      '}',
+      'if ($backup -and (Test-Path -LiteralPath $backup)) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }',
+      // Drop versioned download if it is distinct from the replaced target
+      'if ($source -ne $target -and (Test-Path -LiteralPath $source)) {',
+      '  Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue',
+      '  Log "removed-source-copy"',
+      '}'
+    );
+  } else {
+    ps.push('Log "downloads-relaunch-only"');
+  }
+
   if (relaunchCmd) {
     ps.push('try {');
     ps.push('  ' + relaunchCmd);
     ps.push('  Log "relaunch-ok"');
     ps.push('} catch { Log ("relaunch-fail " + $_.Exception.Message) }');
   } else {
-    ps.push('Start-Process -FilePath $target');
+    ps.push('Start-Process -FilePath $relaunch');
     ps.push('Log "relaunched"');
   }
   ps.push('Remove-Item -LiteralPath $helper -Force -ErrorAction SilentlyContinue');
@@ -788,7 +1029,13 @@ function applyPortableAndRelaunch(opts = {}) {
 
   // UTF-8 with BOM helps Windows PowerShell 5.1 parse non-ASCII paths
   fs.writeFileSync(helperPath, '\uFEFF' + ps.join('\r\n'), 'utf8');
-  log(logger, 'info', 'portable apply helper written', { helperPath, target, source });
+  log(logger, 'info', 'portable apply helper written', {
+    helperPath,
+    target,
+    source,
+    relaunchPath,
+    mode: dest.mode,
+  });
 
   const waitForHelper = process.env.MULTIHEIZ_PORTABLE_SKIP_PID_WAIT === '1';
   const child = spawn(
@@ -798,7 +1045,7 @@ function applyPortableAndRelaunch(opts = {}) {
       detached: !waitForHelper,
       stdio: 'ignore',
       windowsHide: true,
-      cwd: dir,
+      cwd: helperDir,
     }
   );
   if (waitForHelper) {
@@ -818,7 +1065,16 @@ function applyPortableAndRelaunch(opts = {}) {
       }
     }, 200);
   }
-  return { ok: true, helperPath, target, source, logPath, child };
+  return {
+    ok: true,
+    helperPath,
+    target,
+    source,
+    relaunchPath,
+    logPath,
+    child,
+    mode: dest.mode,
+  };
 }
 
 function openDownloadedFolder() {
@@ -847,24 +1103,62 @@ function resetPortableStateForTest() {
   downloadedExePath = null;
   pendingAsset = null;
   activeTempDir = null;
+  activeDest = null;
 }
 
 /**
- * Clean leftover .old next to portable exe and temp parts.
+ * Remove leftover .old / .part / .new next to portable exe, Downloads, and helper temp.
  */
 function cleanupPortableLeftovers(logger) {
   try {
+    const dirs = new Set();
     const target = portableTargetPath();
     if (target) {
-      const old = target + '.old';
-      if (fs.existsSync(old)) {
-        fs.unlinkSync(old);
-        log(logger, 'info', 'removed portable .old backup', { old });
+      dirs.add(path.dirname(target));
+      for (const suffix of ['.old', '.new', '.part']) {
+        const p = target + suffix;
+        if (fs.existsSync(p)) {
+          try {
+            fs.unlinkSync(p);
+            log(logger, 'info', 'removed portable leftover', { path: p });
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
+    try {
+      dirs.add(downloadsDirPath());
+    } catch {
+      /* ignore */
+    }
+    if (activeDest && activeDest.dir) dirs.add(activeDest.dir);
+    for (const dir of dirs) {
+      if (!dir || !fs.existsSync(dir)) continue;
+      try {
+        for (const name of fs.readdirSync(dir)) {
+          if (
+            /\.part$/i.test(name) ||
+            /\.old$/i.test(name) ||
+            /MultiHeiz-.*-portable\.exe\.new$/i.test(name)
+          ) {
+            try {
+              fs.unlinkSync(path.join(dir, name));
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      } catch {
+        /* ignore */
       }
     }
     if (activeTempDir && fs.existsSync(activeTempDir)) {
       for (const name of fs.readdirSync(activeTempDir)) {
-        if (name.endsWith('.part') || /^apply-update-.*\.cmd$/i.test(name)) {
+        if (
+          name.endsWith('.part') ||
+          /^apply-update-.*\.(cmd|ps1)$/i.test(name)
+        ) {
           try {
             fs.unlinkSync(path.join(activeTempDir, name));
           } catch {
@@ -882,6 +1176,7 @@ module.exports = {
   PORTABLE_ASSET_RE,
   compareSemver,
   portableTargetPath,
+  portableEnvDir,
   feedUrl,
   findPortableAsset,
   sha512FromLatestYml,
@@ -896,11 +1191,15 @@ module.exports = {
   cleanupPortableLeftovers,
   canWriteDir,
   tempUpdateDir,
+  ensureUniqueTempDir,
   httpGetBuffer,
   assertAllowedUpdateUrl,
   isAllowedUpdateHost,
   assetHasCryptoHash,
   verifyAssetHash,
+  resolvePortableUpdateDestination,
+  resolveLivePortableDestination,
+  downloadsDirPath,
   NO_HASH_MSG,
   GITHUB_UPDATE_HOSTS,
   MAX_REDIRECTS,

@@ -24,14 +24,22 @@ function assert(cond, msg) {
 /** Minimal electron stub so updater.js can load without Electron. */
 function installElectronStub(opts = {}) {
   const electronPath = require.resolve('electron');
+  const tempDir = opts.tempDir || os.tmpdir();
+  const downloadsDir = opts.downloadsDir || path.join(tempDir, 'Downloads');
+  try {
+    fs.mkdirSync(downloadsDir, { recursive: true });
+  } catch {
+    /* ignore */
+  }
   const stub = {
     app: {
       isPackaged: !!opts.isPackaged,
       getVersion: () => opts.version || '1.0.1',
-      getAppPath: () => opts.appPath || opts.tempDir || os.tmpdir(),
+      getAppPath: () => opts.appPath || tempDir,
       getPath: (name) => {
-        if (name === 'temp') return opts.tempDir || os.tmpdir();
-        return opts.tempDir || os.tmpdir();
+        if (name === 'temp') return tempDir;
+        if (name === 'downloads') return downloadsDir;
+        return tempDir;
       },
       quit() {},
     },
@@ -313,16 +321,91 @@ async function main() {
   assert(/versão instalada/i.test(st.message), 'dev message');
   console.log('PASS: unpackaged check shows installed-only message');
 
+  /* ---- resolvePortableUpdateDestination (pure) ---- */
+  {
+    clearUpdaterModules();
+    installElectronStub({
+      isPackaged: false,
+      version: '1.0.1',
+      tempDir: tempRoot,
+      downloadsDir: path.join(tempRoot, 'Downloads'),
+    });
+    updater = require('../src/main/updater');
+    const resolve = updater.portable.resolvePortableUpdateDestination;
+    assert(typeof resolve === 'function', 'resolvePortableUpdateDestination exported');
+
+    const same = resolve({
+      envFile: path.join(tempRoot, 'install', 'MultiHeiz-portable.exe'),
+      envDir: path.join(tempRoot, 'install'),
+      downloadsDir: path.join(tempRoot, 'Downloads'),
+      canWrite: true,
+      version: '2.0.0',
+      assetName: 'MultiHeiz-2.0.0-portable.exe',
+    });
+    assert(same.mode === 'same-folder', 'writable env -> same-folder');
+    assert(
+      same.finalPath === path.join(tempRoot, 'install', 'MultiHeiz-2.0.0-portable.exe'),
+      'same-folder finalPath'
+    );
+    assert(same.relaunchPath.endsWith('MultiHeiz-portable.exe'), 'relaunch original exe');
+
+    const noEnv = resolve({
+      envFile: null,
+      envDir: null,
+      downloadsDir: path.join(tempRoot, 'Downloads'),
+      canWrite: true,
+      version: '2.0.0',
+      assetName: 'MultiHeiz-2.0.0-portable.exe',
+    });
+    assert(noEnv.mode === 'downloads', 'no env -> downloads (safe fallback)');
+    assert(
+      noEnv.finalPath === path.join(tempRoot, 'Downloads', 'MultiHeiz-2.0.0-portable.exe'),
+      'no-env finalPath in Downloads'
+    );
+    assert(/Downloads/i.test(noEnv.message || ''), 'no-env message mentions Downloads');
+
+    const noEnvNoDl = resolve({
+      envFile: null,
+      envDir: null,
+      downloadsDir: null,
+      version: '2.0.0',
+    });
+    assert(noEnvNoDl.mode === 'none', 'no env + no downloads -> none');
+    assert(/desconhecido/i.test(noEnvNoDl.message || ''), 'none message');
+
+    const ro = resolve({
+      envFile: path.join(tempRoot, 'ro', 'MultiHeiz-portable.exe'),
+      downloadsDir: path.join(tempRoot, 'Downloads'),
+      canWrite: () => false,
+      version: '2.0.0',
+      assetName: 'MultiHeiz-2.0.0-portable.exe',
+    });
+    assert(ro.mode === 'downloads', 'not writable -> downloads');
+    assert(
+      ro.finalPath === path.join(tempRoot, 'Downloads', 'MultiHeiz-2.0.0-portable.exe'),
+      'ro finalPath in Downloads'
+    );
+    assert(/Sem permissão/i.test(ro.message || ''), 'ro message pt-BR');
+    console.log('PASS: resolvePortableUpdateDestination same-folder / none / downloads');
+  }
+
   /* ---- Portable full flow with local fake feed (Windows-only: PowerShell/.exe) ---- */
   if (process.platform !== 'win32') {
     console.log('SKIP: fake portable e2e (Windows only)');
   } else {
   clearUpdaterModules();
+  const portableDir = path.join(tempRoot, 'portable-install');
+  const appTemp = path.join(tempRoot, 'app-temp');
+  const downloadsDir = path.join(tempRoot, 'Downloads');
+  fs.mkdirSync(portableDir, { recursive: true });
+  fs.mkdirSync(appTemp, { recursive: true });
+  fs.mkdirSync(downloadsDir, { recursive: true });
+
   const fakeBytes = Buffer.from('FAKE-PORTABLE-EXE-' + Date.now());
   const sha256 = crypto.createHash('sha256').update(fakeBytes).digest('hex');
   const remoteVer = '9.9.9';
   const assetName = `MultiHeiz-${remoteVer}-portable.exe`;
-  const targetExe = path.join(tempRoot, 'MultiHeiz-1.0.1-portable.exe');
+  const targetExe = path.join(portableDir, 'MultiHeiz-1.0.1-portable.exe');
   fs.writeFileSync(targetExe, Buffer.from('OLD-EXE'));
   const markerPath = path.join(tempRoot, 'relaunched.marker');
 
@@ -414,7 +497,8 @@ async function main() {
   installElectronStub({
     isPackaged: true,
     version: '1.0.1',
-    tempDir: tempRoot,
+    tempDir: appTemp,
+    downloadsDir,
   });
   updater = require('../src/main/updater');
   updater.resetStatusForTest();
@@ -432,7 +516,29 @@ async function main() {
   const dlPath = updater.portable.getDownloadedPath();
   assert(dlPath && fs.existsSync(dlPath), 'downloaded file exists');
   assert(fs.readFileSync(dlPath).equals(fakeBytes), 'downloaded bytes match');
-  console.log('PASS: portable download + sha256 verify');
+  assert(
+    path.dirname(dlPath).toLowerCase() === portableDir.toLowerCase(),
+    'download lands in portable folder: ' + dlPath
+  );
+  assert(
+    !dlPath.toLowerCase().startsWith(appTemp.toLowerCase()),
+    'final exe must not be under app temp: ' + dlPath
+  );
+  // No final .exe under MultiHeiz-update-* temp helpers
+  if (fs.existsSync(appTemp)) {
+    const walk = (dir) => {
+      for (const name of fs.readdirSync(dir)) {
+        const p = path.join(dir, name);
+        const stEnt = fs.statSync(p);
+        if (stEnt.isDirectory()) walk(p);
+        else if (/\.exe$/i.test(name) && !/\.part$/i.test(name)) {
+          assert(false, 'unexpected final exe in temp: ' + p);
+        }
+      }
+    };
+    walk(appTemp);
+  }
+  console.log('PASS: portable download + sha256 verify (same-folder, not temp)');
 
   const apply = updater.portable.applyPortableAndRelaunch({
     logger: console,
@@ -481,6 +587,48 @@ async function main() {
   assert(!noHash.ok, 'no-hash feed should be refused');
   assert(/hash|SHA/i.test(noHash.error || ''), 'no-hash message: ' + noHash.error);
   console.log('PASS: missing hash -> refuse');
+
+  /* Not writable folder -> Downloads (canWrite simulation) */
+  updater.portable.resetPortableStateForTest();
+  process.env.MULTIHEIZ_UPDATE_FEED_URL = `http://127.0.0.1:${serverPort}/releases/latest`;
+  const checkedRo = await updater.portable.checkPortableUpdate({ logger: null });
+  assert(checkedRo.ok && checkedRo.asset, 'writable check for ro download');
+  const roDl = await updater.portable.downloadPortableAsset(checkedRo.asset, {
+    logger: null,
+    canWrite: () => false,
+  });
+  assert(roDl.ok, 'ro download ok: ' + (roDl.error || ''));
+  assert(roDl.mode === 'downloads', 'ro mode downloads');
+  assert(
+    path.dirname(roDl.path).toLowerCase() === downloadsDir.toLowerCase(),
+    'ro path in Downloads: ' + roDl.path
+  );
+  assert(/Sem permissão/i.test(roDl.message || ''), 'ro download message');
+  assert(
+    !roDl.path.toLowerCase().startsWith(appTemp.toLowerCase()),
+    'ro final exe not in temp'
+  );
+  console.log('PASS: not writable -> Downloads (no temp exe)');
+
+  /* Env undefined -> Downloads */
+  updater.portable.resetPortableStateForTest();
+  const prevFake = process.env.MULTIHEIZ_FAKE_PORTABLE_FILE;
+  delete process.env.MULTIHEIZ_FAKE_PORTABLE_FILE;
+  delete process.env.PORTABLE_EXECUTABLE_FILE;
+  delete process.env.PORTABLE_EXECUTABLE_DIR;
+  const checkedNoEnv = await updater.portable.checkPortableUpdate({ logger: null });
+  assert(checkedNoEnv.ok && checkedNoEnv.asset, 'no-env feed ok');
+  const noEnvDl = await updater.portable.downloadPortableAsset(checkedNoEnv.asset, {
+    logger: null,
+  });
+  assert(noEnvDl.ok, 'no-env download ok: ' + (noEnvDl.error || ''));
+  assert(noEnvDl.mode === 'downloads', 'no-env mode downloads');
+  assert(
+    path.dirname(noEnvDl.path).toLowerCase() === downloadsDir.toLowerCase(),
+    'no-env path in Downloads'
+  );
+  process.env.MULTIHEIZ_FAKE_PORTABLE_FILE = prevFake;
+  console.log('PASS: env undefined -> Downloads');
 
   await new Promise((resolve) => server.close(resolve));
 

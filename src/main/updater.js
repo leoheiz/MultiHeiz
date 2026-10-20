@@ -638,15 +638,21 @@ async function downloadUpdate() {
         channel,
       });
     }
+    const savedElsewhere = r.mode === 'downloads' || !!r.notWritable;
     return setStatus({
       status: 'ready',
-      message: `Pronto — Reiniciar para atualizar`,
+      message:
+        r.message ||
+        (savedElsewhere
+          ? `Nova versão salva em: ${r.path}`
+          : 'Pronto — Reiniciar para atualizar'),
       version: asset.version,
       percent: 100,
       bytesPerSecond: null,
       canInstall: true,
       canDownload: false,
       downloadPath: r.path,
+      notWritable: savedElsewhere,
       channel,
     });
   }
