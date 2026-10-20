@@ -12,11 +12,14 @@
   </head>
   <body>
     <div id="app">
+      <!-- Thin DOM strip so mouse events reach the app when panels (WebContentsView) fill the window -->
+      <div id="sidebar-hotzone" class="hidden" aria-hidden="true" title=""></div>
       <aside id="sidebar" aria-label="Janelas">
         <div class="sidebar-head">
           <span class="brand">MultiHeiz</span>
-          <button type="button" id="btn-sidebar-toggle" class="btn icon ghost" title="Recolher barra lateral" aria-label="Recolher barra lateral">
-            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+          <button type="button" id="btn-sidebar-toggle" class="btn icon ghost" title="Esconder automaticamente" aria-label="Esconder automaticamente">
+            <svg class="ico ico-sidebar-hide" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+            <svg class="ico ico-sidebar-pin hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6.5l2.5 2.5V15H6.5v-2l2.5-2.5z"/></svg>
           </button>
         </div>
         <button type="button" id="btn-add-account" class="btn primary sidebar-new-window" title="Nova janela (Ctrl+T)" aria-label="Nova janela">

@@ -61,13 +61,33 @@ let state = {
   page: 0,
   maximizedAccountId: null,
   settings: {},
-  ui: { sidebarCollapsed: false, layoutLocked: true, sidebarWidth: SIDEBAR_W_DEFAULT },
+  ui: {
+    sidebarCollapsed: false,
+    sidebarAutoHide: false,
+    layoutLocked: true,
+    sidebarWidth: SIDEBAR_W_DEFAULT,
+  },
   appearance: { ...THEME_PRESETS.escuro },
   freeTiles: {},
 };
 
+/** Hot-zone width (must match --sidebar-hotzone-w) */
+const SIDEBAR_HOTZONE_PX = 5;
+/** Delay before revealing sidebar from hot-zone (avoid accidental triggers) */
+const SIDEBAR_SHOW_DELAY_MS = 150;
+/** Delay before hiding sidebar after mouse leave */
+const SIDEBAR_HIDE_DELAY_MS = 300;
+
 /** When true, user forced the sidebar open while under the auto-collapse breakpoint */
 let sidebarForceExpanded = false;
+/** Auto-hide overlay currently slid in (session; not persisted) */
+let sidebarAutoHideOpen = false;
+/** Native Menu.popup from sidebar account context menu is open */
+let sidebarNativeMenuOpen = false;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let sidebarShowTimer = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let sidebarHideTimer = null;
 /** Current zoom factor for the focused panel */
 let focusedZoom = 1;
 /** @type {Map<string, number>} accountId -> zoom factor (for header chips) */
@@ -110,6 +130,7 @@ let tileDrag = null;
 const el = {
   app: document.getElementById('app'),
   sidebar: document.getElementById('sidebar'),
+  sidebarHotzone: document.getElementById('sidebar-hotzone'),
   sidebarList: document.getElementById('sidebar-list'),
   btnSidebarToggle: document.getElementById('btn-sidebar-toggle'),
   tabs: document.getElementById('workspace-tabs'),
@@ -348,7 +369,17 @@ function applyAppearance(appearance) {
 
 function applyState(next) {
   state = next;
-  if (!state.ui) state.ui = { sidebarCollapsed: false, layoutLocked: true, sidebarWidth: SIDEBAR_W_DEFAULT };
+  if (!state.ui) {
+    state.ui = {
+      sidebarCollapsed: false,
+      sidebarAutoHide: false,
+      layoutLocked: true,
+      sidebarWidth: SIDEBAR_W_DEFAULT,
+    };
+  }
+  if (typeof state.ui.sidebarAutoHide !== 'boolean') {
+    state.ui.sidebarAutoHide = false;
+  }
   if (typeof state.ui.sidebarWidth !== 'number' || !Number.isFinite(state.ui.sidebarWidth)) {
     state.ui.sidebarWidth = SIDEBAR_W_DEFAULT;
   }
@@ -363,6 +394,104 @@ function applyState(next) {
   }
 }
 
+function isSidebarAutoHide() {
+  return !!(state.ui && state.ui.sidebarAutoHide);
+}
+
+function isChromeHiddenMode() {
+  return document.body.classList.contains('is-chrome-hidden');
+}
+
+function clearSidebarHoverTimers() {
+  if (sidebarShowTimer) {
+    clearTimeout(sidebarShowTimer);
+    sidebarShowTimer = null;
+  }
+  if (sidebarHideTimer) {
+    clearTimeout(sidebarHideTimer);
+    sidebarHideTimer = null;
+  }
+}
+
+/**
+ * Keep auto-hide sidebar open while a menu / rename field inside it is active.
+ */
+function shouldHoldSidebarOpen() {
+  if (sidebarNativeMenuOpen) return true;
+  if (document.querySelector('.context-menu')) return true;
+  if (document.querySelector('.panel-ext-menu')) return true;
+  const ae = document.activeElement;
+  if (ae && el.sidebar && el.sidebar.contains(ae)) {
+    const tag = (ae.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || ae.isContentEditable) return true;
+  }
+  return false;
+}
+
+/**
+ * Sync main-process WebContentsView inset for the sidebar overlay strip.
+ * @param {boolean} open
+ */
+async function syncSidebarOverlayBounds(open) {
+  if (!window.multiheiz.setSidebarOverlay) return;
+  const w =
+    open && isSidebarAutoHide() && !isChromeHiddenMode()
+      ? clampSidebarWidth(state.ui && state.ui.sidebarWidth)
+      : 0;
+  try {
+    await window.multiheiz.setSidebarOverlay(w);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * @param {boolean} open
+ * @param {{ skipDelay?: boolean }} [opts]
+ */
+function setSidebarAutoHideOpen(open, opts = {}) {
+  if (!isSidebarAutoHide() || isChromeHiddenMode()) {
+    open = false;
+  }
+  const next = !!open;
+  if (next === sidebarAutoHideOpen && !opts.force) {
+    if (next) clearSidebarHoverTimers();
+    return;
+  }
+  sidebarAutoHideOpen = next;
+  if (el.app) el.app.classList.toggle('sidebar-auto-hide-open', next);
+  if (el.sidebar) {
+    el.sidebar.classList.toggle('auto-hide-open', next);
+  }
+  syncSidebarOverlayBounds(next);
+  // Overlay does not change flex layout; still nudge sync so main reapplies transform.
+  scheduleSync();
+}
+
+function requestSidebarShow() {
+  if (!isSidebarAutoHide() || isChromeHiddenMode()) return;
+  clearSidebarHoverTimers();
+  if (sidebarAutoHideOpen) return;
+  sidebarShowTimer = setTimeout(() => {
+    sidebarShowTimer = null;
+    setSidebarAutoHideOpen(true);
+  }, SIDEBAR_SHOW_DELAY_MS);
+}
+
+function requestSidebarHide() {
+  if (!isSidebarAutoHide()) return;
+  clearSidebarHoverTimers();
+  if (!sidebarAutoHideOpen) return;
+  sidebarHideTimer = setTimeout(() => {
+    sidebarHideTimer = null;
+    if (shouldHoldSidebarOpen()) {
+      requestSidebarHide();
+      return;
+    }
+    setSidebarAutoHideOpen(false);
+  }, SIDEBAR_HIDE_DELAY_MS);
+}
+
 function clampSidebarWidth(w) {
   const n = Math.round(Number(w) || SIDEBAR_W_DEFAULT);
   return Math.min(SIDEBAR_W_MAX, Math.max(SIDEBAR_W_MIN, n));
@@ -374,22 +503,58 @@ function applySidebarWidthCss() {
 }
 
 function isSidebarEffectivelyCollapsed() {
+  // Auto-hide uses overlay + hot-zone, not the icon-rail collapsed width.
+  if (isSidebarAutoHide()) return false;
   const userCollapsed = !!(state.ui && state.ui.sidebarCollapsed);
   const auto = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT && !sidebarForceExpanded;
   return userCollapsed || auto;
 }
 
+function updateSidebarToggleUi() {
+  if (!el.btnSidebarToggle) return;
+  const autoHide = isSidebarAutoHide();
+  const label = autoHide ? 'Fixar barra lateral' : 'Esconder automaticamente';
+  el.btnSidebarToggle.title = label;
+  el.btnSidebarToggle.setAttribute('aria-label', label);
+  const hideIco = el.btnSidebarToggle.querySelector('.ico-sidebar-hide');
+  const pinIco = el.btnSidebarToggle.querySelector('.ico-sidebar-pin');
+  if (hideIco) hideIco.classList.toggle('hidden', autoHide);
+  if (pinIco) pinIco.classList.toggle('hidden', !autoHide);
+}
+
 function updateSidebarCollapseClasses() {
+  const autoHide = isSidebarAutoHide();
   const userCollapsed = !!(state.ui && state.ui.sidebarCollapsed);
-  const auto = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT && !sidebarForceExpanded && !userCollapsed;
+  const auto =
+    !autoHide &&
+    window.innerWidth < SIDEBAR_AUTO_BREAKPOINT &&
+    !sidebarForceExpanded &&
+    !userCollapsed;
   const collapsed = isSidebarEffectivelyCollapsed();
+
+  if (el.app) {
+    el.app.classList.toggle('sidebar-auto-hide', autoHide);
+    el.app.classList.toggle('sidebar-auto-hide-open', autoHide && sidebarAutoHideOpen);
+  }
+  if (el.sidebarHotzone) {
+    const showZone = autoHide && !isChromeHiddenMode();
+    el.sidebarHotzone.classList.toggle('hidden', !showZone);
+    el.sidebarHotzone.setAttribute('aria-hidden', showZone ? 'false' : 'true');
+  }
   el.sidebar.classList.toggle('collapsed', collapsed);
   el.sidebar.classList.toggle('auto-collapsed', auto);
-  if (el.btnSidebarToggle) {
-    const label = collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral';
-    el.btnSidebarToggle.title = label;
-    el.btnSidebarToggle.setAttribute('aria-label', label);
+  el.sidebar.classList.toggle('auto-hide-open', autoHide && sidebarAutoHideOpen);
+
+  if (!autoHide && sidebarAutoHideOpen) {
+    sidebarAutoHideOpen = false;
+    if (el.app) el.app.classList.remove('sidebar-auto-hide-open');
+    syncSidebarOverlayBounds(false);
   }
+  if (autoHide && isChromeHiddenMode() && sidebarAutoHideOpen) {
+    setSidebarAutoHideOpen(false);
+  }
+
+  updateSidebarToggleUi();
 }
 
 async function refresh() {
@@ -1786,22 +1951,47 @@ if (el.tabs) {
 window.addEventListener('resize', () => updateTabsOverflow());
 
 el.btnSidebarToggle.addEventListener('click', async () => {
-  const narrow = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT;
-  const currentlyCollapsed = isSidebarEffectivelyCollapsed();
-  if (narrow) {
-    if (currentlyCollapsed) {
-      sidebarForceExpanded = true;
-      applyState(await window.multiheiz.updateUi({ sidebarCollapsed: false }));
-    } else {
-      sidebarForceExpanded = false;
-      applyState(await window.multiheiz.updateUi({ sidebarCollapsed: true }));
-    }
-  } else {
-    sidebarForceExpanded = false;
-    const collapsed = !state.ui?.sidebarCollapsed;
-    applyState(await window.multiheiz.updateUi({ sidebarCollapsed: collapsed }));
+  clearSidebarHoverTimers();
+  sidebarForceExpanded = false;
+  const nextAutoHide = !isSidebarAutoHide();
+  if (!nextAutoHide) {
+    sidebarAutoHideOpen = false;
+    await syncSidebarOverlayBounds(false);
+  }
+  applyState(
+    await window.multiheiz.updateUi({
+      sidebarAutoHide: nextAutoHide,
+      // Clear legacy collapsed flag when using the new toggle.
+      sidebarCollapsed: false,
+    })
+  );
+  if (nextAutoHide) {
+    // Entering auto-hide: start hidden (panels full width + hot-zone).
+    setSidebarAutoHideOpen(false);
   }
 });
+
+/* Auto-hide: hot-zone reveal + leave-to-hide (mouseleave into a WebContentsView fires on the sidebar) */
+(function setupSidebarAutoHideHover() {
+  if (el.sidebarHotzone) {
+    el.sidebarHotzone.addEventListener('mouseenter', () => requestSidebarShow());
+    el.sidebarHotzone.addEventListener('mouseleave', () => {
+      // If moving into the open sidebar, do not schedule hide.
+      if (sidebarAutoHideOpen) return;
+      clearSidebarHoverTimers();
+    });
+  }
+  if (el.sidebar) {
+    el.sidebar.addEventListener('mouseenter', () => {
+      if (!isSidebarAutoHide()) return;
+      clearSidebarHoverTimers();
+    });
+    el.sidebar.addEventListener('mouseleave', () => {
+      if (!isSidebarAutoHide() || !sidebarAutoHideOpen) return;
+      requestSidebarHide();
+    });
+  }
+})();
 
 el.btnLayoutLock.addEventListener('click', async () => {
   applyState(await window.multiheiz.updateUi({ layoutLocked: !isLayoutLocked() }));
@@ -2007,7 +2197,7 @@ if (typeof ResizeObserver === 'function') {
   let startX = 0;
   let startW = SIDEBAR_W_DEFAULT;
   handle.addEventListener('mousedown', (e) => {
-    if (isSidebarEffectivelyCollapsed()) return;
+    if (isSidebarEffectivelyCollapsed() || isSidebarAutoHide()) return;
     dragging = true;
     startX = e.clientX;
     startW = el.sidebar.getBoundingClientRect().width;
@@ -2086,7 +2276,19 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'chrome:hidden') {
     document.body.classList.toggle('is-chrome-hidden', !!payload.hidden);
+    if (payload.hidden) {
+      clearSidebarHoverTimers();
+      setSidebarAutoHideOpen(false);
+    }
+    updateSidebarCollapseClasses();
     scheduleSync();
+    return;
+  }
+  if (payload.type === 'sidebar:native-menu') {
+    sidebarNativeMenuOpen = !!payload.open;
+    if (!sidebarNativeMenuOpen && isSidebarAutoHide() && sidebarAutoHideOpen) {
+      requestSidebarHide();
+    }
     return;
   }
   if (payload.type === 'overlay:snapshots') {
@@ -2467,6 +2669,48 @@ window.__multiheizUi = {
       sidebar: measure(el.sidebar),
       statusbar: measure(statusEl),
     };
+  },
+  getSidebarMode: () => {
+    const cs = el.sidebar ? getComputedStyle(el.sidebar) : null;
+    const hz = el.sidebarHotzone;
+    const hzCs = hz ? getComputedStyle(hz) : null;
+    return {
+      autoHide: isSidebarAutoHide(),
+      open: !!sidebarAutoHideOpen,
+      chromeHidden: isChromeHiddenMode(),
+      toggleTitle: el.btnSidebarToggle ? el.btnSidebarToggle.title : '',
+      sidebarWidth: el.sidebar ? el.sidebar.getBoundingClientRect().width : 0,
+      hotzoneWidth: hz && !hz.classList.contains('hidden') ? hz.getBoundingClientRect().width : 0,
+      hotzoneHidden: !hz || hz.classList.contains('hidden'),
+      transform: cs ? cs.transform : '',
+      appClassAutoHide: !!(el.app && el.app.classList.contains('sidebar-auto-hide')),
+      hotzoneDisplay: hzCs ? hzCs.display : 'none',
+      delays: { showMs: SIDEBAR_SHOW_DELAY_MS, hideMs: SIDEBAR_HIDE_DELAY_MS },
+      hotzonePx: SIDEBAR_HOTZONE_PX,
+    };
+  },
+  /** Simulate hot-zone / leave for selftests (bypasses real mouse over WebContentsView). */
+  sidebarHotzoneEnter: () => {
+    requestSidebarShow();
+    return true;
+  },
+  sidebarHotzoneLeave: () => {
+    clearSidebarHoverTimers();
+    return true;
+  },
+  sidebarMouseLeave: () => {
+    requestSidebarHide();
+    return true;
+  },
+  setSidebarAutoHideOpen: (open) => {
+    clearSidebarHoverTimers();
+    setSidebarAutoHideOpen(!!open);
+    return !!sidebarAutoHideOpen;
+  },
+  toggleSidebarAutoHide: async () => {
+    if (el.btnSidebarToggle) el.btnSidebarToggle.click();
+    await new Promise((r) => setTimeout(r, 50));
+    return window.__multiheizUi.getSidebarMode();
   },
   getTitlebarMetrics: () => {
     const bar = el.topbar;

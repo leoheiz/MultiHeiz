@@ -207,6 +207,7 @@ const SELFTEST_SECURITY = selftestMode === 'security';
 const SELFTEST_UA = selftestMode === 'ua';
 const SELFTEST_GIS = selftestMode === 'gis';
 const SELFTEST_STORE = selftestMode === 'store';
+const SELFTEST_SIDEBAR = selftestMode === 'sidebar';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -231,7 +232,8 @@ const ANY_SELFTEST =
   SELFTEST_SECURITY ||
   SELFTEST_UA ||
   SELFTEST_GIS ||
-  SELFTEST_STORE;
+  SELFTEST_STORE ||
+  SELFTEST_SIDEBAR;
 
 // YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
 if (SELFTEST_ABU_YT || SELFTEST_BUILTIN_YT) {
@@ -508,16 +510,17 @@ function createWindow() {
     SELFTEST_V110 ||
     SELFTEST_V120 ||
     SELFTEST_TITLEBAR ||
-    SELFTEST_FULLSCREEN
+    SELFTEST_FULLSCREEN ||
+    SELFTEST_SIDEBAR
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
         }
       : null;
 
-  // adblock-real: keep window off-screen / hidden so nothing pops on Leo's desktop,
-  // but still paint (screenshots / layout).
-  const offscreenSelftest = SELFTEST_ADBLOCK_REAL;
+  // adblock-real / sidebar: keep window off-screen so nothing pops on the desktop,
+  // but still paint (layout / WebContentsView bounds).
+  const offscreenSelftest = SELFTEST_ADBLOCK_REAL || SELFTEST_SIDEBAR;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -552,6 +555,7 @@ function createWindow() {
     height: winH,
     x: offscreenSelftest ? -20000 : winX,
     y: offscreenSelftest ? -20000 : winY,
+    // note: uiSize (incl. sidebar) still gets width/height from MULTIHEIZ_UI_* above
     minWidth: 800,
     minHeight: 500,
     title: APP_DISPLAY_NAME,
@@ -568,6 +572,7 @@ function createWindow() {
       SELFTEST_V120 ||
       SELFTEST_TITLEBAR ||
       SELFTEST_FULLSCREEN ||
+      SELFTEST_SIDEBAR ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
       SELFTEST_UA,
@@ -1032,6 +1037,32 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_SIDEBAR) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runSidebarSelftest } = require('./selftest-sidebar');
+          runSidebarSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            chromeFullscreen,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_EXT) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -1247,7 +1278,7 @@ function publicState() {
     page: s.page,
     maximizedAccountId: s.maximizedAccountId,
     settings: s.settings,
-    ui: s.ui || { sidebarCollapsed: false, layoutLocked: true },
+    ui: s.ui || { sidebarCollapsed: false, sidebarAutoHide: false, layoutLocked: true },
     appearance: s.appearance,
     freeTiles: s.freeTiles || {},
   };
@@ -1667,6 +1698,11 @@ function registerIpc() {
   ipcMain.handle('layout:sync', (_e, slots) => {
     if (!Array.isArray(slots)) return;
     panels.syncVisiblePanels(slots);
+  });
+
+  ipcMain.handle('sidebar:set-overlay', (_e, widthPx) => {
+    panels.setSidebarOverlayWidth(widthPx);
+    return { ok: true, width: panels.getSidebarOverlayWidth() };
   });
 
   ipcMain.handle('overlay:set', async (_e, { id, active }) => {
@@ -3226,6 +3262,10 @@ function popupAccountMenu(opts) {
   }
 
   const menu = Menu.buildFromTemplate(template);
+  emitToRenderer({ type: 'sidebar:native-menu', open: true });
+  menu.once('menu-will-close', () => {
+    emitToRenderer({ type: 'sidebar:native-menu', open: false });
+  });
   menu.popup({ window: mainWindow, x, y });
   return { ok: true, intercepted: false, labels, x, y, accountId };
 }

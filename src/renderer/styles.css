@@ -14,6 +14,8 @@
   --statusbar-h: 28px;
   --sidebar-w: 240px;
   --sidebar-w-collapsed: 52px;
+  /* Hot-zone strip when sidebar is in auto-hide (must be real DOM under WebContentsViews) */
+  --sidebar-hotzone-w: 5px;
   --panel-header-h: 30px;
   --radius: 8px;
   --radius-sm: 6px;
@@ -94,6 +96,25 @@ body {
   width: 100%;
 }
 
+#sidebar-hotzone {
+  width: var(--sidebar-hotzone-w);
+  flex-shrink: 0;
+  align-self: stretch;
+  z-index: 25;
+  background: transparent;
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+#sidebar-hotzone.hidden {
+  display: none;
+}
+
+/* While the overlay sidebar is open, let events hit the sidebar under the strip */
+#app.sidebar-auto-hide-open #sidebar-hotzone {
+  pointer-events: none;
+}
+
 #sidebar {
   width: var(--sidebar-w);
   flex-shrink: 0;
@@ -101,7 +122,7 @@ body {
   flex-direction: column;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border);
-  transition: width var(--transition);
+  transition: width var(--transition), transform 180ms ease;
   z-index: 2;
   min-width: 0;
   max-width: 100%;
@@ -109,6 +130,39 @@ body {
   overflow-y: hidden;
   box-sizing: border-box;
   position: relative;
+}
+
+/*
+ * Auto-hide: sidebar leaves the flex flow (absolute) so panels keep full width.
+ * A separate #sidebar-hotzone provides the ~5px mouse strip. When open, the sidebar
+ * slides in as an HTML overlay; main shifts WebContentsView bounds (see panels.js).
+ */
+#app.sidebar-auto-hide #sidebar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  transform: translateX(-100%);
+  pointer-events: none;
+  box-shadow: none;
+  z-index: 20;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+#app.sidebar-auto-hide #sidebar.auto-hide-open {
+  transform: translateX(0);
+  pointer-events: auto;
+  box-shadow: 4px 0 18px rgba(0, 0, 0, 0.35);
+}
+
+#app.sidebar-auto-hide #sidebar .sidebar-resize-handle {
+  display: none;
+}
+
+#btn-sidebar-toggle .ico-sidebar-pin.hidden,
+#btn-sidebar-toggle .ico-sidebar-hide.hidden {
+  display: none;
 }
 
 #sidebar.collapsed,
@@ -1100,6 +1154,7 @@ select {
 
 /* F11 focus mode: hide app chrome; panel grid fills the content area */
 body.is-chrome-hidden #sidebar,
+body.is-chrome-hidden #sidebar-hotzone,
 body.is-chrome-hidden #topbar,
 body.is-chrome-hidden #statusbar {
   display: none !important;
