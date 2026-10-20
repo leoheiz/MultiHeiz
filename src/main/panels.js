@@ -10,6 +10,7 @@ const {
   allowInternalDataUrls,
   isKnownIdentityProviderUrl,
   isAboutBlank,
+  sanitizeUserStartUrl,
 } = require('./url-policy');
 const history = require('./history');
 const downloads = require('./downloads');
@@ -19,6 +20,7 @@ const sessionPersist = require('./session-persist');
 const permissions = require('./permissions');
 const chromeFullscreen = require('./chrome-fullscreen');
 const extensions = require('./extensions');
+const contextMenu = require('./context-menu');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
@@ -49,6 +51,9 @@ let mainWindow = null;
 
 /** @type {(payload: object) => void} */
 let emitToRenderer = () => {};
+
+/** @type {() => object} */
+let getPublicState = () => getState();
 
 /**
  * Overlay ids currently open in the renderer (modals, popovers, menus).
@@ -150,9 +155,75 @@ const RETRYABLE_CODES = new Set([
   'ERR_INTERNET_DISCONNECTED',
 ]);
 
-function initPanels(win, emit) {
+/**
+ * @param {import('electron').BrowserWindow} win
+ * @param {(payload: object) => void} emit
+ * @param {{ getPublicState?: () => object }} [opts]
+ */
+function initPanels(win, emit, opts) {
   mainWindow = win;
   emitToRenderer = emit;
+  if (opts && typeof opts.getPublicState === 'function') {
+    getPublicState = opts.getPublicState;
+  }
+}
+
+/**
+ * Abre http(s) em nova janela MultiHeiz (mesma ideia de window.open / target=_blank
+ * com blankLinkMode new-panel / favoritos em janela nova).
+ * @param {string} fromAccountId
+ * @param {string} url
+ * @returns {{ ok: boolean, reason?: string, windowId?: string }}
+ */
+function openUrlInNewPanel(fromAccountId, url) {
+  const raw = String(url || '').trim();
+  if (!isNavigableUrl(raw) || classifyScheme(raw) !== 'web') {
+    return { ok: false, reason: 'blocked-scheme' };
+  }
+  const st = getState();
+  const id =
+    'acc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
+  const from = getAccount(fromAccountId);
+  const account = {
+    id,
+    name: 'Janela',
+    color: colors[(st.accounts || []).length % colors.length],
+    startUrl: sanitizeUserStartUrl(raw, 'https://www.google.com'),
+    workspaceId: (from && from.workspaceId) || st.activeWorkspaceId,
+    muted: false,
+    pauseInBackground: false,
+    keepAliveInBackground: false,
+    privateHistory: false,
+    adblockEnabled: true,
+    lastUrl: null,
+    zoomFactor: 1,
+  };
+  updateState((s) => {
+    s.accounts.push(account);
+  });
+  try {
+    emitToRenderer({ type: 'state:changed', state: getPublicState() });
+  } catch {
+    /* ignore */
+  }
+  panelNavigate(id, raw);
+  return { ok: true, windowId: id };
+}
+
+/**
+ * Liga menu de contexto nativo a um webContents de painel/popup.
+ * @param {import('electron').WebContents} wc
+ * @param {string} accountId
+ */
+function wireContextMenu(wc, accountId) {
+  if (!wc) return;
+  contextMenu.attachContextMenu(wc, {
+    getWindow: () => mainWindow,
+    openInNewWindow: (url) => {
+      openUrlInNewPanel(accountId, url);
+    },
+  });
 }
 
 function getOverlayCount() {
@@ -633,6 +704,7 @@ function wireLoginPopupWindow(accountId, child, ses, initialUrl) {
   child.webContents.on('did-create-window', (nested, details) => {
     onDidCreateLoginWindow(accountId, nested, ses, details);
   });
+  wireContextMenu(child.webContents, accountId);
 }
 
 /**
@@ -1121,6 +1193,7 @@ function createPanel(accountId) {
   view.webContents.on('did-create-window', (childWin, details) => {
     onDidCreateLoginWindow(accountId, childWin, ses, details);
   });
+  wireContextMenu(view.webContents, accountId);
 
   mainWindow.contentView.addChildView(view);
   const entry = {
@@ -2294,4 +2367,6 @@ module.exports = {
   handlePanelWindowOpen,
   findReusableLoginPopup,
   isLoginStylePopup,
+  openUrlInNewPanel,
+  wireContextMenu,
 };

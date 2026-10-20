@@ -210,6 +210,7 @@ const SELFTEST_GIS = selftestMode === 'gis';
 const SELFTEST_STORE = selftestMode === 'store';
 const SELFTEST_SIDEBAR = selftestMode === 'sidebar';
 const SELFTEST_WORKSPACE_DELETE = selftestMode === 'workspace-delete';
+const SELFTEST_CONTEXTMENU = selftestMode === 'contextmenu';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -236,7 +237,8 @@ const ANY_SELFTEST =
   SELFTEST_GIS ||
   SELFTEST_STORE ||
   SELFTEST_SIDEBAR ||
-  SELFTEST_WORKSPACE_DELETE;
+  SELFTEST_WORKSPACE_DELETE ||
+  SELFTEST_CONTEXTMENU;
 
 // YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
 if (SELFTEST_ABU_YT || SELFTEST_BUILTIN_YT) {
@@ -622,7 +624,7 @@ function createWindow() {
     }
   }
 
-  panels.initPanels(mainWindow, emitToRenderer);
+  panels.initPanels(mainWindow, emitToRenderer, { getPublicState: publicState });
   chromeFullscreen.init(mainWindow, emitToRenderer, notifyDisplayOrChromeChange, {
     getFocusedPanelId: () => panels.getFocusedAccountId(),
     focusPanelById: (accountId) => {
@@ -1242,6 +1244,30 @@ function createWindow() {
             adblock,
             userAgent,
             sessionPersist,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_CONTEXTMENU) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runContextMenuSelftest } = require('./selftest-contextmenu');
+          runContextMenuSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            app,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);

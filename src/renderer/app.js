@@ -2374,6 +2374,24 @@ window.multiheiz.onEvent((payload) => {
     scheduleSync();
     return;
   }
+  if (payload.type === 'ui:open-url-new-panel' && payload.url) {
+    (async () => {
+      try {
+        const res = await window.multiheiz.createAccount({
+          name: 'Janela',
+          startUrl: payload.url,
+        });
+        if (res && res.state) applyState(res.state);
+        if (res && res.account) {
+          await window.multiheiz.panelNavigate(res.account.id, payload.url);
+        }
+        scheduleSync();
+      } catch (err) {
+        console.warn('ui:open-url-new-panel', err);
+      }
+    })();
+    return;
+  }
   if (payload.type === 'ui:edit-account' && payload.accountId) {
     const acc = state.accounts.find((a) => a.id === payload.accountId);
     if (acc) openAccountDialog(acc);
