@@ -59,7 +59,11 @@ function parseStoreUrl(url) {
           /\/(?:addons\/)?detail\/(?:[^/]+\/)?([a-p]{32})(?:\/|$)/i
         );
         if (m && m[1] && CHROME_ID_RE.test(m[1])) {
-          const storeParam = (u.searchParams.get('store') || 'chrome').toLowerCase();
+          const pathSuggestsEdge = /\/addons\/detail\//i.test(u.pathname);
+          const storeParam = (
+            u.searchParams.get('store') ||
+            (pathSuggestsEdge ? 'edge' : 'chrome')
+          ).toLowerCase();
           const store = storeParam === 'edge' ? 'edge' : 'chrome';
           return { store, id: m[1].toLowerCase() };
         }

@@ -205,6 +205,7 @@ const SELFTEST_ABU_YT = selftestMode === 'abu-yt';
 const SELFTEST_SECURITY = selftestMode === 'security';
 const SELFTEST_UA = selftestMode === 'ua';
 const SELFTEST_GIS = selftestMode === 'gis';
+const SELFTEST_STORE = selftestMode === 'store';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -227,7 +228,8 @@ const ANY_SELFTEST =
   SELFTEST_ABU_YT ||
   SELFTEST_SECURITY ||
   SELFTEST_UA ||
-  SELFTEST_GIS;
+  SELFTEST_GIS ||
+  SELFTEST_STORE;
 
 // ABU YouTube selftest: map YT hosts to loopback (local HTTPS page-server).
 if (SELFTEST_ABU_YT) {
@@ -1159,6 +1161,30 @@ function createWindow() {
             adblock,
             userAgent,
             sessionPersist,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_STORE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runStoreSelftest } = require('./selftest-store');
+          runStoreSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            extensions,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);

@@ -28,6 +28,7 @@
     "selftest:titlebar": "node tools/selftest-titlebar.js",
     "selftest:fullscreen": "node tools/selftest-fullscreen.js",
     "selftest:ext": "node tools/selftest-ext.js",
+    "selftest:store": "node tools/selftest-store.js",
     "selftest:updater": "node tools/selftest-updater.js",
     "selftest:v110": "node tools/selftest-v110.js",
     "selftest:v120": "node tools/selftest-v120.js",
