@@ -34,6 +34,7 @@ const updater = require('./updater');
 const { clampBoundsToDisplays, ensureWindowOnDisplay } = require('./window-bounds');
 const windowChrome = require('./window-chrome');
 const chromeFullscreen = require('./chrome-fullscreen');
+const sidebarCursor = require('./sidebar-cursor');
 const ipcGuard = require('./ipc-guard');
 const permissions = require('./permissions');
 const { sanitizeUserStartUrl } = require('./url-policy');
@@ -637,6 +638,9 @@ function createWindow() {
       }
     },
   });
+  sidebarCursor.init(mainWindow, emitToRenderer, {
+    isChromeHidden: () => chromeFullscreen.isChromeHidden(),
+  });
   memory.initMemory(emitToRenderer);
 
   // Harden main UI: stay on local index.html; no webviews / window.open
@@ -1062,6 +1066,7 @@ function createWindow() {
             waitForLayoutSettle,
             waitForPanels,
             chromeFullscreen,
+            sidebarCursor,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -1767,6 +1772,10 @@ function registerIpc() {
     return { ok: true, width: panels.getSidebarOverlayWidth() };
   });
 
+  ipcMain.handle('sidebar:set-auto-hide-tracking', (_e, opts) => {
+    return sidebarCursor.setTracking(opts || {});
+  });
+
   ipcMain.handle('overlay:set', async (_e, { id, active }) => {
     return panels.setOverlay(id, !!active);
   });
@@ -1856,6 +1865,11 @@ function registerIpc() {
       if (!mainWindow || mainWindow.isDestroyed()) return null;
       return mainWindow.webContents.executeJavaScript(code, true);
     });
+    ipcMain.handle('selftest:sidebar-cursor-override', (_e, point) => {
+      return sidebarCursor.setCursorOverride(point == null ? null : point);
+    });
+    ipcMain.handle('selftest:sidebar-cursor-tracking', () => sidebarCursor.getTracking());
+    ipcMain.handle('selftest:sidebar-cursor-classify', () => sidebarCursor.classifyCursor());
   }
 }
 

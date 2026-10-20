@@ -27,6 +27,16 @@ contextBridge.exposeInMainWorld('multiheiz', {
   removeAccount: (id) => ipcRenderer.invoke('account:remove', id),
   syncLayout: (slots) => ipcRenderer.invoke('layout:sync', slots),
   setSidebarOverlay: (widthPx) => ipcRenderer.invoke('sidebar:set-overlay', widthPx),
+  setSidebarAutoHideTracking: (opts) =>
+    ipcRenderer.invoke('sidebar:set-auto-hide-tracking', opts || {}),
+  /** Subscribe to main-process cursor poll ({ inside }) for sidebar auto-hide. */
+  onSidebarCursor: (handler) => {
+    const listener = (_e, payload) => {
+      if (payload && payload.type === 'sidebar:cursor') handler(payload);
+    };
+    ipcRenderer.on('event', listener);
+    return () => ipcRenderer.removeListener('event', listener);
+  },
   setOverlay: (id, active) => ipcRenderer.invoke('overlay:set', { id, active }),
   setOverlayIds: (ids) => ipcRenderer.invoke('overlay:set-ids', ids),
   getOverlayCount: () => ipcRenderer.invoke('overlay:count'),

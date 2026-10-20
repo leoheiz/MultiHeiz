@@ -71,12 +71,12 @@ let state = {
   freeTiles: {},
 };
 
-/** Hot-zone width (must match --sidebar-hotzone-w) */
-const SIDEBAR_HOTZONE_PX = 5;
+/** Hot-zone DOM strip width (must match --sidebar-hotzone-w); main also polls ≤12px */
+const SIDEBAR_HOTZONE_PX = 6;
 /** Delay before revealing sidebar from hot-zone (avoid accidental triggers) */
 const SIDEBAR_SHOW_DELAY_MS = 150;
-/** Delay before hiding sidebar after mouse leave */
-const SIDEBAR_HIDE_DELAY_MS = 300;
+/** Delay before hiding after cursor left hot-zone/sidebar (main polling is source of truth) */
+const SIDEBAR_HIDE_DELAY_MS = 700;
 
 /** When true, user forced the sidebar open while under the auto-collapse breakpoint */
 let sidebarForceExpanded = false;
@@ -84,6 +84,8 @@ let sidebarForceExpanded = false;
 let sidebarAutoHideOpen = false;
 /** Native Menu.popup from sidebar account context menu is open */
 let sidebarNativeMenuOpen = false;
+/** Last inside/outside from main-process cursor polling (null = unknown) */
+let sidebarCursorInside = null;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let sidebarShowTimer = null;
 /** @type {ReturnType<typeof setTimeout> | null} */
@@ -420,18 +422,48 @@ function clearSidebarHoverTimers() {
 }
 
 /**
- * Keep auto-hide sidebar open while a menu / rename field inside it is active.
+ * Keep auto-hide sidebar open while a menu / rename / modal / drag is active.
  */
 function shouldHoldSidebarOpen() {
   if (sidebarNativeMenuOpen) return true;
   if (document.querySelector('.context-menu')) return true;
   if (document.querySelector('.panel-ext-menu')) return true;
+  if (tileDrag) return true;
+  if (
+    openOverlays.has('dlg-account') ||
+    openOverlays.has('dlg-workspace') ||
+    openOverlays.has('dlg-settings') ||
+    openOverlays.has('dlg-confirm') ||
+    openOverlays.has('dlg-novidades')
+  ) {
+    return true;
+  }
   const ae = document.activeElement;
   if (ae && el.sidebar && el.sidebar.contains(ae)) {
     const tag = (ae.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea' || ae.isContentEditable) return true;
   }
   return false;
+}
+
+/**
+ * Tell main to start/stop cursor polling for auto-hide reveal + keep-open.
+ */
+function syncSidebarAutoHideTracking() {
+  if (!window.multiheiz || typeof window.multiheiz.setSidebarAutoHideTracking !== 'function') {
+    return;
+  }
+  const autoHide = isSidebarAutoHide() && !isChromeHiddenMode();
+  try {
+    window.multiheiz.setSidebarAutoHideTracking({
+      enabled: autoHide,
+      open: !!(autoHide && sidebarAutoHideOpen),
+      sidebarWidth: clampSidebarWidth(state.ui && state.ui.sidebarWidth),
+      chromeHidden: isChromeHiddenMode(),
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -470,6 +502,7 @@ function setSidebarAutoHideOpen(open, opts = {}) {
     el.sidebar.classList.toggle('auto-hide-open', next);
   }
   syncSidebarOverlayBounds(next);
+  syncSidebarAutoHideTracking();
   // Overlay does not change flex layout; still nudge sync so main reapplies transform.
   scheduleSync();
 }
@@ -486,16 +519,47 @@ function requestSidebarShow() {
 
 function requestSidebarHide() {
   if (!isSidebarAutoHide()) return;
-  clearSidebarHoverTimers();
   if (!sidebarAutoHideOpen) return;
+  // Do not reset an in-flight hide countdown (continuous "outside" must stay ~700ms).
+  if (sidebarHideTimer) return;
+  if (sidebarShowTimer) {
+    clearTimeout(sidebarShowTimer);
+    sidebarShowTimer = null;
+  }
   sidebarHideTimer = setTimeout(() => {
     sidebarHideTimer = null;
     if (shouldHoldSidebarOpen()) {
       requestSidebarHide();
       return;
     }
+    // Main polling may have moved back inside during the delay.
+    if (sidebarCursorInside === true) return;
     setSidebarAutoHideOpen(false);
   }, SIDEBAR_HIDE_DELAY_MS);
+}
+
+/**
+ * Main-process cursor poll result (robust vs drag regions + WebContentsView).
+ * @param {boolean} inside
+ */
+function onSidebarCursorFromMain(inside) {
+  if (!isSidebarAutoHide() || isChromeHiddenMode()) return;
+  sidebarCursorInside = !!inside;
+  if (inside) {
+    if (sidebarAutoHideOpen) {
+      clearSidebarHoverTimers();
+    } else {
+      requestSidebarShow();
+    }
+  } else if (sidebarAutoHideOpen) {
+    requestSidebarHide();
+  } else {
+    // Cancel pending reveal when cursor left the hot edge.
+    if (sidebarShowTimer) {
+      clearTimeout(sidebarShowTimer);
+      sidebarShowTimer = null;
+    }
+  }
 }
 
 function clampSidebarWidth(w) {
@@ -569,6 +633,7 @@ function updateSidebarCollapseClasses() {
     setSidebarAutoHideOpen(false);
   }
 
+  syncSidebarAutoHideTracking();
   updateSidebarToggleUi();
 }
 
@@ -2002,30 +2067,48 @@ el.btnSidebarToggle.addEventListener('click', async () => {
   sidebarForceExpanded = false;
   const nextAutoHide = !isSidebarAutoHide();
   if (!nextAutoHide) {
+    // Pin while revealed: switch to fixed layout first (sidebar stays visible), then
+    // clear overlay — avoid a closed/open flash.
+    const wasOpen = sidebarAutoHideOpen;
+    applyState(
+      await window.multiheiz.updateUi({
+        sidebarAutoHide: false,
+        sidebarCollapsed: false,
+      })
+    );
     sidebarAutoHideOpen = false;
+    sidebarCursorInside = null;
+    if (el.app) el.app.classList.remove('sidebar-auto-hide-open');
+    if (el.sidebar) el.sidebar.classList.remove('auto-hide-open');
     await syncSidebarOverlayBounds(false);
+    syncSidebarAutoHideTracking();
+    if (wasOpen) scheduleSync();
+    return;
   }
   applyState(
     await window.multiheiz.updateUi({
-      sidebarAutoHide: nextAutoHide,
+      sidebarAutoHide: true,
       // Clear collapsed flag when using the new fixed/auto-hide toggle.
       sidebarCollapsed: false,
     })
   );
-  if (nextAutoHide) {
-    // Entering auto-hide: start hidden (panels full width + hot-zone).
-    setSidebarAutoHideOpen(false);
-  }
+  // Entering auto-hide: start hidden (panels full width + hot-zone).
+  setSidebarAutoHideOpen(false);
 });
 
-/* Auto-hide: hot-zone reveal + leave-to-hide (mouseleave into a WebContentsView fires on the sidebar) */
+/* Auto-hide: DOM hot-zone + leave hints; main cursor polling is the durable source of truth */
 (function setupSidebarAutoHideHover() {
   if (el.sidebarHotzone) {
     el.sidebarHotzone.addEventListener('mouseenter', () => requestSidebarShow());
     el.sidebarHotzone.addEventListener('mouseleave', () => {
       // If moving into the open sidebar, do not schedule hide.
       if (sidebarAutoHideOpen) return;
-      clearSidebarHoverTimers();
+      // Polling may still report inside (≤12px over a panel) — do not cancel reveal then.
+      if (sidebarCursorInside === true) return;
+      if (sidebarShowTimer) {
+        clearTimeout(sidebarShowTimer);
+        sidebarShowTimer = null;
+      }
     });
   }
   if (el.sidebar) {
@@ -2035,6 +2118,8 @@ el.btnSidebarToggle.addEventListener('click', async () => {
     });
     el.sidebar.addEventListener('mouseleave', () => {
       if (!isSidebarAutoHide() || !sidebarAutoHideOpen) return;
+      // Drag regions / panels fire leave even when the cursor is still in the keep-open strip.
+      if (sidebarCursorInside === true) return;
       requestSidebarHide();
     });
   }
@@ -2336,6 +2421,10 @@ window.multiheiz.onEvent((payload) => {
     if (!sidebarNativeMenuOpen && isSidebarAutoHide() && sidebarAutoHideOpen) {
       requestSidebarHide();
     }
+    return;
+  }
+  if (payload.type === 'sidebar:cursor') {
+    onSidebarCursorFromMain(!!payload.inside);
     return;
   }
   if (payload.type === 'overlay:snapshots') {
@@ -2722,6 +2811,10 @@ window.__multiheizUi = {
     const cs = el.sidebar ? getComputedStyle(el.sidebar) : null;
     const hz = el.sidebarHotzone;
     const hzCs = hz ? getComputedStyle(hz) : null;
+    const head = el.sidebar ? el.sidebar.querySelector('.sidebar-head') : null;
+    const headCs = head ? getComputedStyle(head) : null;
+    const pin = el.btnSidebarToggle;
+    const pinRect = pin ? pin.getBoundingClientRect() : null;
     return {
       legacyAlwaysActive: isSidebarLegacyAlwaysActive(),
       autoHide: isSidebarAutoHide(),
@@ -2737,6 +2830,13 @@ window.__multiheizUi = {
       hotzoneDisplay: hzCs ? hzCs.display : 'none',
       delays: { showMs: SIDEBAR_SHOW_DELAY_MS, hideMs: SIDEBAR_HIDE_DELAY_MS },
       hotzonePx: SIDEBAR_HOTZONE_PX,
+      cursorInside: sidebarCursorInside,
+      headAppRegion: headCs
+        ? headCs.webkitAppRegion || headCs.getPropertyValue('-webkit-app-region')
+        : '',
+      pinCenter: pinRect
+        ? { x: pinRect.left + pinRect.width / 2, y: pinRect.top + pinRect.height / 2 }
+        : null,
     };
   },
   syncSidebarAfterLegacyChange: async () => {
@@ -2772,6 +2872,7 @@ window.__multiheizUi = {
     return true;
   },
   sidebarMouseLeave: () => {
+    sidebarCursorInside = false;
     requestSidebarHide();
     return true;
   },
@@ -2780,9 +2881,17 @@ window.__multiheizUi = {
     setSidebarAutoHideOpen(!!open);
     return !!sidebarAutoHideOpen;
   },
+  /** Selftest: pretend native menu / hold is active so hide delay re-arms. */
+  setSidebarNativeMenuOpen: (open) => {
+    sidebarNativeMenuOpen = !!open;
+    if (!sidebarNativeMenuOpen && isSidebarAutoHide() && sidebarAutoHideOpen) {
+      requestSidebarHide();
+    }
+    return !!sidebarNativeMenuOpen;
+  },
   toggleSidebarAutoHide: async () => {
     if (el.btnSidebarToggle) el.btnSidebarToggle.click();
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 80));
     return window.__multiheizUi.getSidebarMode();
   },
   getTitlebarMetrics: () => {
