@@ -1871,6 +1871,9 @@
             updateIntervalHours: Number(form.adblockUpdateInterval && form.adblockUpdateInterval.value) || 24,
             lists: collectAdblockListFlags(),
           },
+          extensions: {
+            abuCompat: !(form.extAbuCompat && form.extAbuCompat.checked === false),
+          },
         };
         const st = await window.multiheiz.updateSettings(partial);
         applyState(st);
@@ -2080,6 +2083,10 @@
     if (form.adblockYoutube) form.adblockYoutube.checked = !!ab.youtubeExperimental;
     if (form.adblockUpdateInterval) {
       form.adblockUpdateInterval.value = String(ab.updateIntervalHours || 24);
+    }
+    const extSettings = s.extensions || {};
+    if (form.extAbuCompat) {
+      form.extAbuCompat.checked = extSettings.abuCompat !== false;
     }
     const dl = await window.multiheiz.downloadsList();
     form.downloadFolder.value = (dl.settings && dl.settings.defaultFolder) || '';

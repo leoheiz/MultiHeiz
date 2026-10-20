@@ -356,6 +356,15 @@
               página (cosmético) é limitado. Em http://127.0.0.1 (loopback) algumas extensões
               podem falhar — sites https normais costumam OK.
             </p>
+            <label class="check">
+              <input type="checkbox" name="extAbuCompat" id="ext-abu-compat" checked />
+              Compatibilidade avançada para extensões MV3 (AdBlocker Ultimate)
+            </label>
+            <p class="muted-note">
+              Parte do recurso Experimental (em testes). Liga shims de API do service worker
+              (webNavigation, DNR, etc.) para extensões MV3 com background.service_worker.
+              Reinicie as janelas afetadas após alterar.
+            </p>
             <p class="muted-note" id="ext-coexistence-hint" hidden></p>
             <div class="ext-add-row">
               <button type="button" class="btn primary" id="btn-ext-add">+ Adicionar extensão</button>

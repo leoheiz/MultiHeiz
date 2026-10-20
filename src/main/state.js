@@ -126,6 +126,14 @@ function defaultState() {
         listMeta: {},
         statusMessage: '',
       },
+      /** Experimental MV3 extension compatibility (AdBlocker Ultimate etc.) */
+      extensions: {
+        /**
+         * When ON, extensions with background.service_worker get SW API shims
+         * (webNavigation, DNR bridge, early-replay, …). Default ON.
+         */
+        abuCompat: true,
+      },
     },
   };
 }
@@ -217,6 +225,18 @@ function migrate(parsed) {
       allowlist: Array.isArray(next.settings.adblock.allowlist)
         ? next.settings.adblock.allowlist
         : [],
+    };
+  }
+  if (!next.settings.extensions || typeof next.settings.extensions !== 'object') {
+    next.settings.extensions = { ...base.settings.extensions };
+  } else {
+    next.settings.extensions = {
+      ...base.settings.extensions,
+      ...next.settings.extensions,
+      abuCompat:
+        next.settings.extensions.abuCompat === false
+          ? false
+          : base.settings.extensions.abuCompat !== false,
     };
   }
   if (typeof next.settings.confirmOnRemove !== 'boolean') {

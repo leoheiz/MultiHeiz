@@ -140,6 +140,21 @@ if (process.platform === 'win32') {
   app.commandLine.appendSwitch('disable-features', 'IntensiveWakeUpThrottling');
 }
 
+/*
+ * Force Chromium's sandboxed renderer client even when the process was started
+ * with --no-sandbox (common for Linux AppImage). Required for session
+ * registerPreloadScript({ type: 'service-worker' }) used by MV3 extension
+ * compatibility (extensions.abuCompat). Must run before app.whenReady().
+ */
+try {
+  app.enableSandbox();
+} catch (err) {
+  console.warn(
+    '[main] enableSandbox failed:',
+    err && err.message ? err.message : err
+  );
+}
+
 // Prefer high-performance GPU when enabled (needs restart to take effect) — Windows only
 if (process.platform === 'win32') {
   try {
@@ -1162,9 +1177,14 @@ function registerIpc() {
 
   ipcMain.handle('settings:update', async (_e, partial) => {
     const adblockPartial = partial && partial.adblock ? partial.adblock : null;
+    const extensionsPartial =
+      partial && partial.extensions && typeof partial.extensions === 'object'
+        ? partial.extensions
+        : null;
     updateState((s) => {
       const next = { ...partial };
       delete next.adblock;
+      delete next.extensions;
       if (next.homepage != null) {
         next.homepage = sanitizeUserStartUrl(
           next.homepage,
@@ -1191,6 +1211,13 @@ function registerIpc() {
             typeof adblockPartial.userRules === 'string'
               ? adblockPartial.userRules
               : prevAb.userRules || '',
+        };
+      }
+      if (extensionsPartial) {
+        const prevExt = s.settings.extensions || { abuCompat: true };
+        s.settings.extensions = {
+          ...prevExt,
+          ...extensionsPartial,
         };
       }
     });
