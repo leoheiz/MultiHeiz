@@ -28,6 +28,18 @@
         {
           "tag": "Melhoria",
           "text": "Extensões de terceiros continuam rotuladas Experimental (em testes)."
+        },
+        {
+          "tag": "Correção",
+          "text": "F11 em tela cheia volta a trazer a janela MultiHeiz para frente no Windows."
+        },
+        {
+          "tag": "Correção",
+          "text": "Atualização do portátil salva o novo .exe na pasta do MultiHeiz (ou em Downloads se não houver permissão)."
+        },
+        {
+          "tag": "Correção",
+          "text": "Lojas Chrome/Edge: botões nativos escondidos; CRX do Edge por HTTPS; barra Instalar sem mensagem antiga."
         }
       ]
     },
