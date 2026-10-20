@@ -7,7 +7,7 @@ const { app } = require('electron');
 const { envGet } = require('./config');
 
 /**
- * Selftest for sidebar auto-hide (1.3.0).
+ * Selftest for sidebar auto-hide + legacy "always active" (1.3.0).
  * Overlay strategy under test: shift-x / keep-width on WebContentsView (see panels.js).
  */
 async function runSidebarSelftest(ctx) {
@@ -90,6 +90,7 @@ async function runSidebarSelftest(ctx) {
       ...s.settings,
       openLastPage: false,
       homepage: base + '/',
+      sidebarAlwaysActive: false,
     };
   });
   flushSave();
@@ -109,10 +110,10 @@ async function runSidebarSelftest(ctx) {
     return Math.abs(a - b) <= tol;
   }
 
-  /* ---------- Fixed mode (default) ---------- */
+  /* ---------- Fixed mode (default on new profile) ---------- */
   let mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
-  if (!mode || mode.autoHide !== false || mode.open !== false) {
-    console.log('FAIL: start should be fixed (autoHide false)', mode);
+  if (!mode || mode.autoHide !== false || mode.open !== false || mode.legacyAlwaysActive) {
+    console.log('FAIL: start should be fixed (autoHide false, legacy off)', mode);
     app.exit(1);
     return;
   }
@@ -134,7 +135,7 @@ async function runSidebarSelftest(ctx) {
   }
   const fixedX = fixed.bounds.x;
   const fixedW = fixed.bounds.width;
-  console.log('PASS: fixed mode', { mode, bounds: fixed.bounds });
+  console.log('PASS: fixed mode (default)', { mode, bounds: fixed.bounds });
 
   /* ---------- Toggle → auto-hide (hidden) ---------- */
   mode = await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
@@ -264,14 +265,107 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: toggle back to fixed');
 
-  /* ---------- Persist auto-hide for phase 2 ---------- */
+  /* ---------- Legacy mode: old collapse, no hot-zone / overlay ---------- */
+  mode = await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.legacyAlwaysActive || mode.autoHide || mode.open || mode.collapsed) {
+    console.log('FAIL: legacy on should pin expanded (no autoHide)', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.toggleTitle !== 'Recolher barra lateral') {
+    console.log('FAIL: legacy expanded tooltip', mode.toggleTitle);
+    app.exit(1);
+    return;
+  }
+  if (!mode.hotzoneHidden || mode.appClassAutoHide) {
+    console.log('FAIL: legacy must hide hotzone / auto-hide class', mode);
+    app.exit(1);
+    return;
+  }
+  const legacyFixed = panelBounds();
+  if (legacyFixed.overlayW !== 0 || !(legacyFixed.bounds.x >= 160)) {
+    console.log('FAIL: legacy expanded bounds like old fixed', legacyFixed);
+    app.exit(1);
+    return;
+  }
+  await rendererEval('window.__multiheizUi.sidebarHotzoneEnter()');
+  await sleep(250);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.open || mode.autoHide) {
+    console.log('FAIL: legacy hotzone must not reveal overlay sidebar', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: legacy mode expanded + hotzone inert', legacyFixed.bounds);
+
+  mode = await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.legacyAlwaysActive || !mode.collapsed || mode.autoHide) {
+    console.log('FAIL: legacy toggle should collapse icon-rail', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.toggleTitle !== 'Expandir barra lateral') {
+    console.log('FAIL: legacy collapsed tooltip', mode.toggleTitle);
+    app.exit(1);
+    return;
+  }
+  const legacyCollapsed = panelBounds();
+  if (legacyCollapsed.overlayW !== 0) {
+    console.log('FAIL: legacy collapse must not use overlay', legacyCollapsed);
+    app.exit(1);
+    return;
+  }
+  if (!(legacyCollapsed.bounds.x < legacyFixed.bounds.x - 80)) {
+    console.log('FAIL: collapsed rail should free panel width (smaller x)', {
+      collapsed: legacyCollapsed.bounds,
+      expanded: legacyFixed.bounds,
+    });
+    app.exit(1);
+    return;
+  }
+  if (!(mode.sidebarWidth >= 40 && mode.sidebarWidth <= 70)) {
+    console.log('FAIL: collapsed sidebar width ~52px', mode.sidebarWidth);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: legacy collapse (old arrow behavior)', legacyCollapsed.bounds);
+
+  mode = await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(false)');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.legacyAlwaysActive || mode.autoHide || mode.collapsed) {
+    console.log('FAIL: legacy off should return to fixed (new mode)', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.toggleTitle !== 'Esconder automaticamente') {
+    console.log('FAIL: after legacy off tooltip', mode.toggleTitle);
+    app.exit(1);
+    return;
+  }
+  const afterLegacy = panelBounds();
+  if (afterLegacy.overlayW !== 0 || !(afterLegacy.bounds.x >= 160)) {
+    console.log('FAIL: after legacy off bounds', afterLegacy);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: legacy off → new fixed/auto-hide mode');
+
+  /* ---------- Persist auto-hide for disk check + legacy for phase 2 ---------- */
   await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
   await sleep(200);
   await waitForLayoutSettle();
   flushSave();
   const userData = app.getPath('userData');
   const statePath = path.join(userData, 'multiheiz-state.json');
-  const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  let raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   if (!raw.ui || raw.ui.sidebarAutoHide !== true) {
     console.log('FAIL: sidebarAutoHide not written to state file', raw.ui);
     app.exit(1);
@@ -279,7 +373,30 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: sidebarAutoHide persisted to disk');
 
-  /* ---------- Migration of legacy sidebarCollapsed ---------- */
+  mode = await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');
+  await sleep(200);
+  await waitForLayoutSettle();
+  flushSave();
+  raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  if (!raw.settings || raw.settings.sidebarAlwaysActive !== true) {
+    console.log('FAIL: sidebarAlwaysActive not written to state file', raw.settings);
+    app.exit(1);
+    return;
+  }
+  if (raw.ui.sidebarAutoHide !== true) {
+    console.log('FAIL: ui.sidebarAutoHide should remain true under legacy', raw.ui);
+    app.exit(1);
+    return;
+  }
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.legacyAlwaysActive || mode.autoHide) {
+    console.log('FAIL: legacy overrides autoHide for UI', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: sidebarAlwaysActive persisted to disk (autoHide kept in ui)');
+
+  /* ---------- Migration: missing sidebarAutoHide → fixed ---------- */
   {
     const { migrate } = require('./state');
     const m = migrate({
@@ -294,15 +411,49 @@ async function runSidebarSelftest(ctx) {
       appearance: { preset: 'escuro' },
       freeTiles: {},
     });
-    if (!(m.ui.sidebarAutoHide === true && m.ui.sidebarCollapsed === false)) {
-      console.log('FAIL: migration sidebarCollapsed → sidebarAutoHide', m.ui);
+    if (!(m.ui.sidebarAutoHide === false && m.ui.sidebarCollapsed === false)) {
+      console.log('FAIL: missing sidebarAutoHide should migrate to fixed', m.ui);
       app.exit(1);
       return;
     }
-    console.log('PASS: legacy sidebarCollapsed migrates to sidebarAutoHide');
+    if (m.settings.sidebarAlwaysActive !== false) {
+      console.log('FAIL: sidebarAlwaysActive default false', m.settings);
+      app.exit(1);
+      return;
+    }
+    const kept = migrate({
+      version: 1,
+      workspaces: [{ id: 'ws-sb', name: 'Sidebar' }],
+      activeWorkspaceId: 'ws-sb',
+      accounts: [],
+      layout: '1',
+      page: 0,
+      ui: { sidebarCollapsed: false, sidebarAutoHide: true, layoutLocked: true, sidebarWidth: 240 },
+      settings: { migrations: { keepAlive120: true }, sidebarAlwaysActive: false },
+      appearance: { preset: 'escuro' },
+      freeTiles: {},
+    });
+    if (kept.ui.sidebarAutoHide !== true) {
+      console.log('FAIL: existing sidebarAutoHide true must be kept', kept.ui);
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: migration defaults to fixed; keeps existing autoHide');
   }
 
   /* ---------- F11: chrome hidden, no hotzone reveal ---------- */
+  // Need auto-hide active for F11 hotzone checks — turn legacy off first.
+  await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(false)');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.autoHide) {
+    // ui still has autoHide true from earlier
+    console.log('FAIL: expected autoHide after leaving legacy', mode);
+    app.exit(1);
+    return;
+  }
+
   chromeFullscreen.enter();
   await sleep(500);
   await waitForLayoutSettle();
@@ -339,10 +490,17 @@ async function runSidebarSelftest(ctx) {
   await sleep(400);
   await waitForLayoutSettle();
 
-  // Phase 2 only checks ui.sidebarAutoHide — drop panel URLs so restart does not hit a dead server.
+  // Restore legacy ON for phase 2 restart persistence.
+  await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');
+  await sleep(200);
+  await waitForLayoutSettle();
+
+  // Phase 2 checks settings.sidebarAlwaysActive — drop panel URLs so restart does not hit a dead server.
   updateState((s) => {
     s.accounts = [];
     s.maximizedAccountId = null;
+    s.settings = { ...(s.settings || {}), sidebarAlwaysActive: true };
+    s.ui = { ...(s.ui || {}), sidebarAutoHide: true, sidebarCollapsed: false };
   });
   flushSave();
 
@@ -357,11 +515,10 @@ async function runSidebarSelftest(ctx) {
 }
 
 /**
- * Phase 2: app restarted with same userdata — auto-hide must still be on.
+ * Phase 2: app restarted with same userdata — legacy option must still be on.
  */
 async function runPhase2Persistence(ctx) {
-  const { sleep, rendererEval, waitForLayoutSettle, flushSave, publicState, updateState, emitToRenderer } =
-    ctx;
+  const { sleep, rendererEval, waitForLayoutSettle, flushSave, publicState, updateState, emitToRenderer } = ctx;
   // Avoid reloading phase-1 localhost URLs (server already gone).
   updateState((s) => {
     s.accounts = [];
@@ -372,24 +529,34 @@ async function runPhase2Persistence(ctx) {
   await sleep(600);
   await waitForLayoutSettle();
   const st = publicState();
+  if (!st.settings || st.settings.sidebarAlwaysActive !== true) {
+    console.log('FAIL: phase2 publicState.sidebarAlwaysActive', st.settings);
+    app.exit(1);
+    return;
+  }
   if (!st.ui || st.ui.sidebarAutoHide !== true) {
-    console.log('FAIL: phase2 publicState.sidebarAutoHide', st.ui);
+    console.log('FAIL: phase2 ui.sidebarAutoHide should remain true under legacy', st.ui);
     app.exit(1);
     return;
   }
   const mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
-  if (!mode.autoHide || mode.open) {
-    console.log('FAIL: phase2 renderer mode', mode);
+  if (!mode.legacyAlwaysActive || mode.autoHide || mode.open) {
+    console.log('FAIL: phase2 renderer mode (legacy overrides autoHide)', mode);
     app.exit(1);
     return;
   }
-  if (mode.toggleTitle !== 'Fixar barra lateral') {
-    console.log('FAIL: phase2 tooltip', mode.toggleTitle);
+  if (mode.toggleTitle !== 'Recolher barra lateral' && mode.toggleTitle !== 'Expandir barra lateral') {
+    console.log('FAIL: phase2 legacy tooltip', mode.toggleTitle);
+    app.exit(1);
+    return;
+  }
+  if (!mode.hotzoneHidden) {
+    console.log('FAIL: phase2 hotzone must stay hidden in legacy', mode);
     app.exit(1);
     return;
   }
   flushSave();
-  console.log('PASS: persistence after restart (sidebarAutoHide)');
+  console.log('PASS: persistence after restart (sidebarAlwaysActive legacy)');
   console.log('SELFTEST sidebar OK');
   app.exit(0);
 }
