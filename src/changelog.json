@@ -10,6 +10,14 @@
           "text": "AdBlocker Ultimate agora bloqueia anúncios do YouTube sozinho (scriptlets, cosmético e rede), ainda Experimental (em testes)."
         },
         {
+          "tag": "Novo",
+          "text": "Bloqueador embutido agora tira anúncios do YouTube sozinho (scriptlets no início da página, em todas as frames, incluindo vídeos incorporados)."
+        },
+        {
+          "tag": "Novo",
+          "text": "Instalar extensões direto da Chrome Web Store e da loja do Edge (barra Instalar no MultiHeiz, botões em Configurações → Extensões; instalação por arquivo/pasta em Avançado)."
+        },
+        {
           "tag": "Melhoria",
           "text": "Compatibilidade MV3: shims de webNavigation/webRequest/tabs, cache early-replay e warm-up oculto para o YouTube."
         },

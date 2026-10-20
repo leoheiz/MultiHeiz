@@ -202,6 +202,7 @@ const SELFTEST_FULLSCREEN = selftestMode === 'fullscreen';
 const SELFTEST_EXT = selftestMode === 'ext';
 const SELFTEST_ABU = selftestMode === 'abu';
 const SELFTEST_ABU_YT = selftestMode === 'abu-yt';
+const SELFTEST_BUILTIN_YT = selftestMode === 'builtin-yt';
 const SELFTEST_SECURITY = selftestMode === 'security';
 const SELFTEST_UA = selftestMode === 'ua';
 const SELFTEST_GIS = selftestMode === 'gis';
@@ -226,13 +227,14 @@ const ANY_SELFTEST =
   SELFTEST_EXT ||
   SELFTEST_ABU ||
   SELFTEST_ABU_YT ||
+  SELFTEST_BUILTIN_YT ||
   SELFTEST_SECURITY ||
   SELFTEST_UA ||
   SELFTEST_GIS ||
   SELFTEST_STORE;
 
-// ABU YouTube selftest: map YT hosts to loopback (local HTTPS page-server).
-if (SELFTEST_ABU_YT) {
+// YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
+if (SELFTEST_ABU_YT || SELFTEST_BUILTIN_YT) {
   app.commandLine.appendSwitch(
     'host-resolver-rules',
     'MAP www.youtube.com 127.0.0.1, MAP m.youtube.com 127.0.0.1, MAP www.youtube-nocookie.com 127.0.0.1'
@@ -1071,6 +1073,31 @@ function createWindow() {
         try {
           const { runAbuYtSelftest } = require('./selftest-abu-yt');
           runAbuYtSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            extensions,
+            adblock,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_BUILTIN_YT) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runBuiltinYtSelftest } = require('./selftest-builtin-yt');
+          runBuiltinYtSelftest({
             mainWindow,
             panels,
             getState,

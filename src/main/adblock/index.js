@@ -123,6 +123,7 @@ function isTestMode() {
     st === 'adblock-real' ||
     st === 'adblock-packaged' ||
     st === 'v18' ||
+    st === 'builtin-yt' ||
     envGet('MULTIHEIZ_ADBLOCK_TEST') === '1'
   );
 }
@@ -673,6 +674,28 @@ async function gatherFilterText(opts = {}) {
     return { text: chunks.join('\n'), listStatus, listMeta, fromCache: true };
   }
 
+  // Built-in YouTube selftest: MIT YT scriptlets only (no remote list download).
+  if (envGet('MULTIHEIZ_SELFTEST') === 'builtin-yt') {
+    if (ab.userRules) chunks.push(ab.userRules);
+    if (ab.cosmetic !== false) {
+      chunks.push(YOUTUBE_BUILTIN_SCRIPTLETS);
+    }
+    listStatus.builtin_yt = 'ok';
+    listMeta.builtin_yt = {
+      ruleCount: countFilterLines(chunks.join('\n')),
+      lastUpdateAt: Date.now(),
+      status: 'ok',
+    };
+    return {
+      text: chunks.join('\n'),
+      listStatus,
+      listMeta,
+      fromCache: true,
+      empty: chunks.length === 0,
+      anyError: false,
+    };
+  }
+
   let anyFresh = false;
   let anyCache = false;
   let anyError = false;
@@ -1165,6 +1188,18 @@ function resolveFrameUrlForEarly(url, event) {
   } catch {
     /* ignore */
   }
+  // Fallback: top-level panel URL when frame.parent is unavailable at document_start
+  try {
+    const top =
+      event && event.sender && typeof event.sender.getURL === 'function'
+        ? String(event.sender.getURL() || '')
+        : '';
+    if (top && top !== 'about:blank' && !top.startsWith('about:srcdoc')) {
+      return top;
+    }
+  } catch {
+    /* ignore */
+  }
   return raw;
 }
 
@@ -1634,7 +1669,8 @@ function scheduleUpdateTimer() {
     isTestMode() &&
     (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
       envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
-      envGet('MULTIHEIZ_SELFTEST') === 'v18')
+      envGet('MULTIHEIZ_SELFTEST') === 'v18' ||
+      envGet('MULTIHEIZ_SELFTEST') === 'builtin-yt')
   ) {
     return;
   }
@@ -1687,7 +1723,8 @@ function init(opts) {
               isTestMode() &&
               (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
                 envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
-                envGet('MULTIHEIZ_SELFTEST') === 'v18')
+                envGet('MULTIHEIZ_SELFTEST') === 'v18' ||
+                envGet('MULTIHEIZ_SELFTEST') === 'builtin-yt')
                 ? false
                 : stale,
           },
