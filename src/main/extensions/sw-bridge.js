@@ -50,6 +50,17 @@ const bySession = new WeakMap();
 /** @type {boolean} */
 let appContentsHooked = false;
 
+/** @type {((payload: object) => void) | null} */
+let uiEmit = null;
+
+/**
+ * Optional UI event emitter (wired from extensions.init).
+ * @param {(payload: object) => void | null | undefined} fn
+ */
+function setUiEmit(fn) {
+  uiEmit = typeof fn === 'function' ? fn : null;
+}
+
 /**
  * @typedef {object} ExtBinding
  * @property {string} installId
@@ -458,26 +469,220 @@ function hookWorker(br, worker, versionId, binding) {
 
   ipc.handle(
     'mh-sw:tabs.create',
-    guard(async (_e, props) => {
-      // Full panel open in step 4; Tab-shaped stub for now.
-      return {
-        id: -1,
-        url: (props && props.url) || '',
-        active: true,
-        windowId: 0,
-        index: 0,
-        status: 'complete',
-      };
-    })
+    guard(async (_e, props) => tabsCreate(br, binding, props))
   );
   ipc.handle(
     'mh-sw:tabs.remove',
-    guard(async () => undefined)
+    guard(async (_e, ids) => tabsRemove(br, ids))
   );
   ipc.handle(
     'mh-sw:tabs.detectLanguage',
     guard(async () => 'und')
   );
+}
+
+/**
+ * @param {string} url
+ */
+function isWelcomeExtUrl(url) {
+  const s = String(url || '').toLowerCase();
+  return s.includes('welcome') || s.includes('adblockultimate.net/welcome');
+}
+
+/**
+ * chrome.tabs.create → MultiHeiz panel / extension popup / ignore welcome.
+ * @param {SessionBridge} br
+ * @param {ExtBinding} binding
+ * @param {{ url?: string, active?: boolean }} props
+ */
+async function tabsCreate(br, binding, props) {
+  const url = String((props && props.url) || '');
+  const stub = (u, id = -1) => ({
+    id,
+    url: u || '',
+    active: true,
+    windowId: 0,
+    index: 0,
+    status: 'complete',
+    discarded: false,
+  });
+
+  if (!url) return stub('');
+
+  // Extension pages (same runtime)
+  if (url.startsWith('chrome-extension://')) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return stub(url);
+    }
+    if (parsed.hostname !== binding.runtimeId) return stub(url);
+    if (isWelcomeExtUrl(url)) {
+      // ABU first-run welcome — ignore (no new window).
+      return stub(url, -1);
+    }
+
+    const popup = require('./popup');
+    const rec = binding.record || {};
+    const pagePath = decodeURIComponent(parsed.pathname || '').replace(/^\//, '');
+    const opt = rec.optionsPage ? String(rec.optionsPage).replace(/^\//, '') : '';
+    const act = rec.actionPopup ? String(rec.actionPopup).replace(/^\//, '') : '';
+
+    if (opt && (pagePath === opt || pagePath.endsWith('/' + opt) || pagePath.includes(opt))) {
+      await popup.openOptionsPage(binding.accountId, binding.installId);
+      const win = popup.getOptionsWindow();
+      if (win && !win.isDestroyed()) {
+        const tab = tabShape(win.webContents);
+        emit(br, binding.runtimeId, 'tabs', 'onCreated', tab);
+        return tab;
+      }
+      return stub(url);
+    }
+    if (act && (pagePath === act || pagePath.includes(act))) {
+      await popup.openActionPopup(binding.accountId, binding.installId);
+      const win = popup.getActionWindow();
+      if (win && !win.isDestroyed()) {
+        const tab = tabShape(win.webContents);
+        emit(br, binding.runtimeId, 'tabs', 'onCreated', tab);
+        return tab;
+      }
+      return stub(url);
+    }
+    // Other extension HTML: open via options window mechanism when possible
+    if (pagePath.endsWith('.html') || pagePath.endsWith('.htm')) {
+      await popup.openOptionsPage(binding.accountId, binding.installId, {});
+      const win = popup.getOptionsWindow();
+      if (win && !win.isDestroyed()) {
+        try {
+          await win.loadURL(url);
+        } catch {
+          /* ignore */
+        }
+        const tab = tabShape(win.webContents);
+        emit(br, binding.runtimeId, 'tabs', 'onCreated', tab);
+        return tab;
+      }
+    }
+    return stub(url);
+  }
+
+  // External welcome site — ignore
+  if (isWelcomeExtUrl(url)) return stub(url, -1);
+
+  // Normal http(s) → new MultiHeiz window (url-policy)
+  const { isNavigableUrl, sanitizeUserStartUrl } = require('../url-policy');
+  if (!isNavigableUrl(url)) return stub(url, -1);
+
+  try {
+    const { getState, updateState } = require('../state');
+    const panels = require('../panels');
+    const st = getState();
+    const id = `acc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
+    const account = {
+      id,
+      name: 'Janela',
+      color: colors[(st.accounts || []).length % colors.length],
+      startUrl: sanitizeUserStartUrl(url, 'https://www.google.com'),
+      workspaceId: st.activeWorkspaceId,
+      muted: false,
+      pauseInBackground: false,
+      keepAliveInBackground: false,
+      privateHistory: false,
+      lastUrl: null,
+    };
+    updateState((s) => {
+      s.accounts.push(account);
+    });
+    if (uiEmit) {
+      try {
+        uiEmit({ type: 'state:changed' });
+      } catch {
+        /* ignore */
+      }
+    }
+    panels.panelNavigate(id, url);
+    await new Promise((r) => setTimeout(r, 50));
+    const wc = panels.getPanelCapture(id);
+    if (wc && !wc.isDestroyed()) {
+      const tab = tabShape(wc);
+      emit(br, binding.runtimeId, 'tabs', 'onCreated', tab);
+      return tab;
+    }
+    return stub(url, -1);
+  } catch (err) {
+    console.warn('[sw-bridge] tabs.create', err && err.message);
+    return stub(url, -1);
+  }
+}
+
+/**
+ * @param {SessionBridge} br
+ * @param {number|number[]} ids
+ */
+async function tabsRemove(br, ids) {
+  const list = Array.isArray(ids) ? ids : [ids];
+  const popup = require('./popup');
+  let panels;
+  try {
+    panels = require('../panels');
+  } catch {
+    panels = null;
+  }
+
+  for (const raw of list) {
+    const tabId = Number(raw);
+    if (!Number.isFinite(tabId)) continue;
+    const wc = webContents.fromId(tabId);
+    if (!wc || wc.isDestroyed()) continue;
+
+    // Extension action / options windows
+    try {
+      const aw = popup.getActionWindow && popup.getActionWindow();
+      if (aw && !aw.isDestroyed() && aw.webContents === wc) {
+        aw.close();
+        continue;
+      }
+      const ow = popup.getOptionsWindow && popup.getOptionsWindow();
+      if (ow && !ow.isDestroyed() && ow.webContents === wc) {
+        ow.close();
+        continue;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // MultiHeiz panel
+    if (panels) {
+      let found = null;
+      for (const accountId of panels.listActivePanelIds()) {
+        try {
+          if (panels.getPanelCapture(accountId) === wc) {
+            found = accountId;
+            break;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      if (found) {
+        try {
+          panels.destroyPanel(found, { keepLastUrl: true });
+        } catch {
+          /* ignore */
+        }
+        continue;
+      }
+    }
+
+    // Other webContents in this session (hidden warm-up, etc.)
+    try {
+      if (wc.session === br.ses && typeof wc.close === 'function') wc.close();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /**
@@ -1097,8 +1302,11 @@ module.exports = {
   emit,
   emitAll,
   getBridge,
+  setUiEmit,
   frameIdOf,
   parentFrameIdOf,
   toChromeWebRequestDetails,
   tabShape,
+  tabsCreate,
+  tabsRemove,
 };

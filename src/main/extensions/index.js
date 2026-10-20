@@ -266,6 +266,11 @@ async function loadAllAccountSessions() {
  */
 function init(options) {
   deps = options || {};
+  try {
+    require('./sw-bridge').setUiEmit(deps.emit || null);
+  } catch {
+    /* ignore */
+  }
   store.reloadFromDisk();
   // Re-derive manifests that were stripped under prepare v1 (restore DNR from snapshot)
   try {
