@@ -177,6 +177,23 @@ const el = {
   dlgConfirm: document.getElementById('dlg-confirm'),
   formConfirm: document.getElementById('form-confirm'),
   confirmMessage: document.getElementById('confirm-message'),
+  dlgProxy: document.getElementById('dlg-proxy'),
+  formProxy: document.getElementById('form-proxy'),
+  dlgProxyTitle: document.getElementById('dlg-proxy-title'),
+  dlgProxyHint: document.getElementById('dlg-proxy-hint'),
+  proxyType: document.getElementById('proxy-type'),
+  proxyFields: document.getElementById('proxy-fields'),
+  proxyHost: document.getElementById('proxy-host'),
+  proxyPort: document.getElementById('proxy-port'),
+  proxyUser: document.getElementById('proxy-user'),
+  proxyPass: document.getElementById('proxy-pass'),
+  proxyPassHint: document.getElementById('proxy-pass-hint'),
+  proxyBypass: document.getElementById('proxy-bypass'),
+  proxyStatus: document.getElementById('proxy-status'),
+  btnProxySave: document.getElementById('btn-proxy-save'),
+  btnProxyTest: document.getElementById('btn-proxy-test'),
+  btnProxyRemove: document.getElementById('btn-proxy-remove'),
+  btnProxyCancel: document.getElementById('btn-proxy-cancel'),
   statCpu: document.getElementById('stat-cpu'),
   statRam: document.getElementById('stat-ram'),
   statFps: document.getElementById('stat-fps'),
@@ -434,7 +451,8 @@ function shouldHoldSidebarOpen() {
     openOverlays.has('dlg-workspace') ||
     openOverlays.has('dlg-settings') ||
     openOverlays.has('dlg-confirm') ||
-    openOverlays.has('dlg-novidades')
+    openOverlays.has('dlg-novidades') ||
+    openOverlays.has('dlg-proxy')
   ) {
     return true;
   }
@@ -1052,15 +1070,32 @@ function renderSidebar() {
       : `${stLabel}${blockBit}`;
     body.append(name, meta);
 
+    const proxyActive = !!(acc.proxy && acc.proxy.active);
+    let proxyBadge = null;
+    if (proxyActive) {
+      proxyBadge = document.createElement('span');
+      proxyBadge.className = 'sidebar-proxy-badge';
+      proxyBadge.textContent = 'P';
+      proxyBadge.title =
+        acc.proxy.host && acc.proxy.port
+          ? `Usando proxy ${acc.proxy.host}:${acc.proxy.port}`
+          : 'Usando proxy';
+      proxyBadge.setAttribute('aria-label', proxyBadge.title);
+    }
+
     const dot = document.createElement('span');
     dot.className = `status-dot ${st}`;
     dot.title = stLabel;
     dot.setAttribute('aria-hidden', 'true');
 
-    const a11yLabel = `${acc.name} — ${stLabel}`;
+    const proxyBit = proxyActive
+      ? ` — proxy ${acc.proxy.host || ''}:${acc.proxy.port || ''}`
+      : '';
+    const a11yLabel = `${acc.name} — ${stLabel}${proxyBit}`;
     item.title = a11yLabel;
     item.setAttribute('aria-label', a11yLabel);
-    item.append(stripe, fav, body, dot);
+    if (proxyBadge) item.append(stripe, fav, body, proxyBadge, dot);
+    else item.append(stripe, fav, body, dot);
     item.addEventListener('click', async () => {
       focusedAccountId = acc.id;
       await window.multiheiz.panelFocus(acc.id);
@@ -1780,6 +1815,70 @@ function openWorkspaceDialog(ws) {
   el.dlgWorkspace.showModal();
 }
 
+/** @type {string|null} */
+let proxyDialogAccountId = null;
+/** @type {boolean} */
+let proxyPasswordSaved = false;
+
+function setProxyStatus(msg, kind) {
+  if (!el.proxyStatus) return;
+  el.proxyStatus.textContent = msg || '';
+  el.proxyStatus.classList.toggle('is-error', kind === 'error');
+  el.proxyStatus.classList.toggle('is-ok', kind === 'ok');
+}
+
+function syncProxyFieldsVisibility() {
+  const none = el.proxyType.value === 'none';
+  if (el.proxyFields) el.proxyFields.hidden = none;
+  if (el.btnProxyTest) el.btnProxyTest.disabled = none;
+  if (el.btnProxyRemove) el.btnProxyRemove.disabled = none;
+}
+
+async function openProxyDialog(accountId) {
+  const acc = (state.accounts || []).find((a) => a.id === accountId);
+  if (!acc || !el.dlgProxy) return;
+  proxyDialogAccountId = accountId;
+  el.dlgProxyTitle.textContent = `Proxy — ${acc.name || 'Janela'}`;
+  el.dlgProxyHint.textContent = 'Aplica só a esta janela (sessão persistente).';
+  setProxyStatus('', '');
+  let data = null;
+  try {
+    data = await window.multiheiz.proxyGet(accountId);
+  } catch (err) {
+    setProxyStatus((err && err.message) || 'Falha ao carregar proxy', 'error');
+  }
+  const p = (data && data.proxy) || acc.proxy || { type: 'none' };
+  el.proxyType.value = p.type || 'none';
+  el.proxyHost.value = p.host || '';
+  el.proxyPort.value = p.port ? String(p.port) : '';
+  el.proxyUser.value = p.username || '';
+  el.proxyPass.value = '';
+  el.proxyBypass.value = p.bypass || '<local>';
+  proxyPasswordSaved = !!(p.passwordSaved);
+  if (el.proxyPassHint) {
+    if (proxyPasswordSaved) {
+      el.proxyPassHint.hidden = false;
+      el.proxyPassHint.textContent = '••••• (salva) — deixe em branco para manter.';
+    } else {
+      el.proxyPassHint.hidden = true;
+      el.proxyPassHint.textContent = '';
+    }
+  }
+  if (data && data.encryptionAvailable === false) {
+    setProxyStatus(
+      'Criptografia do sistema indisponível: a senha não será salva.',
+      'error'
+    );
+  }
+  syncProxyFieldsVisibility();
+  pushOverlay('dlg-proxy');
+  el.dlgProxy.showModal();
+}
+
+function closeProxyDialog() {
+  if (el.dlgProxy && el.dlgProxy.open) el.dlgProxy.close();
+}
+
 function fillAppearanceForm() {
   const a = state.appearance || THEME_PRESETS.escuro;
   el.themePreset.value = a.preset || 'escuro';
@@ -2146,6 +2245,102 @@ el.dlgAccount.addEventListener('close', () => popOverlay('dlg-account'));
 el.dlgWorkspace.addEventListener('close', () => popOverlay('dlg-workspace'));
 el.dlgSettings.addEventListener('close', () => popOverlay('dlg-settings'));
 el.dlgConfirm.addEventListener('close', () => popOverlay('dlg-confirm'));
+if (el.dlgProxy) {
+  el.dlgProxy.addEventListener('close', () => {
+    popOverlay('dlg-proxy');
+    proxyDialogAccountId = null;
+  });
+  if (el.proxyType) {
+    el.proxyType.addEventListener('change', syncProxyFieldsVisibility);
+  }
+  if (el.btnProxyCancel) {
+    el.btnProxyCancel.addEventListener('click', () => closeProxyDialog());
+  }
+  if (el.formProxy) {
+    el.formProxy.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!proxyDialogAccountId) return;
+      setProxyStatus('Salvando…', '');
+      const payload = {
+        accountId: proxyDialogAccountId,
+        type: el.proxyType.value,
+        host: el.proxyHost.value,
+        port: el.proxyPort.value,
+        username: el.proxyUser.value,
+        bypass: el.proxyBypass.value,
+      };
+      const passVal = el.proxyPass.value;
+      if (passVal) payload.password = passVal;
+      try {
+        const res = await window.multiheiz.proxySet(payload);
+        if (!res || !res.ok) {
+          setProxyStatus((res && res.error) || 'Falha ao salvar proxy', 'error');
+          return;
+        }
+        if (res.state) applyState(res.state);
+        if (res.passwordWarning) {
+          setProxyStatus(res.passwordWarning, 'error');
+        } else {
+          setProxyStatus('Proxy salvo.', 'ok');
+        }
+        el.proxyPass.value = '';
+        proxyPasswordSaved = !!(res.proxy && res.proxy.passwordSaved);
+        if (el.proxyPassHint) {
+          el.proxyPassHint.hidden = !proxyPasswordSaved;
+          el.proxyPassHint.textContent = proxyPasswordSaved
+            ? '••••• (salva) — deixe em branco para manter.'
+            : '';
+        }
+        renderSidebar();
+      } catch (err) {
+        setProxyStatus((err && err.message) || 'Falha ao salvar proxy', 'error');
+      }
+    });
+  }
+  if (el.btnProxyTest) {
+    el.btnProxyTest.addEventListener('click', async () => {
+      if (!proxyDialogAccountId) return;
+      setProxyStatus('Testando proxy…', '');
+      try {
+        const res = await window.multiheiz.proxyTest(proxyDialogAccountId);
+        if (!res || !res.ok) {
+          setProxyStatus((res && res.error) || 'Teste falhou', 'error');
+          return;
+        }
+        const ip = res.ip || '';
+        setProxyStatus(
+          ip ? `Proxy OK — IP/resposta: ${ip}` : 'Proxy OK',
+          'ok'
+        );
+      } catch (err) {
+        setProxyStatus((err && err.message) || 'Teste falhou', 'error');
+      }
+    });
+  }
+  if (el.btnProxyRemove) {
+    el.btnProxyRemove.addEventListener('click', async () => {
+      if (!proxyDialogAccountId) return;
+      setProxyStatus('Removendo…', '');
+      try {
+        const res = await window.multiheiz.proxyRemove(proxyDialogAccountId);
+        if (!res || !res.ok) {
+          setProxyStatus((res && res.error) || 'Falha ao remover', 'error');
+          return;
+        }
+        if (res.state) applyState(res.state);
+        el.proxyType.value = 'none';
+        el.proxyPass.value = '';
+        proxyPasswordSaved = false;
+        if (el.proxyPassHint) el.proxyPassHint.hidden = true;
+        syncProxyFieldsVisibility();
+        setProxyStatus('Proxy removido (conexão direta).', 'ok');
+        renderSidebar();
+      } catch (err) {
+        setProxyStatus((err && err.message) || 'Falha ao remover', 'error');
+      }
+    });
+  }
+}
 
 el.layoutSelect.addEventListener('mousedown', () => pushOverlay('layout-select'));
 el.layoutSelect.addEventListener('focus', () => pushOverlay('layout-select'));
@@ -2372,6 +2567,10 @@ window.multiheiz.onEvent((payload) => {
   if (payload.type === 'state:changed' && payload.state) {
     applyState(payload.state);
     scheduleSync();
+    return;
+  }
+  if (payload.type === 'ui:open-proxy' && payload.accountId) {
+    openProxyDialog(payload.accountId);
     return;
   }
   if (payload.type === 'ui:open-url-new-panel' && payload.url) {

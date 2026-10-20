@@ -26,6 +26,12 @@ function sanitizeState(state) {
       if (a.startUrl) a.startUrl = stripQuery(a.startUrl);
       delete a.cookies;
       delete a.cookie;
+      delete a.proxyPassword;
+      if (a.proxy && typeof a.proxy === 'object') {
+        delete a.proxy.password;
+        delete a.proxy.passwordEnc;
+        a.proxy.passwordSaved = false;
+      }
     }
   }
   return s;

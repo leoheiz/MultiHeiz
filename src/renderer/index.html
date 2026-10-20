@@ -184,6 +184,44 @@
       </form>
     </dialog>
 
+    <dialog id="dlg-proxy" class="dlg-proxy">
+      <form id="form-proxy" autocomplete="off">
+        <h2 id="dlg-proxy-title">Proxy</h2>
+        <p class="dlg-proxy-hint" id="dlg-proxy-hint"></p>
+        <label
+          >Tipo
+          <select name="type" id="proxy-type">
+            <option value="none">Sem proxy</option>
+            <option value="http">HTTP</option>
+            <option value="https">HTTPS</option>
+            <option value="socks5">SOCKS5</option>
+            <option value="socks4">SOCKS4</option>
+          </select>
+        </label>
+        <div class="dlg-proxy-fields" id="proxy-fields">
+          <label>Host <input name="host" id="proxy-host" maxlength="253" spellcheck="false" /></label>
+          <label>Porta <input name="port" id="proxy-port" type="number" min="1" max="65535" /></label>
+          <label>Usuário <input name="username" id="proxy-user" maxlength="128" autocomplete="off" /></label>
+          <label
+            >Senha
+            <input name="password" id="proxy-pass" type="password" maxlength="256" autocomplete="new-password" />
+          </label>
+          <p class="dlg-proxy-pass-hint" id="proxy-pass-hint" hidden></p>
+          <label
+            >Exceções (bypass)
+            <input name="bypass" id="proxy-bypass" maxlength="512" spellcheck="false" placeholder="&lt;local&gt;" />
+          </label>
+        </div>
+        <p class="dlg-proxy-status" id="proxy-status" role="status"></p>
+        <div class="dlg-actions dlg-proxy-actions">
+          <button type="submit" class="btn primary" id="btn-proxy-save">Salvar</button>
+          <button type="button" class="btn" id="btn-proxy-test">Testar proxy</button>
+          <button type="button" class="btn ghost" id="btn-proxy-remove">Remover</button>
+          <button type="button" class="btn ghost" id="btn-proxy-cancel">Fechar</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="dlg-settings" class="dlg-settings-wide">
       <div class="settings-shell">
         <aside class="settings-nav" aria-label="Seções">

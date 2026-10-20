@@ -973,6 +973,13 @@ function createPanel(accountId) {
   sessionPersist.hookSessionCookies(ses);
   adblock.attachSession(ses, accountId);
   try {
+    const proxyMod = require('./proxy');
+    // Aplica antes do loadURL (promise; load espera abaixo)
+    ses._mhProxyReady = proxyMod.applyProxyToSession(accountId, ses).catch(() => ({ ok: false }));
+  } catch {
+    ses._mhProxyReady = Promise.resolve({ ok: true });
+  }
+  try {
     const extensions = require('./extensions');
     extensions.loadForAccount(accountId).catch((err) => {
       console.warn('[extensions] loadForAccount', accountId, err && err.message);
@@ -1215,22 +1222,25 @@ function createPanel(accountId) {
   }
 
   // Actual navigation may be deferred by staggered load queue
-  if (!deferNextCreateLoad) {
-    let url = startUrlFor(account);
-    // data: only for selftest probe startUrl; user-typed startUrl is http/https only
-    const dataOpts = { allowData: allowInternalDataUrls() };
-    if (!isNavigableUrl(url, dataOpts)) {
-      url = normalizeUrl(url) || 'https://www.google.com';
+  const finishCreate = () => {
+    if (!deferNextCreateLoad) {
+      let url = startUrlFor(account);
+      // data: only for selftest probe startUrl; user-typed startUrl is http/https only
+      const dataOpts = { allowData: allowInternalDataUrls() };
+      if (!isNavigableUrl(url, dataOpts)) {
+        url = normalizeUrl(url) || 'https://www.google.com';
+      }
+      if (isNavigableUrl(url, dataOpts)) {
+        view.webContents.loadURL(url).catch((err) => {
+          console.error('loadURL failed', accountId, err);
+        });
+      }
     }
-    if (isNavigableUrl(url, dataOpts)) {
-      view.webContents.loadURL(url).catch((err) => {
-        console.error('loadURL failed', accountId, err);
-      });
-    }
-  }
-
-  applyThrottlingTo(accountId);
-  emitSuspendedState();
+    applyThrottlingTo(accountId);
+    emitSuspendedState();
+  };
+  const proxyReady = ses._mhProxyReady || Promise.resolve();
+  Promise.resolve(proxyReady).then(finishCreate).catch(finishCreate);
   return panels.get(accountId);
 }
 

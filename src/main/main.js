@@ -38,6 +38,7 @@ const sidebarCursor = require('./sidebar-cursor');
 const ipcGuard = require('./ipc-guard');
 const permissions = require('./permissions');
 const { sanitizeUserStartUrl } = require('./url-policy');
+const proxy = require('./proxy');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -211,6 +212,7 @@ const SELFTEST_STORE = selftestMode === 'store';
 const SELFTEST_SIDEBAR = selftestMode === 'sidebar';
 const SELFTEST_WORKSPACE_DELETE = selftestMode === 'workspace-delete';
 const SELFTEST_CONTEXTMENU = selftestMode === 'contextmenu';
+const SELFTEST_PROXY = selftestMode === 'proxy';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -238,7 +240,8 @@ const ANY_SELFTEST =
   SELFTEST_STORE ||
   SELFTEST_SIDEBAR ||
   SELFTEST_WORKSPACE_DELETE ||
-  SELFTEST_CONTEXTMENU;
+  SELFTEST_CONTEXTMENU ||
+  SELFTEST_PROXY;
 
 // YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
 if (SELFTEST_ABU_YT || SELFTEST_BUILTIN_YT) {
@@ -1274,6 +1277,30 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_PROXY) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runProxySelftest } = require('./selftest-proxy');
+          runProxySelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -1331,10 +1358,13 @@ function createWindow() {
 
 function publicState() {
   const s = getState();
+  const accounts = Array.isArray(s.accounts)
+    ? s.accounts.map((a) => proxy.sanitizeAccountProxyForPublic(a))
+    : [];
   return {
     workspaces: s.workspaces,
     activeWorkspaceId: s.activeWorkspaceId,
-    accounts: s.accounts,
+    accounts,
     layout: s.layout,
     page: s.page,
     maximizedAccountId: s.maximizedAccountId,
@@ -1842,6 +1872,37 @@ function registerIpc() {
   ipcMain.handle('panel:back', (_e, accountId) => panels.panelBack(accountId));
   ipcMain.handle('panel:forward', (_e, accountId) => panels.panelForward(accountId));
   ipcMain.handle('panel:reload', (_e, accountId) => panels.panelReload(accountId));
+
+  ipcMain.handle('proxy:get', (_e, accountId) => {
+    const acc = (getState().accounts || []).find((a) => a.id === accountId);
+    if (!acc) return { ok: false, error: 'Janela não encontrada.' };
+    return {
+      ok: true,
+      proxy: proxy.publicProxyView(acc.proxy),
+      encryptionAvailable: proxy.safeStorageApi().available,
+    };
+  });
+
+  ipcMain.handle('proxy:set', async (_e, payload) => {
+    const accountId = payload && payload.accountId;
+    if (!accountId) return { ok: false, error: 'accountId obrigatório.' };
+    const result = await proxy.setProxyForAccount(accountId, payload || {});
+    if (!result.ok) return result;
+    return {
+      ...result,
+      state: publicState(),
+    };
+  });
+
+  ipcMain.handle('proxy:remove', async (_e, accountId) => {
+    const result = await proxy.removeProxyForAccount(accountId);
+    if (!result.ok) return result;
+    return { ...result, state: publicState() };
+  });
+
+  ipcMain.handle('proxy:test', async (_e, accountId) => {
+    return proxy.testProxyForAccount(accountId);
+  });
   ipcMain.handle('panel:set-muted', (_e, { accountId, muted }) => {
     panels.panelSetMuted(accountId, muted);
     return publicState();
@@ -3241,6 +3302,10 @@ function popupAccountMenu(opts) {
       ],
     },
     {
+      label: 'Proxy…',
+      click: () => emitToRenderer({ type: 'ui:open-proxy', accountId }),
+    },
+    {
       label: 'Recarregar',
       click: () => panels.panelReload(accountId),
     },
@@ -4103,7 +4168,7 @@ async function runV14Selftest() {
 }
 
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   loadState();
   try {
     require('./extensions/dnr-shim').ensureExtresProtocol();
@@ -4118,6 +4183,18 @@ app.whenReady().then(() => {
   permissions.initPermissions({ getMainWindow: () => mainWindow });
   userAgent.applyAppUserAgentFallback();
   sessionPersist.startPeriodicFlush(() => panels.getAccountSessions());
+  proxy.initProxy({
+    emit: emitToRenderer,
+    getState,
+    updateState,
+    reloadPanel: (id) => panels.panelReload(id),
+  });
+  proxy.installLoginHandler(app);
+  try {
+    await proxy.applyAllAccountProxies();
+  } catch (err) {
+    console.warn('[proxy] applyAll', err && err.message ? err.message : err);
+  }
   v16 = initV16({
     getMainWindow: () => mainWindow,
     emitToRenderer,
