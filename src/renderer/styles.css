@@ -157,17 +157,17 @@ body {
   box-shadow: 4px 0 18px rgba(0, 0, 0, 0.35);
 }
 
-/*
- * In auto-hide the head must not be a Windows caption drag region: entering drag
- * around the pin fires mouseleave on #sidebar and would close the overlay early.
- */
-#app.sidebar-auto-hide #sidebar .sidebar-head {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
-
 #app.sidebar-auto-hide #sidebar .sidebar-resize-handle {
   display: none;
+}
+
+#btn-sidebar-toggle {
+  /* Explicit: never inherit caption drag; keep clicks in fixed + legacy modes. */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
 }
 
 #btn-sidebar-toggle .ico-sidebar-pin.hidden,
@@ -241,14 +241,21 @@ body {
   min-width: 0;
   overflow: hidden;
   flex-shrink: 0;
-  -webkit-app-region: drag;
-  app-region: drag;
+  /*
+   * Never use caption drag here (fixed, auto-hide, or legacy). On Windows/Electron,
+   * drag on the head swallows clicks on #btn-sidebar-toggle even with nested no-drag;
+   * in auto-hide it also fires mouseleave and closes the overlay before the pin.
+   * Window drag stays on the topbar spacer / native overlay.
+   */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .sidebar-head .btn,
 .sidebar-head button {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+  pointer-events: auto;
 }
 
 .brand {

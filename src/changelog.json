@@ -52,6 +52,10 @@
         {
           "tag": "Correção",
           "text": "Excluir uma área de trabalho agora fecha e remove todas as janelas dela (em vez de movê-las para outra área), com confirmação mostrando a quantidade."
+        },
+        {
+          "tag": "Correção",
+          "text": "Modo legado da barra lateral: a seta do topo volta a recolher/expandir (cabeçalho sem região de arraste no Windows)."
         }
       ]
     },

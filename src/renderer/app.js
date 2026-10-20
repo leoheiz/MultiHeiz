@@ -3032,6 +3032,9 @@ window.__multiheizUi = {
     const headCs = head ? getComputedStyle(head) : null;
     const pin = el.btnSidebarToggle;
     const pinRect = pin ? pin.getBoundingClientRect() : null;
+    const pinCs = pin ? getComputedStyle(pin) : null;
+    const appRegionOf = (style) =>
+      style ? style.webkitAppRegion || style.getPropertyValue('-webkit-app-region') || '' : '';
     return {
       legacyAlwaysActive: isSidebarLegacyAlwaysActive(),
       autoHide: isSidebarAutoHide(),
@@ -3048,13 +3051,27 @@ window.__multiheizUi = {
       delays: { showMs: SIDEBAR_SHOW_DELAY_MS, hideMs: SIDEBAR_HIDE_DELAY_MS },
       hotzonePx: SIDEBAR_HOTZONE_PX,
       cursorInside: sidebarCursorInside,
-      headAppRegion: headCs
-        ? headCs.webkitAppRegion || headCs.getPropertyValue('-webkit-app-region')
-        : '',
+      headAppRegion: appRegionOf(headCs),
+      pinAppRegion: appRegionOf(pinCs),
+      pinPointerEvents: pinCs ? pinCs.pointerEvents : '',
+      pinDisabled: pin ? !!pin.disabled : true,
       pinCenter: pinRect
         ? { x: pinRect.left + pinRect.width / 2, y: pinRect.top + pinRect.height / 2 }
         : null,
     };
+  },
+  /**
+   * Selftest: fire a real DOM click on #btn-sidebar-toggle (not a direct collapse helper).
+   * Programmatic HTMLElement.click() still goes through the button's click listener.
+   */
+  clickSidebarToggleButton: async () => {
+    const btn = document.getElementById('btn-sidebar-toggle');
+    if (!btn) return { ok: false, reason: 'missing-button' };
+    btn.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, view: window })
+    );
+    await new Promise((r) => setTimeout(r, 80));
+    return { ok: true, mode: window.__multiheizUi.getSidebarMode() };
   },
   syncSidebarAfterLegacyChange: async () => {
     clearSidebarHoverTimers();

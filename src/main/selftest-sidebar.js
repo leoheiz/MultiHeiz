@@ -624,12 +624,33 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: legacy mode expanded + hotzone inert', legacyFixed.bounds);
 
-  mode = await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
+  // Head + pin must not be caption-drag (Windows swallows real clicks otherwise).
+  if (mode.headAppRegion === 'drag' || mode.pinAppRegion === 'drag') {
+    console.log('FAIL: legacy head/pin must be no-drag for clicks', {
+      headAppRegion: mode.headAppRegion,
+      pinAppRegion: mode.pinAppRegion,
+    });
+    app.exit(1);
+    return;
+  }
+  if (mode.pinDisabled || mode.pinPointerEvents === 'none') {
+    console.log('FAIL: legacy toggle must be clickable', mode);
+    app.exit(1);
+    return;
+  }
+
+  /* Real button click (dispatch on #btn-sidebar-toggle) — collapse then expand */
+  let clickRes = await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
   await sleep(200);
   await waitForLayoutSettle();
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!clickRes || !clickRes.ok) {
+    console.log('FAIL: legacy clickSidebarToggleButton missing button', clickRes);
+    app.exit(1);
+    return;
+  }
   if (!mode.legacyAlwaysActive || !mode.collapsed || mode.autoHide) {
-    console.log('FAIL: legacy toggle should collapse icon-rail', mode);
+    console.log('FAIL: legacy real-button click should collapse icon-rail', mode);
     app.exit(1);
     return;
   }
@@ -657,8 +678,48 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  console.log('PASS: legacy collapse (old arrow behavior)', legacyCollapsed.bounds);
+  console.log('PASS: legacy collapse via real #btn-sidebar-toggle click', legacyCollapsed.bounds);
   await saveSidebarShot(ctx, 'sidebar-legacy-collapsed.png');
+
+  clickRes = await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!clickRes || !clickRes.ok) {
+    console.log('FAIL: legacy expand click missing button', clickRes);
+    app.exit(1);
+    return;
+  }
+  if (!mode.legacyAlwaysActive || mode.collapsed || mode.autoHide) {
+    console.log('FAIL: legacy real-button click should expand again', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.toggleTitle !== 'Recolher barra lateral') {
+    console.log('FAIL: legacy expanded tooltip after second click', mode.toggleTitle);
+    app.exit(1);
+    return;
+  }
+  const legacyExpandedAgain = panelBounds();
+  if (legacyExpandedAgain.overlayW !== 0 || !(legacyExpandedAgain.bounds.x >= 160)) {
+    console.log('FAIL: legacy expand should restore panel inset', legacyExpandedAgain);
+    app.exit(1);
+    return;
+  }
+  if (!(mode.sidebarWidth >= 160)) {
+    console.log('FAIL: legacy expanded sidebar width', mode.sidebarWidth);
+    app.exit(1);
+    return;
+  }
+  if (!(legacyExpandedAgain.bounds.x > legacyCollapsed.bounds.x + 80)) {
+    console.log('FAIL: expand should reclaim panel x vs collapsed', {
+      expanded: legacyExpandedAgain.bounds,
+      collapsed: legacyCollapsed.bounds,
+    });
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: legacy expand via real #btn-sidebar-toggle click', legacyExpandedAgain.bounds);
 
   mode = await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(false)');
   await sleep(200);
