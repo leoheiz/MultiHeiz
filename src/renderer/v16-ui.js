@@ -1231,9 +1231,64 @@
     dlg.showModal();
   }
 
+  let alarmesEditId = null;
+
+  const ALARMES_DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+  function formatAlarmesWhen(r) {
+    const next = r.snoozeUntil || r.nextAt || r.at;
+    if (!next) return '—';
+    try {
+      return new Date(next).toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return '—';
+    }
+  }
+
+  function formatAlarmesRecurrence(r) {
+    if (!r) return '';
+    if (r.kind === 'one-off') return 'Uma vez';
+    if (r.recur === 'daily') return 'Todos os dias · ' + (r.timeOfDay || '');
+    if (r.recur === 'weekly') {
+      const days = (Array.isArray(r.weekdays) ? r.weekdays : [])
+        .map((d) => ALARMES_DAY_LABELS[Number(d)])
+        .filter(Boolean);
+      const daysTxt = days.length ? days.join(', ') : 'Semanal';
+      return daysTxt + (r.timeOfDay ? ' · ' + r.timeOfDay : '');
+    }
+    if (r.recur === 'interval') {
+      if (r.intervalMinutes) return 'A cada ' + r.intervalMinutes + ' min';
+      if (r.intervalHours) return 'A cada ' + r.intervalHours + ' h';
+      return 'Intervalo';
+    }
+    return 'Recorrente';
+  }
+
+  function pad2(n) {
+    return String(n).padStart(2, '0');
+  }
+
+  function toDateInputValue(ms) {
+    const d = new Date(ms || Date.now());
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  function toTimeInputValue(ms) {
+    const d = new Date(ms || Date.now());
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+
   async function renderAlarmes(body) {
+    body.classList.add('alarmes-body');
     const data = await window.multiheiz.alarmesList();
-    const views = h('div', { className: 'alarmes-views' });
+
+    const views = h('div', { className: 'alarmes-views', 'data-role': 'alarmes-views' });
     const viewDefs = [
       { id: 'hoje', label: 'Hoje' },
       { id: 'proximos', label: 'Próximos' },
@@ -1241,124 +1296,480 @@
       { id: 'concluidos', label: 'Concluídos' },
     ];
     for (const v of viewDefs) {
-      views.appendChild(h('button', {
-        type: 'button',
-        className: 'btn ghost' + (alarmesView === v.id ? ' active' : ''),
-        text: v.label,
-        onClick: () => {
-          alarmesView = v.id;
-          renderModule();
-        },
-      }));
+      views.appendChild(
+        h('button', {
+          type: 'button',
+          className: 'btn ghost' + (alarmesView === v.id ? ' active' : ''),
+          text: v.label,
+          'data-view': v.id,
+          onClick: () => {
+            alarmesView = v.id;
+            renderModule();
+          },
+        })
+      );
     }
     body.appendChild(views);
 
-    const col = h('div', { className: 'alarmes-cols' });
-    const remCol = h('div', { className: 'alarmes-col' }, h('h3', { text: 'Lembretes' }));
-    const tmrCol = h('div', { className: 'alarmes-col' }, h('h3', { text: 'Timers' }));
-    col.append(remCol, tmrCol);
-    body.appendChild(col);
+    const layout = h('div', { className: 'alarmes-layout' });
+    const remCol = h('div', { className: 'alarmes-col alarmes-col-reminders' });
+    const tmrCol = h('div', { className: 'alarmes-col alarmes-col-timers' });
+    layout.append(remCol, tmrCol);
+    body.appendChild(layout);
 
-    remCol.appendChild(h('button', {
-      type: 'button', className: 'btn primary', text: 'Novo lembrete (+1 min)',
-      onClick: async () => {
-        const focused = hooks().getFocusedNav && hooks().getFocusedNav();
-        await window.multiheiz.alarmesAddReminder({
-          title: 'Lembrete',
-          kind: 'one-off',
-          at: Date.now() + 60000,
-          priority: 'normal',
-          windowId: focused && focused.accountId ? focused.accountId : null,
-        });
+    remCol.appendChild(h('h3', { className: 'alarmes-col-title', text: 'Lembretes' }));
+
+    const editing =
+      alarmesEditId && (data.reminders || []).find((x) => x.id === alarmesEditId);
+    const form = h('form', {
+      className: 'alarmes-form',
+      'data-role': 'alarmes-form',
+      onSubmit: (e) => e.preventDefault(),
+    });
+    const formTitle = h('div', {
+      className: 'alarmes-form-head',
+      text: editing ? 'Editar lembrete' : 'Novo lembrete',
+    });
+
+    const fieldLabel = h('label', { className: 'alarmes-field' },
+      h('span', { text: 'Rótulo' }),
+      h('input', {
+        type: 'text',
+        name: 'title',
+        'data-field': 'title',
+        required: true,
+        maxlength: '80',
+        placeholder: 'Ex.: Reunião',
+        value: editing ? editing.title || '' : '',
+      })
+    );
+    const fieldKind = h('label', { className: 'alarmes-field' },
+      h('span', { text: 'Tipo' }),
+      h('select', { name: 'kindMode', 'data-field': 'kindMode' })
+    );
+    const kindSelect = fieldKind.querySelector('select');
+    const kindOpts = [
+      { v: 'one-off', t: 'Uma vez' },
+      { v: 'daily', t: 'Todos os dias' },
+      { v: 'weekly', t: 'Dias da semana' },
+      { v: 'interval', t: 'Intervalo' },
+    ];
+    let initialKind = 'one-off';
+    if (editing) {
+      if (editing.kind === 'recurring' && editing.recur === 'daily') initialKind = 'daily';
+      else if (editing.kind === 'recurring' && editing.recur === 'weekly') initialKind = 'weekly';
+      else if (editing.kind === 'recurring' && editing.recur === 'interval') initialKind = 'interval';
+      else initialKind = 'one-off';
+    }
+    for (const o of kindOpts) {
+      const opt = document.createElement('option');
+      opt.value = o.v;
+      opt.textContent = o.t;
+      if (o.v === initialKind) opt.selected = true;
+      kindSelect.appendChild(opt);
+    }
+
+    const fieldTime = h('label', { className: 'alarmes-field' },
+      h('span', { text: 'Hora' }),
+      h('input', {
+        type: 'time',
+        name: 'time',
+        'data-field': 'time',
+        value: editing
+          ? editing.timeOfDay || toTimeInputValue(editing.at || Date.now() + 60000)
+          : toTimeInputValue(Date.now() + 60000),
+      })
+    );
+    const fieldDate = h('label', { className: 'alarmes-field alarmes-field-date' },
+      h('span', { text: 'Data' }),
+      h('input', {
+        type: 'date',
+        name: 'date',
+        'data-field': 'date',
+        value: editing ? toDateInputValue(editing.at || Date.now()) : toDateInputValue(Date.now()),
+      })
+    );
+    const fieldPriority = h('label', { className: 'alarmes-field' },
+      h('span', { text: 'Prioridade' }),
+      h('select', { name: 'priority', 'data-field': 'priority' })
+    );
+    const priSelect = fieldPriority.querySelector('select');
+    for (const p of [
+      { v: 'alta', t: 'Alta' },
+      { v: 'normal', t: 'Normal' },
+      { v: 'baixa', t: 'Baixa' },
+    ]) {
+      const opt = document.createElement('option');
+      opt.value = p.v;
+      opt.textContent = p.t;
+      if ((editing ? editing.priority || 'normal' : 'normal') === p.v) opt.selected = true;
+      priSelect.appendChild(opt);
+    }
+
+    const weekdaysWrap = h('div', {
+      className: 'alarmes-weekdays',
+      'data-role': 'alarmes-weekdays',
+    });
+    weekdaysWrap.appendChild(h('span', { className: 'alarmes-field-label', text: 'Repetir em' }));
+    const weekRow = h('div', { className: 'alarmes-weekday-row' });
+    const editDays = new Set(
+      editing && Array.isArray(editing.weekdays) ? editing.weekdays.map(Number) : [1, 2, 3, 4, 5]
+    );
+    for (let d = 0; d < 7; d++) {
+      const id = 'wd-' + d;
+      const lab = h('label', { className: 'alarmes-weekday' },
+        h('input', {
+          type: 'checkbox',
+          value: String(d),
+          'data-weekday': String(d),
+          checked: editDays.has(d),
+        }),
+        h('span', { text: ALARMES_DAY_LABELS[d] })
+      );
+      weekRow.appendChild(lab);
+    }
+    weekdaysWrap.appendChild(weekRow);
+
+    const intervalWrap = h('label', {
+      className: 'alarmes-field alarmes-field-interval',
+      'data-role': 'alarmes-interval',
+    },
+      h('span', { text: 'Intervalo (minutos)' }),
+      h('input', {
+        type: 'number',
+        min: '1',
+        max: '10080',
+        'data-field': 'intervalMinutes',
+        value: String((editing && editing.intervalMinutes) || 60),
+      })
+    );
+
+    const formError = h('p', {
+      className: 'alarmes-form-error muted-note',
+      'data-role': 'alarmes-form-error',
+      text: '',
+    });
+    formError.hidden = true;
+
+    const formActions = h('div', { className: 'alarmes-form-actions' });
+    const submitBtn = h('button', {
+      type: 'button',
+      className: 'btn primary',
+      text: editing ? 'Salvar' : 'Adicionar',
+      'data-role': 'alarmes-submit',
+    });
+    const cancelBtn = h('button', {
+      type: 'button',
+      className: 'btn ghost',
+      text: 'Cancelar',
+      'data-role': 'alarmes-cancel',
+      hidden: !editing,
+      onClick: () => {
+        alarmesEditId = null;
         renderModule();
       },
-    }));
+    });
+    formActions.append(submitBtn, cancelBtn);
+
+    const formGrid = h('div', { className: 'alarmes-form-grid' },
+      fieldLabel,
+      fieldKind,
+      fieldTime,
+      fieldDate,
+      fieldPriority,
+      weekdaysWrap,
+      intervalWrap
+    );
+    form.append(formTitle, formGrid, formError, formActions);
+    remCol.appendChild(form);
+
+    function syncFormVisibility() {
+      const mode = kindSelect.value;
+      fieldDate.hidden = mode !== 'one-off';
+      weekdaysWrap.hidden = mode !== 'weekly';
+      intervalWrap.hidden = mode !== 'interval';
+    }
+    kindSelect.addEventListener('change', syncFormVisibility);
+    syncFormVisibility();
+
+    function readFormPayload() {
+      const title = String(form.querySelector('[data-field="title"]').value || '').trim();
+      const mode = kindSelect.value;
+      const time = String(form.querySelector('[data-field="time"]').value || '09:00');
+      const date = String(form.querySelector('[data-field="date"]').value || '');
+      const priority = priSelect.value || 'normal';
+      const intervalMinutes = Number(form.querySelector('[data-field="intervalMinutes"]').value) || 0;
+      if (!title) return { error: 'Informe um rótulo.' };
+      if (!/^\d{2}:\d{2}$/.test(time)) return { error: 'Hora inválida.' };
+      const focused = hooks().getFocusedNav && hooks().getFocusedNav();
+      const windowId = focused && focused.accountId ? focused.accountId : null;
+      if (mode === 'one-off') {
+        if (!date) return { error: 'Informe a data.' };
+        const at = new Date(date + 'T' + time + ':00').getTime();
+        if (!Number.isFinite(at)) return { error: 'Data/hora inválidas.' };
+        if (!editing && at < Date.now() - 5000) return { error: 'Escolha uma data/hora no futuro.' };
+        return {
+          title,
+          kind: 'one-off',
+          at,
+          timeOfDay: time,
+          priority,
+          windowId,
+        };
+      }
+      if (mode === 'daily') {
+        return {
+          title,
+          kind: 'recurring',
+          recur: 'daily',
+          timeOfDay: time,
+          priority,
+          windowId,
+        };
+      }
+      if (mode === 'weekly') {
+        const weekdays = [...form.querySelectorAll('[data-weekday]:checked')].map((el) =>
+          Number(el.value)
+        );
+        if (!weekdays.length) return { error: 'Selecione ao menos um dia.' };
+        return {
+          title,
+          kind: 'recurring',
+          recur: 'weekly',
+          weekdays,
+          timeOfDay: time,
+          priority,
+          windowId,
+        };
+      }
+      if (mode === 'interval') {
+        if (intervalMinutes < 1) return { error: 'Intervalo deve ser pelo menos 1 minuto.' };
+        return {
+          title,
+          kind: 'recurring',
+          recur: 'interval',
+          intervalMinutes,
+          at: Date.now() + intervalMinutes * 60 * 1000,
+          timeOfDay: time,
+          priority,
+          windowId,
+        };
+      }
+      return { error: 'Tipo inválido.' };
+    }
+
+    async function submitForm() {
+      const payload = readFormPayload();
+      if (payload.error) {
+        formError.textContent = payload.error;
+        formError.hidden = false;
+        return { ok: false, error: payload.error };
+      }
+      formError.hidden = true;
+      if (editing) {
+        await window.multiheiz.alarmesUpdateReminder({ id: editing.id, ...payload, enabled: true, completedAt: null });
+        alarmesEditId = null;
+      } else {
+        await window.multiheiz.alarmesAddReminder(payload);
+      }
+      renderModule();
+      return { ok: true };
+    }
+    submitBtn.addEventListener('click', () => submitForm());
+
+    const list = h('div', { className: 'alarmes-list', 'data-role': 'alarmes-list' });
+    remCol.appendChild(list);
 
     const filtered = await window.multiheiz.alarmesFilter(alarmesView);
+    if (!(filtered || []).length) {
+      list.appendChild(
+        h('div', {
+          className: 'alarmes-empty',
+          'data-role': 'alarmes-empty',
+          text: 'Nenhum lembrete nesta vista. Use o formulário acima para criar um.',
+        })
+      );
+    }
     for (const r of filtered || []) {
       const pri = r.priority || 'normal';
-      const next = r.snoozeUntil || r.nextAt || r.at;
-      remCol.appendChild(h('div', {
-        className: `mgr-row alarmes-row-pri-${pri}`,
-      },
-        h('div', { className: 'mgr-row-main' },
-          h('div', {},
-            h('span', { className: `alarmes-priority ${pri}`, title: pri }),
-            h('strong', { text: r.title })
-          ),
-          h('span', {
-            className: 'muted-note',
-            text: `${r.kind}${r.snoozeUntil ? ' · adiado' : ''} · ${pri} · ${next ? new Date(next).toLocaleString('pt-BR') : '—'}`,
+      const enabled = r.enabled !== false && !(r.completedAt);
+      const row = h('div', {
+        className: `alarmes-item alarmes-row-pri-${pri}` + (enabled ? '' : ' is-off'),
+        'data-id': r.id,
+        'data-role': 'alarmes-item',
+      });
+      const main = h('div', { className: 'alarmes-item-main' });
+      main.appendChild(
+        h('div', { className: 'alarmes-item-title' },
+          h('span', { className: `alarmes-priority ${pri}`, title: pri }),
+          h('strong', { text: r.title || 'Lembrete' })
+        )
+      );
+      main.appendChild(
+        h('div', { className: 'alarmes-item-meta' },
+          h('span', { className: 'alarmes-item-when', text: formatAlarmesWhen(r) }),
+          h('span', { className: 'alarmes-item-recur', text: formatAlarmesRecurrence(r) }),
+          r.snoozeUntil ? h('span', { className: 'alarmes-item-snooze', text: 'Adiado' }) : null
+        )
+      );
+      const actions = h('div', { className: 'alarmes-item-actions' });
+      const toggle = h('label', {
+        className: 'alarmes-switch',
+        title: enabled ? 'Ligado' : 'Desligado',
+      });
+      const toggleInput = h('input', {
+        type: 'checkbox',
+        className: 'alarmes-switch-input',
+        'data-role': 'alarmes-toggle',
+        checked: enabled,
+        onChange: async () => {
+          if (toggleInput.checked) {
+            await window.multiheiz.alarmesUpdateReminder({
+              id: r.id,
+              enabled: true,
+              completedAt: null,
+            });
+          } else {
+            await window.multiheiz.alarmesUpdateReminder({
+              id: r.id,
+              enabled: false,
+            });
+          }
+          renderModule();
+        },
+      });
+      toggle.append(
+        toggleInput,
+        h('span', { className: 'alarmes-switch-track' }),
+        h('span', { className: 'alarmes-switch-label', text: enabled ? 'On' : 'Off' })
+      );
+      actions.appendChild(toggle);
+      if (r.windowId) {
+        actions.appendChild(
+          h('button', {
+            type: 'button',
+            className: 'btn ghost tiny',
+            text: 'Janela',
+            title: 'Ir até a janela',
+            onClick: () => goToReminderWindow(r),
           })
-        ),
-        h('button', {
-          type: 'button', className: 'btn ghost', text: 'Ir até a janela',
-          onClick: () => goToReminderWindow(r),
-        }),
-        alarmesView !== 'concluidos'
-          ? h('button', {
-            type: 'button', className: 'btn ghost', text: 'Concluir',
+        );
+      }
+      if (alarmesView !== 'concluidos') {
+        actions.appendChild(
+          h('button', {
+            type: 'button',
+            className: 'btn ghost tiny',
+            text: 'Editar',
+            'data-role': 'alarmes-edit',
+            onClick: () => {
+              alarmesEditId = r.id;
+              renderModule();
+            },
+          })
+        );
+        actions.appendChild(
+          h('button', {
+            type: 'button',
+            className: 'btn ghost tiny',
+            text: 'Concluir',
             onClick: async () => {
               await window.multiheiz.alarmesCompleteReminder(r.id);
               renderModule();
             },
           })
-          : null,
+        );
+      }
+      actions.appendChild(
         h('button', {
-          type: 'button', className: 'btn ghost', text: 'Remover',
+          type: 'button',
+          className: 'btn ghost tiny',
+          text: 'Excluir',
+          'data-role': 'alarmes-delete',
           onClick: async () => {
-            if (!window.confirm(`Remover o lembrete "${r.title}"?`)) return;
+            if (!window.confirm(`Excluir o lembrete "${r.title}"?`)) return;
             await window.multiheiz.alarmesRemoveReminder(r.id);
+            if (alarmesEditId === r.id) alarmesEditId = null;
             renderModule();
           },
         })
-      ));
-    }
-    if (!(filtered || []).length) {
-      remCol.appendChild(h('p', { className: 'muted-note', text: 'Nenhum lembrete nesta vista.' }));
+      );
+      row.append(main, actions);
+      list.appendChild(row);
     }
 
-    tmrCol.appendChild(h('button', {
-      type: 'button', className: 'btn primary', text: 'Timer 1 min',
-      onClick: async () => {
-        const t = await window.multiheiz.alarmesAddTimer({ title: 'Timer', durationMs: 60000 });
-        await window.multiheiz.alarmesStartTimer(t.id);
-        renderModule();
-      },
-    }));
+    tmrCol.appendChild(h('h3', { className: 'alarmes-col-title', text: 'Timers' }));
+    tmrCol.appendChild(
+      h('button', {
+        type: 'button',
+        className: 'btn primary',
+        text: 'Timer 1 min',
+        onClick: async () => {
+          const t = await window.multiheiz.alarmesAddTimer({ title: 'Timer', durationMs: 60000 });
+          await window.multiheiz.alarmesStartTimer(t.id);
+          renderModule();
+        },
+      })
+    );
+    const tmrList = h('div', { className: 'alarmes-list alarmes-timer-list' });
+    tmrCol.appendChild(tmrList);
+    if (!(data.timers || []).length) {
+      tmrList.appendChild(
+        h('div', { className: 'alarmes-empty', text: 'Nenhum timer ativo.' })
+      );
+    }
     for (const t of data.timers || []) {
       const left = t.running
         ? Math.max(0, (t.endsAt || 0) - Date.now())
         : t.remainingMs || t.durationMs;
-      tmrCol.appendChild(h('div', { className: 'mgr-row' },
-        h('div', { className: 'mgr-row-main' },
-          h('strong', { text: t.title }),
-          h('span', { className: 'muted-note', text: `${Math.ceil(left / 1000)}s · ${t.running ? 'rodando' : 'pausado'}` })
-        ),
+      const row = h('div', { className: 'alarmes-item', 'data-role': 'alarmes-timer' });
+      row.appendChild(
+        h('div', { className: 'alarmes-item-main' },
+          h('div', { className: 'alarmes-item-title' }, h('strong', { text: t.title })),
+          h('div', {
+            className: 'alarmes-item-meta',
+            text: `${Math.ceil(left / 1000)}s · ${t.running ? 'rodando' : 'pausado'}`,
+          })
+        )
+      );
+      const actions = h('div', { className: 'alarmes-item-actions' });
+      actions.appendChild(
         h('button', {
-          type: 'button', className: 'btn ghost', text: t.running ? 'Pausar' : 'Iniciar',
+          type: 'button',
+          className: 'btn ghost tiny',
+          text: t.running ? 'Pausar' : 'Iniciar',
           onClick: async () => {
             if (t.running) await window.multiheiz.alarmesPauseTimer(t.id);
             else await window.multiheiz.alarmesStartTimer(t.id);
             renderModule();
           },
-        }),
+        })
+      );
+      actions.appendChild(
         h('button', {
-          type: 'button', className: 'btn ghost', text: 'Reset',
+          type: 'button',
+          className: 'btn ghost tiny',
+          text: 'Reset',
           onClick: async () => {
             await window.multiheiz.alarmesResetTimer(t.id);
             renderModule();
           },
-        }),
+        })
+      );
+      actions.appendChild(
         h('button', {
-          type: 'button', className: 'btn ghost', text: 'Remover',
+          type: 'button',
+          className: 'btn ghost tiny',
+          text: 'Excluir',
           onClick: async () => {
-            if (!window.confirm(`Remover o timer "${t.title}"?`)) return;
+            if (!window.confirm(`Excluir o timer "${t.title}"?`)) return;
             await window.multiheiz.alarmesRemoveTimer(t.id);
             renderModule();
           },
         })
-      ));
+      );
+      row.appendChild(actions);
+      tmrList.appendChild(row);
     }
 
     api._alarmesTest = {
@@ -1366,6 +1777,12 @@
       getView: () => alarmesView,
       setView: (v) => {
         alarmesView = v;
+      },
+      submitForm,
+      readFormPayload,
+      formatRecurrence: formatAlarmesRecurrence,
+      setEditId: (id) => {
+        alarmesEditId = id;
       },
     };
   }
