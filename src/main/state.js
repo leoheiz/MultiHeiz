@@ -253,6 +253,7 @@ function migrate(parsed) {
             keepAliveInBackground,
             privateHistory: !!(a && a.privateHistory),
             adblockEnabled: a && a.adblockEnabled === false ? false : true,
+            showUnread: a && a.showUnread === false ? false : true,
             zoomFactor:
               typeof (a && a.zoomFactor) === 'number' && a.zoomFactor >= 0.25 && a.zoomFactor <= 3
                 ? a.zoomFactor

@@ -25,6 +25,7 @@ const extensions = require('./extensions');
 const contextMenu = require('./context-menu');
 const volumeControl = require('./volume-control');
 const popoverOverlay = require('./popover-overlay');
+const unread = require('./unread');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
@@ -229,6 +230,7 @@ function openUrlInNewPanel(fromAccountId, url) {
     keepAliveInBackground: false,
     privateHistory: false,
     adblockEnabled: true,
+    showUnread: true,
     lastUrl: null,
     zoomFactor: 1,
   };
@@ -1142,6 +1144,17 @@ function createPanel(accountId) {
     recordHistory(accountId, url);
     touchAccount(accountId);
     notifyNav(accountId);
+    try {
+      let title = '';
+      try {
+        title = view.webContents.getTitle() || '';
+      } catch {
+        title = '';
+      }
+      unread.handleDidNavigate(accountId, title);
+    } catch {
+      /* ignore */
+    }
     signalLoadCommitted(accountId);
     // Google auth: align webContents UA with per-request Google-auth headers
     try {
@@ -1267,10 +1280,22 @@ function createPanel(accountId) {
       }
     }, delay);
   });
-  view.webContents.on('page-title-updated', () => notifyNav(accountId));
+  view.webContents.on('page-title-updated', (_e, title) => {
+    notifyNav(accountId);
+    try {
+      unread.handleTitleUpdated(accountId, title != null ? String(title) : view.webContents.getTitle());
+    } catch {
+      /* ignore */
+    }
+  });
   view.webContents.on('page-favicon-updated', (_e, favicons) => {
     const favicon = Array.isArray(favicons) && favicons.length ? favicons[0] : '';
     emitToRenderer({ type: 'panel:favicon', accountId, favicon });
+    try {
+      unread.handleFaviconUpdated(accountId, favicons);
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('ipc-message', (_e, channel, data) => {
     if (channel === 'panel:ctrl-wheel') {

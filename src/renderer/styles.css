@@ -493,6 +493,66 @@ html[data-theme='claro'] .sidebar-item:hover {
   background: color-mix(in srgb, var(--accent, #2bb8a6) 12%, transparent);
 }
 
+.sidebar-fav-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-unread-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  z-index: 1;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: #dc3545;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg, #1a1d23) 80%, transparent);
+}
+
+.sidebar-unread-badge.is-dot {
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  top: -1px;
+  right: -1px;
+}
+
+#sidebar.collapsed .sidebar-unread-badge,
+#sidebar.auto-collapsed .sidebar-unread-badge {
+  top: -3px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 14px;
+}
+
+#sidebar.collapsed .sidebar-unread-badge.is-dot,
+#sidebar.auto-collapsed .sidebar-unread-badge.is-dot {
+  min-width: 7px;
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  top: 0;
+  right: 0;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

@@ -57,6 +57,7 @@
     "selftest:volume": "node tools/selftest-volume.js",
     "selftest:layout-workspace": "node tools/selftest-layout-workspace.js",
     "selftest:popover-overlay": "node tools/selftest-popover-overlay.js",
+    "selftest:badges": "node tools/selftest-badges.js",
     "check:realhover-volume": "node tools/realhover-volume.js",
     "shots:tools": "node tools/shots-tools.js",
     "shots:volume": "node tools/shots-volume.js",

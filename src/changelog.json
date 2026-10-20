@@ -132,6 +132,10 @@
         {
           "tag": "Melhoria",
           "text": "Auditoria de lag: persistência de estado assíncrona, render incremental (volume/mudo sem recriar a grade), captura de snapshot modal sequencial; check:lag-audit com orçamento de 100 ms em ações leves."
+        },
+        {
+          "tag": "Novo",
+          "text": "Contador de mensagens não lidas por janela: badge na barra lateral (número ou ponto) a partir do título da página; total no ícone do app (Windows) ou badge do SO (Linux/macOS); opção por janela no menu (ligada por padrão)."
         }
       ]
     },

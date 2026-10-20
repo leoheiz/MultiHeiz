@@ -44,6 +44,7 @@ const proxy = require('./proxy');
 const doh = require('./doh');
 const settingsApply = require('./settings-apply');
 const popoverOverlay = require('./popover-overlay');
+const unread = require('./unread');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -239,6 +240,7 @@ const SELFTEST_POPOVER_OVERLAY = selftestMode === 'popover-overlay';
 const SELFTEST_REALHOVER_VOLUME = selftestMode === 'realhover-volume';
 const SELFTEST_LAG_AUDIT = selftestMode === 'lag-audit';
 const SELFTEST_PERF = selftestMode === 'perf';
+const SELFTEST_BADGES = selftestMode === 'badges';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -288,7 +290,8 @@ const ANY_SELFTEST =
   SELFTEST_POPOVER_OVERLAY ||
   SELFTEST_REALHOVER_VOLUME ||
   SELFTEST_LAG_AUDIT ||
-  SELFTEST_PERF;
+  SELFTEST_PERF ||
+  SELFTEST_BADGES;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -597,7 +600,8 @@ function createWindow() {
     SELFTEST_LAYOUT_WORKSPACE ||
     SELFTEST_PERF ||
     SELFTEST_LAG_AUDIT ||
-    SELFTEST_POPOVER_OVERLAY
+    SELFTEST_POPOVER_OVERLAY ||
+    SELFTEST_BADGES
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -619,7 +623,8 @@ function createWindow() {
     SELFTEST_SHEET ||
     SELFTEST_VOLUME ||
     SELFTEST_SHOTS_VOLUME ||
-    SELFTEST_LAYOUT_WORKSPACE;
+    SELFTEST_LAYOUT_WORKSPACE ||
+    SELFTEST_BADGES;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -689,7 +694,8 @@ function createWindow() {
       SELFTEST_PERF ||
       SELFTEST_LAG_AUDIT ||
       SELFTEST_POPOVER_OVERLAY ||
-      SELFTEST_REALHOVER_VOLUME,
+      SELFTEST_REALHOVER_VOLUME ||
+      SELFTEST_BADGES,
     paintWhenInitiallyHidden: true,
     autoHideMenuBar: true,
     webPreferences: {
@@ -731,6 +737,11 @@ function createWindow() {
   }
 
   panels.initPanels(mainWindow, emitToRenderer, { getPublicState: publicState });
+  unread.initUnread({
+    getMainWindow: () => mainWindow,
+    getState,
+    emitToRenderer,
+  });
   popoverOverlay.configure({
     getMainWindow: () => mainWindow,
     emitToRenderer,
@@ -1653,6 +1664,31 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_BADGES) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runBadgesSelftest } = require('./selftest-badges');
+          runBadgesSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            app,
+            unread,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_SHOTS_SIDEBAR2) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -2057,6 +2093,11 @@ async function removeAccountById(id) {
         }
       }
     });
+    try {
+      unread.clearAccount(id);
+    } catch {
+      /* ignore */
+    }
   } finally {
     panels.unmarkAccountRemoving(id);
   }
@@ -2588,6 +2629,7 @@ function registerIpc() {
       keepAliveInBackground,
       privateHistory: !!(data && data.privateHistory),
       adblockEnabled: data && data.adblockEnabled === false ? false : true,
+      showUnread: data && data.showUnread === false ? false : true,
       lastUrl: null,
       zoomFactor: 1,
     };
@@ -2642,10 +2684,20 @@ function registerIpc() {
       if (typeof fields.adblockEnabled === 'boolean') {
         a.adblockEnabled = fields.adblockEnabled;
       }
+      if (typeof fields.showUnread === 'boolean') {
+        a.showUnread = fields.showUnread;
+      }
     });
     panels.applyThrottling();
     if (typeof fields.adblockEnabled === 'boolean') {
       adblock.setWindowEnabled(id, fields.adblockEnabled);
+    }
+    if (typeof fields.showUnread === 'boolean') {
+      try {
+        unread.refreshAfterAccountChange();
+      } catch {
+        /* ignore */
+      }
     }
     return publicState();
   });
@@ -4271,6 +4323,23 @@ function popupAccountMenu(opts) {
     {
       label: 'Proxy…',
       click: () => emitToRenderer({ type: 'ui:open-proxy', accountId }),
+    },
+    {
+      type: 'checkbox',
+      label: 'Mostrar contador de não lidas',
+      checked: acc.showUnread !== false,
+      click: (item) => {
+        updateState((s) => {
+          const a = s.accounts.find((x) => x.id === accountId);
+          if (a) a.showUnread = !!item.checked;
+        });
+        try {
+          unread.refreshAfterAccountChange();
+        } catch {
+          /* ignore */
+        }
+        emitToRenderer({ type: 'state:changed', state: publicState() });
+      },
     },
     {
       label: 'Recarregar',

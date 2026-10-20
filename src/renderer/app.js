@@ -115,6 +115,8 @@ const overlaySnapMap = new Map();
 /** Contas com áudio tocando (indicador na barra lateral). */
 /** @type {Set<string>} */
 const audibleAccounts = new Set();
+/** @type {Map<string, { count: number|null, dot: boolean }>} */
+const unreadByAccount = new Map();
 /** @type {{ accountId: string, hideTimer: ReturnType<typeof setTimeout>|null } | null} */
 let volumePopover = null;
 /** Id of the light popover currently open in the overlay WebContentsView */
@@ -1434,6 +1436,7 @@ function renderSidebar() {
   for (const acc of list) {
     const item = document.createElement('button');
     item.type = 'button';
+    item.dataset.accountId = acc.id;
     item.className =
       'sidebar-item' + (focusedAccountId === acc.id || visiblePageAccounts().some((a) => a.id === acc.id && a.id === focusedAccountId) ? ' active' : '');
     if (visiblePageAccounts().some((a) => a.id === acc.id) && !focusedAccountId) {
@@ -1445,6 +1448,8 @@ function renderSidebar() {
     stripe.className = 'sidebar-color';
     stripe.style.background = acc.color || 'var(--accent)';
 
+    const favWrap = document.createElement('span');
+    favWrap.className = 'sidebar-fav-wrap';
     const fav = document.createElement('img');
     fav.className = 'sidebar-fav';
     fav.alt = '';
@@ -1452,6 +1457,27 @@ function renderSidebar() {
     const favUrl = favicons.get(acc.id) || acc.catalogIconUrl || '';
     if (favUrl) fav.src = favUrl;
     else fav.style.opacity = '0.35';
+    favWrap.appendChild(fav);
+    const unread = unreadByAccount.get(acc.id);
+    const showUnread = acc.showUnread !== false;
+    if (showUnread && unread && (typeof unread.count === 'number' || unread.dot)) {
+      const badge = document.createElement('span');
+      badge.className = 'sidebar-unread-badge';
+      badge.dataset.role = 'sidebar-unread';
+      if (typeof unread.count === 'number' && unread.count > 0) {
+        badge.textContent = unread.count >= 99 ? '99+' : String(unread.count);
+        badge.title =
+          unread.count === 1
+            ? '1 mensagem não lida'
+            : `${unread.count >= 99 ? '99+' : unread.count} mensagens não lidas`;
+      } else {
+        badge.classList.add('is-dot');
+        badge.textContent = '';
+        badge.title = 'Mensagens não lidas';
+      }
+      badge.setAttribute('aria-label', badge.title);
+      favWrap.appendChild(badge);
+    }
 
     const body = document.createElement('div');
     body.className = 'sidebar-body';
@@ -1517,7 +1543,7 @@ function renderSidebar() {
     const a11yLabel = `${acc.name} — ${stLabel}${proxyBit}`;
     item.title = a11yLabel;
     item.setAttribute('aria-label', a11yLabel);
-    const parts = [stripe, fav, body];
+    const parts = [stripe, favWrap, body];
     if (proxyBadge) parts.push(proxyBadge);
     if (audioBtn) parts.push(audioBtn);
     parts.push(dot);
@@ -3813,6 +3839,15 @@ window.multiheiz.onEvent((payload) => {
     if (slotFav && payload.favicon) slotFav.src = payload.favicon;
     return;
   }
+  if (payload.type === 'panel:unread' && payload.accountId) {
+    const count =
+      typeof payload.count === 'number' && payload.count > 0 ? payload.count : null;
+    const dot = !count && !!payload.dot;
+    if (!count && !dot) unreadByAccount.delete(payload.accountId);
+    else unreadByAccount.set(payload.accountId, { count, dot });
+    renderSidebar();
+    return;
+  }
   if (payload.type === 'panel:fps') {
     if (payload.accountId === focusedAccountId) {
       focusedFps = payload.fps | 0;
@@ -3936,6 +3971,17 @@ window.__multiheizUi = {
     );
   },
   isCatalogOpen: () => !!(el.dlgCatalog && el.dlgCatalog.open),
+  getSidebarUnreadBadges: () => {
+    return [...el.sidebarList.querySelectorAll('.sidebar-item')].map((item) => {
+      const badge = item.querySelector('[data-role="sidebar-unread"]');
+      return {
+        accountId: item.dataset.accountId || '',
+        text: badge ? String(badge.textContent || '').trim() : '',
+        isDot: !!(badge && badge.classList.contains('is-dot')),
+        visible: !!badge,
+      };
+    });
+  },
   setCatalogSearch: (q) => {
     if (el.catalogSearch) el.catalogSearch.value = String(q || '');
     renderCatalogGrid(q);
