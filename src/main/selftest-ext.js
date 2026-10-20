@@ -564,7 +564,8 @@ async function runExtSelftest(ctx) {
 
   // Webstore URL parse + install via MULTIHEIZ_WEBSTORE_TEST_BASE (selftest only)
   {
-    const { parseStoreUrl, crxUrlFor } = require('./extensions/webstore');
+    const { parseStoreUrl, crxUrlFor, isAllowedCrxDownloadHost } = require('./extensions/webstore');
+    const { assertAllowedCrxUrl } = require('./extensions/download');
     const sid = packed.extensionId;
     const sample = 'abcdefghijklmnopabcdefghijklmnop';
     const p1 = parseStoreUrl('https://chromewebstore.google.com/detail/slug/' + sample);
@@ -576,6 +577,54 @@ async function runExtSelftest(ctx) {
     );
     if (!p2 || p2.store !== 'edge' || p2.id !== sample) {
       throw new Error('parseStoreUrl Edge failed');
+    }
+
+    // Edge CDN: http://msedgeextensions.f.tlu… → https://…sf.tlu… (path+query kept)
+    {
+      const edgeHttp = new URL(
+        'http://msedgeextensions.f.tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/deadbeef-guid?P1=1&P2=2&P3=3&P4=4'
+      );
+      assertAllowedCrxUrl(edgeHttp);
+      if (edgeHttp.protocol !== 'https:') {
+        throw new Error('Edge f.tlu redirect should rewrite to https, got ' + edgeHttp.protocol);
+      }
+      if (edgeHttp.hostname !== 'msedgeextensions.sf.tlu.dl.delivery.mp.microsoft.com') {
+        throw new Error('Edge f.tlu should rewrite host to sf.tlu, got ' + edgeHttp.hostname);
+      }
+      if (edgeHttp.pathname !== '/filestreamingservice/files/deadbeef-guid') {
+        throw new Error('Edge rewrite must keep path: ' + edgeHttp.pathname);
+      }
+      if (edgeHttp.search !== '?P1=1&P2=2&P3=3&P4=4') {
+        throw new Error('Edge rewrite must keep query: ' + edgeHttp.search);
+      }
+      if (
+        !isAllowedCrxDownloadHost('msedgeextensions.sf.tlu.dl.delivery.mp.microsoft.com')
+      ) {
+        throw new Error('sf.tlu CDN host must be on CRX download allowlist');
+      }
+      let otherHttpFail = false;
+      try {
+        assertAllowedCrxUrl(new URL('http://evil.example/x.crx'));
+      } catch (err) {
+        const msg = String(err && err.message ? err.message : err);
+        if (/HTTPS|rejeitado/i.test(msg)) otherHttpFail = true;
+        else throw err;
+      }
+      if (!otherHttpFail) {
+        throw new Error('http:// from non-Edge-CDN host must still be rejected');
+      }
+      let badHttpsFail = false;
+      try {
+        assertAllowedCrxUrl(new URL('https://evil.example/x.crx'));
+      } catch (err) {
+        const msg = String(err && err.message ? err.message : err);
+        if (/não permitido|nao permitido|Host/i.test(msg)) badHttpsFail = true;
+        else throw err;
+      }
+      if (!badHttpsFail) {
+        throw new Error('https:// non-allowlisted host must be rejected');
+      }
+      console.log('PASS: Edge CRX HTTP f.tlu → https sf.tlu rewrite + reject other HTTP/HTTPS');
     }
 
     let storePort = 0;

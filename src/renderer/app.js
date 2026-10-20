@@ -1261,11 +1261,28 @@ function updateStoreOfferBar(accountId, offer) {
     storeOffers.delete(accountId);
   } else {
     const prev = storeOffers.get(accountId) || {};
+    const sameExt =
+      prev.store === offer.store &&
+      String(prev.id || '').toLowerCase() === String(offer.id || '').toLowerCase();
+    const installedUnchanged = !!prev.installed === !!offer.installed;
+    const inherit = sameExt && installedUnchanged;
     storeOffers.set(accountId, {
       ...prev,
       ...offer,
-      status: offer.status != null ? offer.status : prev.status,
-      message: offer.message != null ? offer.message : prev.message,
+      status: inherit
+        ? offer.status != null
+          ? offer.status
+          : prev.status
+        : offer.status != null
+          ? offer.status
+          : '',
+      message: inherit
+        ? offer.message != null
+          ? offer.message
+          : prev.message
+        : offer.message != null
+          ? offer.message
+          : '',
     });
   }
   const slot = el.grid.querySelector(`.panel-slot[data-account-id="${accountId}"]`);

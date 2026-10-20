@@ -336,6 +336,23 @@ async function runNodeChecks() {
     'allow edge CDN'
   );
   assert(!webstore.isAllowedCrxDownloadHost('evil.example'), 'deny evil host');
+  // Edge CDN regional HTTP → HTTPS sf.tlu rewrite
+  {
+    const edgeHttp = new URL(
+      'http://msedgeextensions.f.tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/guid?P1=a&P2=b'
+    );
+    dl.assertAllowedCrxUrl(edgeHttp);
+    assert(edgeHttp.protocol === 'https:', 'Edge f.tlu rewrite → https');
+    assert(
+      edgeHttp.hostname === 'msedgeextensions.sf.tlu.dl.delivery.mp.microsoft.com',
+      'Edge f.tlu rewrite → sf.tlu host'
+    );
+    assert(
+      edgeHttp.pathname === '/filestreamingservice/files/guid' &&
+        edgeHttp.search === '?P1=a&P2=b',
+      'Edge rewrite keeps path+query'
+    );
+  }
   let crxHttpFail = false;
   try {
     dl.assertAllowedCrxUrl(new URL('http://clients2.google.com/x'));

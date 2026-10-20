@@ -531,14 +531,30 @@ async function runStoreSelftest(ctx) {
 
     const rm = await clickStoreBtn('/Remover/i');
     if (!rm || !rm.ok) throw new Error('click Remover failed: ' + JSON.stringify(rm));
-    await waitBar(
-      (b) => b && b.present && b.hasInstall && !b.hasRemove,
+    const afterRm = await waitBar(
+      (b) =>
+        b &&
+        b.present &&
+        b.hasInstall &&
+        !b.hasRemove &&
+        !b.hasBadge &&
+        /Extensão da /i.test(b.text || '') &&
+        !/Instalada:/i.test(b.text || ''),
       30000,
-      'after remove'
+      'after remove default label'
     );
+    if (/Instalada:/i.test(afterRm.text || '')) {
+      throw new Error('stale Instalada: message after remove: ' + afterRm.text);
+    }
+    if (!/Extensão da (Chrome Web Store|Edge)/i.test(afterRm.text || '')) {
+      throw new Error('expected default store label after remove: ' + afterRm.text);
+    }
+    if (!afterRm.hasInstall) {
+      throw new Error('expected Instalar no MultiHeiz after remove: ' + JSON.stringify(afterRm));
+    }
     const left = extensions.list().some((e) => e.id === rec.id || e.storeId === activeId);
     if (left) throw new Error('extension still in registry after Remover');
-    bumpPass('Remover uninstalls extension');
+    bumpPass('after remove: default label + Instalar no MultiHeiz (no stale Instalada:)');
   }
 
   // --- ID mismatch rejected ---
@@ -602,7 +618,7 @@ async function runStoreSelftest(ctx) {
     crxMode = hasAbuFixture ? 'abu' : 'gen';
   }
 
-  // --- Edge detail shows bar ---
+  // --- Edge detail shows bar (default label; no stale Instalada: from prior CWS) ---
   {
     const edgeId = hasAbuFixture ? ABU_ID : genId;
     const edgeUrl = origin + '/addons/detail/' + ABU_SLUG + '/' + edgeId;
@@ -610,12 +626,26 @@ async function runStoreSelftest(ctx) {
     await waitForUrl('acc-store', (u) => u.includes('/addons/detail/'), 20000);
     await wait(500);
     const edgeBar = await waitBar(
-      (b) => b && b.present && b.extId === edgeId && b.store === 'edge',
+      (b) =>
+        b &&
+        b.present &&
+        b.extId === edgeId &&
+        b.store === 'edge' &&
+        b.hasInstall &&
+        !b.hasRemove &&
+        /Extensão da Edge/i.test(b.text || '') &&
+        !/Instalada:/i.test(b.text || ''),
       15000,
-      'Edge bar'
+      'Edge bar default label'
     );
     if (!edgeBar.present) throw new Error('Edge bar missing');
-    bumpPass('Edge Add-ons detail shows store bar');
+    if (/Instalada:/i.test(edgeBar.text || '')) {
+      throw new Error('stale Instalada: after navigate to other store/id: ' + edgeBar.text);
+    }
+    if (!/Extensão da Edge/i.test(edgeBar.text || '') || !edgeBar.hasInstall) {
+      throw new Error('expected Edge default label + Instalar: ' + JSON.stringify(edgeBar));
+    }
+    bumpPass('Edge Add-ons detail shows default label + Instalar (no stale Instalada:)');
   }
 
   // --- Non-detail hides bar ---

@@ -16,6 +16,27 @@ const EDGE_ID_RE = /^[a-z0-9]{32}$/i;
 const MAX_REDIRECTS = 5;
 const MAX_CRX_BYTES = 100 * 1024 * 1024; // 100 MB
 
+/** Edge CDN regional HTTP hosts (e.g. f.tlu) — rewrite to HTTPS sf.tlu. */
+const EDGE_CDN_HTTP_HOST_RE =
+  /^msedgeextensions\.[a-z0-9]+\.tlu\.dl\.delivery\.mp\.microsoft\.com$/i;
+const EDGE_CDN_HTTPS_HOST = 'msedgeextensions.sf.tlu.dl.delivery.mp.microsoft.com';
+
+/**
+ * Edge Add-ons update URL may 302 to http://msedgeextensions.<region>.tlu.…
+ * That host lacks a valid HTTPS cert; the same path+query works on sf.tlu via HTTPS.
+ * Mutates `parsed` in place when rewritten.
+ * @param {URL} parsed
+ * @returns {boolean}
+ */
+function rewriteEdgeCrxHttpRedirect(parsed) {
+  if (parsed.protocol !== 'http:') return false;
+  const host = normalizeHost(parsed.hostname);
+  if (!EDGE_CDN_HTTP_HOST_RE.test(host)) return false;
+  parsed.protocol = 'https:';
+  parsed.hostname = EDGE_CDN_HTTPS_HOST;
+  return true;
+}
+
 /**
  * @param {string} input URL or bare ID
  * @returns {{ store: 'chrome'|'edge', id: string } | null}
@@ -55,9 +76,12 @@ function edgeUpdateUrl(id) {
 /**
  * Reject unsafe redirect targets. Production: HTTPS + allowlisted hosts.
  * Selftest + MULTIHEIZ_WEBSTORE_TEST_BASE: also allow that origin (http loopback OK).
+ * Edge CDN: http://msedgeextensions.<region>.tlu.… → https://…sf.tlu… (path+query kept).
+ * May mutate `parsed` (Edge HTTP→HTTPS rewrite).
  * @param {URL} parsed
  */
 function assertAllowedCrxUrl(parsed) {
+  rewriteEdgeCrxHttpRedirect(parsed);
   const host = normalizeHost(parsed.hostname);
   const testBase = webstoreTestBase();
   if (testBase) {
@@ -100,6 +124,8 @@ function fetchBuffer(url, maxRedirects = MAX_REDIRECTS) {
         reject(err);
         return;
       }
+      // Use (possibly rewritten) URL after Edge CDN HTTP→HTTPS fix
+      u = parsed.href;
       const lib = parsed.protocol === 'http:' ? http : https;
       const req = lib.get(
         u,
@@ -188,8 +214,10 @@ module.exports = {
   downloadCrx,
   fetchBuffer,
   assertAllowedCrxUrl,
+  rewriteEdgeCrxHttpRedirect,
   isAllowedCrxDownloadHost,
   CHROME_ID_RE,
   MAX_CRX_BYTES,
   MAX_REDIRECTS,
+  EDGE_CDN_HTTPS_HOST,
 };
