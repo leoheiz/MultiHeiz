@@ -6,6 +6,12 @@
  *
  * Phase 1: default fixed, auto-hide hot-zone/overlay, legacy collapse, F11, disk writes.
  * Phase 2: same MULTIHEIZ_USERDATA — asserts sidebarAlwaysActive persisted (legacy mode).
+ *
+ * Env opcional:
+ *   MULTIHEIZ_EXE — caminho de MultiHeiz.exe empacotado; se definido, spawn sem args
+ *     (em vez de `electron .`).
+ *   MULTIHEIZ_SIDEBAR_SHOTS — pasta para PNGs opcionais da fase 1 (pinned / autohidden /
+ *     hovered / legacy-collapsed).
  */
 
 const { spawn } = require('node:child_process');
@@ -15,6 +21,9 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const electronBin = require('electron');
+const packagedExe = process.env.MULTIHEIZ_EXE
+  ? path.resolve(String(process.env.MULTIHEIZ_EXE).trim())
+  : '';
 const userdata = fs.mkdtempSync(path.join(os.tmpdir(), 'multiheiz-sidebar-'));
 
 function runPhase(phase) {
@@ -30,11 +39,16 @@ function runPhase(phase) {
       ELECTRON_ENABLE_LOGGING: '1',
     };
     console.log(`\n=== selftest:sidebar phase=${phase} ===`);
-    const child = spawn(electronBin, ['.'], {
-      cwd: root,
+    const usePackaged = !!packagedExe;
+    const cmd = usePackaged ? packagedExe : electronBin;
+    const args = usePackaged ? [] : ['.'];
+    const cwd = usePackaged ? path.dirname(packagedExe) : root;
+    const child = spawn(cmd, args, {
+      cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+
     let out = '';
     const onData = (buf) => {
       const s = buf.toString();
@@ -62,6 +76,14 @@ function runPhase(phase) {
 async function main() {
   console.log('MultiHeiz selftest:sidebar');
   console.log('userdata:', userdata);
+  if (packagedExe) {
+    if (!fs.existsSync(packagedExe)) {
+      console.error('FAIL: MULTIHEIZ_EXE not found:', packagedExe);
+      process.exit(1);
+      return;
+    }
+    console.log('exe:', packagedExe);
+  }
   try {
     await runPhase('1');
     await runPhase('2');

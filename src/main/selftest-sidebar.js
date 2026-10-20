@@ -3,8 +3,113 @@
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { app } = require('electron');
+const { app, nativeImage } = require('electron');
 const { envGet } = require('./config');
+
+/**
+ * Optional full-window PNGs when MULTIHEIZ_SIDEBAR_SHOTS is a folder path.
+ * Prefers BrowserWindow.capturePage (includes WebContentsView children); falls
+ * back to compositing renderer + each panel at its bounds.
+ */
+function resolveSidebarShotsDir() {
+  const raw = envGet('MULTIHEIZ_SIDEBAR_SHOTS');
+  if (!raw) return null;
+  const dir = path.resolve(String(raw).trim());
+  if (!dir) return null;
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function blitBgra(dst, dw, dh, src, sw, sh, ox, oy) {
+  for (let y = 0; y < sh; y++) {
+    const dy = (oy + y) | 0;
+    if (dy < 0 || dy >= dh) continue;
+    for (let x = 0; x < sw; x++) {
+      const dx = (ox + x) | 0;
+      if (dx < 0 || dx >= dw) continue;
+      const si = (y * sw + x) * 4;
+      const di = (dy * dw + dx) * 4;
+      const a = src[si + 3];
+      if (a === 0) continue;
+      if (a === 255) {
+        dst[di] = src[si];
+        dst[di + 1] = src[si + 1];
+        dst[di + 2] = src[si + 2];
+        dst[di + 3] = 255;
+        continue;
+      }
+      const inv = 255 - a;
+      dst[di] = ((src[si] * a + dst[di] * inv) / 255) | 0;
+      dst[di + 1] = ((src[si + 1] * a + dst[di + 1] * inv) / 255) | 0;
+      dst[di + 2] = ((src[si + 2] * a + dst[di + 2] * inv) / 255) | 0;
+      dst[di + 3] = 255;
+    }
+  }
+}
+
+async function captureWindowWithPanels(mainWindow, panels) {
+  try {
+    if (mainWindow && typeof mainWindow.capturePage === 'function') {
+      const img = await mainWindow.capturePage();
+      if (img && !img.isEmpty()) return img;
+    }
+  } catch (err) {
+    console.log('sidebar shot: win.capturePage failed:', err && err.message ? err.message : err);
+  }
+
+  const chrome = await mainWindow.webContents.capturePage();
+  const { width, height } = chrome.getSize();
+  const [cw, ch] = mainWindow.getContentSize();
+  const scaleX = cw > 0 ? width / cw : 1;
+  const scaleY = ch > 0 ? height / ch : 1;
+  const buf = Buffer.from(chrome.toBitmap());
+  const info = panels.getPanelDebugInfo();
+  for (const p of info.panels || []) {
+    if (!p || !p.visible || p.parked || !p.bounds) continue;
+    const b = p.bounds;
+    if (!(b.width >= 2 && b.height >= 2)) continue;
+    const wc = panels.getPanelCapture(p.accountId);
+    if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) continue;
+    let panelImg;
+    try {
+      panelImg = await wc.capturePage();
+    } catch {
+      continue;
+    }
+    if (!panelImg || panelImg.isEmpty()) continue;
+    const psz = panelImg.getSize();
+    blitBgra(
+      buf,
+      width,
+      height,
+      panelImg.toBitmap(),
+      psz.width,
+      psz.height,
+      Math.round(b.x * scaleX),
+      Math.round(b.y * scaleY)
+    );
+  }
+  return nativeImage.createFromBitmap(buf, { width, height });
+}
+
+async function saveSidebarShot(ctx, fileName) {
+  const dir = ctx._sidebarShotsDir;
+  if (!dir) return;
+  const { mainWindow, panels, sleep } = ctx;
+  try {
+    await sleep(120);
+    const img = await captureWindowWithPanels(mainWindow, panels);
+    if (!img || img.isEmpty()) {
+      console.log('sidebar shot: empty image for', fileName);
+      return;
+    }
+    const file = path.join(dir, fileName);
+    fs.writeFileSync(file, img.toPNG());
+    console.log('SHOT:', file);
+  } catch (err) {
+    console.log('sidebar shot failed:', fileName, err && err.message ? err.message : err);
+  }
+}
 
 /**
  * Selftest for sidebar auto-hide + legacy "always active" (1.3.0).
@@ -41,11 +146,19 @@ async function runSidebarSelftest(ctx) {
     return;
   }
 
+  ctx._sidebarShotsDir = resolveSidebarShotsDir();
+  if (ctx._sidebarShotsDir) {
+    console.log('sidebar shots dir:', ctx._sidebarShotsDir);
+  }
+
   let server = null;
   let port = 0;
+  // Bright local page so panel displacement vs sidebar is obvious in optional PNGs.
   const PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>sb</title></head>
-<body style="margin:0;background:#1a2030;color:#eee;font:16px sans-serif;padding:24px">
-<h1 id="t">sidebar</h1>
+<body style="margin:0;height:100vh;background:linear-gradient(135deg,#e85d4c 0%,#f0c14a 40%,#2bb8a6 70%,#3d8bfd 100%);color:#fff;font:bold 42px/1.2 system-ui,sans-serif">
+<div style="box-sizing:border-box;height:100%;margin:16px;border:6px solid rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center;text-shadow:0 2px 10px rgba(0,0,0,.45)">
+<span id="t">SB PANEL</span>
+</div>
 </body></html>`;
 
   await new Promise((resolve, reject) => {
@@ -136,6 +249,7 @@ async function runSidebarSelftest(ctx) {
   const fixedX = fixed.bounds.x;
   const fixedW = fixed.bounds.width;
   console.log('PASS: fixed mode (default)', { mode, bounds: fixed.bounds });
+  await saveSidebarShot(ctx, 'sidebar-pinned.png');
 
   /* ---------- Toggle → auto-hide (hidden) ---------- */
   mode = await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
@@ -176,6 +290,7 @@ async function runSidebarSelftest(ctx) {
   const hiddenX = hidden.bounds.x;
   const hiddenW = hidden.bounds.width;
   console.log('PASS: auto-hide hidden + hotzone', { mode, bounds: hidden.bounds });
+  await saveSidebarShot(ctx, 'sidebar-autohidden.png');
 
   /* ---------- Hot-zone show (simulate + delay) ---------- */
   await rendererEval('window.__multiheizUi.sidebarHotzoneEnter()');
@@ -221,6 +336,7 @@ async function runSidebarSelftest(ctx) {
     return;
   }
   console.log('PASS: hotzone reveal + shift-x overlay bounds', openB);
+  await saveSidebarShot(ctx, 'sidebar-hovered.png');
 
   /* ---------- Leave → hide (delay) ---------- */
   await rendererEval('window.__multiheizUi.sidebarMouseLeave()');
@@ -335,6 +451,7 @@ async function runSidebarSelftest(ctx) {
     return;
   }
   console.log('PASS: legacy collapse (old arrow behavior)', legacyCollapsed.bounds);
+  await saveSidebarShot(ctx, 'sidebar-legacy-collapsed.png');
 
   mode = await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(false)');
   await sleep(200);
