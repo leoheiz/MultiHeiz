@@ -61,6 +61,21 @@ const activeOverlays = new Set();
 /** @type {Array<{ accountId: string, x: number, y: number, width: number, height: number }>} */
 let lastSlots = [];
 
+/**
+ * Sidebar auto-hide overlay inset (CSS px). When > 0 the HTML sidebar is shown as an
+ * overlay on the left; WebContentsViews sit above HTML so we must clear that strip.
+ *
+ * Strategy (shift-x, keep width — no page reflow):
+ * - Logical slots / lastBounds stay as measured by the renderer (full panel area).
+ * - For views that overlap [0, overlayW), setBounds moves x to overlayW and keeps the
+ *   same width (the view may extend past the window's right edge and be clipped).
+ * - Shrinking width would reflow the web viewport; shifting keeps viewport size stable.
+ * - Visual: panel surface slides right while the sidebar occupies the freed strip
+ *   (not a perfect "cover", but avoids reflow and flicker).
+ * @type {number}
+ */
+let sidebarOverlayWidth = 0;
+
 /** Last on-screen size for parking hidden panels offscreen. */
 /** @type {Map<string, { width: number, height: number }>} */
 const lastOnScreenSize = new Map();
@@ -146,6 +161,48 @@ function getOverlayCount() {
 
 function areOverlaysActive() {
   return activeOverlays.size > 0;
+}
+
+/**
+ * @param {number} px Left overlay width in CSS px (0 = no sidebar overlay).
+ */
+function setSidebarOverlayWidth(px) {
+  const next = Math.max(0, Math.round(Number(px) || 0));
+  if (next === sidebarOverlayWidth) return;
+  sidebarOverlayWidth = next;
+  if (lastSlots.length) {
+    applySlotBounds(lastSlots);
+  }
+}
+
+function getSidebarOverlayWidth() {
+  return sidebarOverlayWidth;
+}
+
+/**
+ * Map a logical slot to on-screen view bounds under the sidebar overlay strategy.
+ * @param {{ x: number, y: number, width: number, height: number }} slot
+ * @param {number} overlayW
+ * @returns {{ x: number, y: number, width: number, height: number } | null}
+ *   null => fully covered (caller should park/hide)
+ */
+function viewBoundsForSidebarOverlay(slot, overlayW) {
+  const x = Math.round(Number(slot.x) || 0);
+  const y = Math.round(Number(slot.y) || 0);
+  const width = Math.round(Number(slot.width) || 0);
+  const height = Math.round(Number(slot.height) || 0);
+  if (!(overlayW > 0) || width < 1 || height < 1) {
+    return { x, y, width, height };
+  }
+  const right = x + width;
+  if (right <= overlayW) {
+    return null;
+  }
+  if (x >= overlayW) {
+    return { x, y, width, height };
+  }
+  // Overlaps left strip: shift origin, keep width (may clip on the right).
+  return { x: overlayW, y, width, height };
 }
 
 function withTimeout(promise, ms) {
@@ -1442,6 +1499,15 @@ function applySlotBounds(slots, opts = {}) {
       continue;
     }
 
+    const visual = viewBoundsForSidebarOverlay(
+      { x, y, width, height },
+      sidebarOverlayWidth
+    );
+    if (!visual || visual.width < 1 || visual.height < 1) {
+      parkPanelOffscreen(entry);
+      continue;
+    }
+
     const prevBounds = (() => {
       try {
         return entry.view.getBounds();
@@ -1449,19 +1515,21 @@ function applySlotBounds(slots, opts = {}) {
         return null;
       }
     })();
-    entry.view.setBounds({ x, y, width, height });
+    entry.view.setBounds(visual);
     entry.parked = false;
     if (
       mutationLogEnabled &&
       prevBounds &&
-      (prevBounds.x !== x ||
-        prevBounds.y !== y ||
-        prevBounds.width !== width ||
-        prevBounds.height !== height)
+      (prevBounds.x !== visual.x ||
+        prevBounds.y !== visual.y ||
+        prevBounds.width !== visual.width ||
+        prevBounds.height !== visual.height)
     ) {
       logMutation(slot.accountId, 'bounds', {
         from: prevBounds,
-        to: { x, y, width, height },
+        to: visual,
+        logical: { x, y, width, height },
+        sidebarOverlayWidth,
       });
     }
     setViewVisible(entry, true);
@@ -1739,6 +1807,7 @@ function getPanelDebugInfo() {
   return {
     overlayCount: getOverlayCount(),
     overlayIds: [...activeOverlays],
+    sidebarOverlayWidth,
     lastSlots: lastSlots.map((s) => ({ ...s })),
     panels: out,
   };
@@ -2198,6 +2267,9 @@ module.exports = {
   setOverlayCount,
   getOverlayCount,
   areOverlaysActive,
+  setSidebarOverlayWidth,
+  getSidebarOverlayWidth,
+  viewBoundsForSidebarOverlay,
   getPanelDebugInfo,
   getMainUiProcessId,
   enableViewMutationLog,
