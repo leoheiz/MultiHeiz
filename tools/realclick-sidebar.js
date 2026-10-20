@@ -103,8 +103,8 @@ async function main() {
   appendLog('handshake: ' + handshakeDir);
   appendLog(
     process.env.MULTIHEIZ_REALCLICK_PHASE === 'before'
-      ? 'fase: BEFORE (CSS HEAD 0f923d2 — topbar drag)'
-      : 'fase: AFTER (topbar no-drag, spacer drag, sidebar no-drag)'
+      ? 'fase: BEFORE (legacy CSS)'
+      : 'fase: AFTER (topbar drag + inset sob overlay; sidebar/pino no-drag)'
   );
 
   const env = {

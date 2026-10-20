@@ -71,7 +71,11 @@
         },
         {
           "tag": "Correção",
-          "text": "Pino/seta da barra lateral responde a clique real do mouse no Windows (região de arraste só no espaçador da topbar; sem drag sob o overlay da sidebar)."
+          "text": "Pino/seta da barra lateral responde a clique real do mouse no Windows (sidebar/pino sem região de arraste; topbar recuada sob o overlay para o clique não ser engolido)."
+        },
+        {
+          "tag": "Correção",
+          "text": "Barra superior volta a arrastar a janela (e duplo clique maximiza/restaura): área vazia com região de arraste; no-drag só nos controles e na barra lateral."
         },
         {
           "tag": "Correção",

@@ -268,6 +268,64 @@ async function runSidebarSelftest(ctx) {
   console.log('PASS: fixed mode (default)', { mode, bounds: fixed.bounds });
   await saveSidebarShot(ctx, 'sidebar-pinned.png');
 
+  /**
+   * Regression (e68678d): #topbar is drag; interactive / sidebar / pin are no-drag;
+   * with sidebar open, no point on the pin rect has effective region drag.
+   * @param {string} label
+   */
+  async function assertTopbarAppRegions(label) {
+    const probe = await rendererEval('window.__multiheizUi.getTopbarDragProbe()');
+    if (!probe) {
+      console.log('FAIL: getTopbarDragProbe missing', label);
+      app.exit(1);
+      return false;
+    }
+    if (probe.topbarRegion !== 'drag') {
+      console.log('FAIL: #topbar must be app-region drag', label, probe.topbarRegion);
+      app.exit(1);
+      return false;
+    }
+    if (!probe.emptyEffective || probe.emptyEffective.region !== 'drag') {
+      console.log('FAIL: empty topbar point must resolve to drag', label, probe.emptyEffective);
+      app.exit(1);
+      return false;
+    }
+    if (probe.settingsRegion !== 'no-drag') {
+      console.log('FAIL: topbar settings button must be no-drag', label, probe.settingsRegion);
+      app.exit(1);
+      return false;
+    }
+    if (probe.layoutSelectRegion && probe.layoutSelectRegion !== 'no-drag') {
+      console.log('FAIL: layout select must be no-drag', label, probe.layoutSelectRegion);
+      app.exit(1);
+      return false;
+    }
+    if (probe.sidebarRegion !== 'no-drag') {
+      console.log('FAIL: #sidebar must be no-drag', label, probe.sidebarRegion);
+      app.exit(1);
+      return false;
+    }
+    if (probe.pinRegion !== 'no-drag') {
+      console.log('FAIL: pin button must be no-drag', label, probe.pinRegion);
+      app.exit(1);
+      return false;
+    }
+    const pinDrag = (probe.pinSamples || []).find((s) => s && s.region === 'drag');
+    if (pinDrag) {
+      console.log('FAIL: pin rect must not have effective drag (sidebar open/fixed)', label, pinDrag);
+      app.exit(1);
+      return false;
+    }
+    console.log('PASS: topbar app-region regression', label, {
+      topbarRegion: probe.topbarRegion,
+      empty: probe.emptyEffective && probe.emptyEffective.region,
+      pinSamples: (probe.pinSamples || []).map((s) => s && s.region),
+    });
+    return true;
+  }
+
+  if (!(await assertTopbarAppRegions('fixed'))) return;
+
   /* ---------- Toggle → auto-hide (hidden) ---------- */
   mode = await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
   await sleep(200);
@@ -346,6 +404,8 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
+  if (!(await assertTopbarAppRegions('auto-hide-open'))) return;
+
   if (!near(openB.bounds.width, hiddenW, 6)) {
     console.log('FAIL: open bounds.width should keep logical width (no reflow)', {
       open: openB.bounds,
@@ -633,6 +693,7 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
+  if (!(await assertTopbarAppRegions('legacy-expanded'))) return;
   if (mode.pinDisabled || mode.pinPointerEvents === 'none') {
     console.log('FAIL: legacy toggle must be clickable', mode);
     app.exit(1);

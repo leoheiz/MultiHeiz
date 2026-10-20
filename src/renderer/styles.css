@@ -249,7 +249,7 @@ body {
    * Never use caption drag here (fixed, auto-hide, or legacy). On Windows/Electron,
    * drag on the head swallows clicks on #btn-sidebar-toggle even with nested no-drag;
    * in auto-hide it also fires mouseleave and closes the overlay before the pin.
-   * Window drag stays on the topbar spacer / native overlay.
+   * Window drag lives on #topbar (inset when this overlay covers it).
    */
   -webkit-app-region: no-drag;
   app-region: no-drag;
@@ -611,17 +611,26 @@ html[data-theme='claro'] .sidebar-item:hover {
   min-width: 0;
   overflow: hidden;
   /*
-   * Do NOT mark the whole topbar as drag. In auto-hide the sidebar overlays the left
-   * of a full-width topbar; a sibling drag region still wins OS hit-test on Windows
-   * and swallows real clicks on #btn-sidebar-toggle. Drag lives only on .spacer.
+   * Empty caption area is drag (native move + double-click maximize on Windows).
+   * Interactive children are no-drag below. When the sidebar overlays the main column
+   * (auto-hide / F11 reveal), inset the topbar so its drag rect does not sit under the
+   * pin — sibling no-drag on #sidebar is not enough for Chromium's region union.
    */
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
+  -webkit-app-region: drag;
+  app-region: drag;
   /* Keep tools clear of native Windows overlay buttons (env fallbacks → 0 on Linux) */
   padding-right: max(
     8px,
     calc(100vw - env(titlebar-area-x, 100vw) - env(titlebar-area-width, 0px))
   );
+}
+
+/* Overlay sidebar covers the left of #main-col; keep caption-drag out of that strip. */
+#app.sidebar-auto-hide-open #topbar {
+  margin-left: var(--sidebar-w);
+  width: calc(100% - var(--sidebar-w));
+  max-width: calc(100% - var(--sidebar-w));
+  box-sizing: border-box;
 }
 
 #topbar > :not(.spacer):not(.tabs-wrap) {
@@ -640,8 +649,7 @@ html[data-theme='claro'] .sidebar-item:hover {
 #topbar .layout-label,
 #topbar .zoom-control,
 #topbar .pager,
-#topbar .win-controls,
-#topbar .app-icon {
+#topbar .win-controls {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -775,7 +783,7 @@ html[data-theme='claro'] .tab:hover {
 .spacer {
   flex: 1 1 0;
   min-width: 0;
-  /* Sole caption-drag strip (see #topbar). Must not extend under the sidebar. */
+  /* Inherits drag from #topbar; keep explicit for clarity / older probes. */
   -webkit-app-region: drag;
   app-region: drag;
 }

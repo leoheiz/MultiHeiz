@@ -3756,6 +3756,117 @@ window.__multiheizUi = {
       wco,
     };
   },
+  /**
+   * Selftest: resolve effective -webkit-app-region at a client point (walk ancestors).
+   * @param {number} clientX
+   * @param {number} clientY
+   */
+  getEffectiveAppRegionAt: (clientX, clientY) => {
+    const regionOf = (node) => {
+      if (!node || node.nodeType !== 1) return '';
+      const cs = getComputedStyle(node);
+      return cs.webkitAppRegion || cs.getPropertyValue('-webkit-app-region') || '';
+    };
+    let n = document.elementFromPoint(clientX, clientY);
+    const chain = [];
+    while (n && n !== document.documentElement) {
+      const region = regionOf(n);
+      chain.push({
+        id: n.id || '',
+        tag: n.tagName ? n.tagName.toLowerCase() : '',
+        region,
+      });
+      if (region === 'drag' || region === 'no-drag') {
+        return { region, x: clientX, y: clientY, chain };
+      }
+      n = n.parentElement;
+    }
+    return { region: '', x: clientX, y: clientY, chain };
+  },
+  /**
+   * Selftest: empty caption point inside #topbar (prefers .spacer) + region probes.
+   */
+  getTopbarDragProbe: () => {
+    const bar = el.topbar;
+    if (!bar) return null;
+    const regionOf = (node) => {
+      if (!node || node.nodeType !== 1) return '';
+      const cs = getComputedStyle(node);
+      return cs.webkitAppRegion || cs.getPropertyValue('-webkit-app-region') || '';
+    };
+    const barRect = bar.getBoundingClientRect();
+    const spacer = bar.querySelector('.spacer');
+    const spacerRect = spacer ? spacer.getBoundingClientRect() : null;
+    let emptyX = barRect.left + barRect.width / 2;
+    let emptyY = barRect.top + barRect.height / 2;
+    if (spacerRect && spacerRect.width >= 24) {
+      emptyX = spacerRect.left + spacerRect.width / 2;
+      emptyY = spacerRect.top + spacerRect.height / 2;
+    } else {
+      // Scan for a point whose effective region is drag and hit target is not interactive.
+      const interactive = (node) => {
+        if (!node || !node.closest) return true;
+        return !!node.closest(
+          'button, a, input, select, label, .tab, .tabs-wrap, .pager, .win-controls, .layout-label, .zoom-control'
+        );
+      };
+      let found = false;
+      for (let x = barRect.left + 8; x < barRect.right - 8; x += 12) {
+        const hit = document.elementFromPoint(x, emptyY);
+        if (!hit || !bar.contains(hit) || interactive(hit)) continue;
+        const eff = window.__multiheizUi.getEffectiveAppRegionAt(x, emptyY);
+        if (eff && eff.region === 'drag') {
+          emptyX = x;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        emptyX = barRect.left + Math.min(40, barRect.width / 2);
+      }
+    }
+    const settingsBtn = el.btnSettings;
+    const settingsRect = settingsBtn ? settingsBtn.getBoundingClientRect() : null;
+    const pin = el.btnSidebarToggle;
+    const pinRect = pin ? pin.getBoundingClientRect() : null;
+    const sidebar = el.sidebar;
+    const pinSamples = [];
+    if (pinRect && pinRect.width > 0 && pinRect.height > 0) {
+      const pts = [
+        [pinRect.left + pinRect.width / 2, pinRect.top + pinRect.height / 2],
+        [pinRect.left + 2, pinRect.top + 2],
+        [pinRect.right - 2, pinRect.bottom - 2],
+        [pinRect.left + pinRect.width / 2, pinRect.top + 2],
+      ];
+      for (const [px, py] of pts) {
+        pinSamples.push(window.__multiheizUi.getEffectiveAppRegionAt(px, py));
+      }
+    }
+    return {
+      topbarRegion: regionOf(bar),
+      spacerRegion: regionOf(spacer),
+      emptyPoint: { x: emptyX, y: emptyY },
+      emptyEffective: window.__multiheizUi.getEffectiveAppRegionAt(emptyX, emptyY),
+      settingsRegion: regionOf(settingsBtn),
+      settingsPoint: settingsRect
+        ? { x: settingsRect.left + settingsRect.width / 2, y: settingsRect.top + settingsRect.height / 2 }
+        : null,
+      layoutSelectRegion: regionOf(document.getElementById('layout-select')),
+      sidebarRegion: regionOf(sidebar),
+      pinRegion: regionOf(pin),
+      pinRect: pinRect
+        ? { left: pinRect.left, top: pinRect.top, width: pinRect.width, height: pinRect.height }
+        : null,
+      pinSamples,
+      topbarRect: { left: barRect.left, top: barRect.top, width: barRect.width, height: barRect.height },
+      settingsDialogOpen: !!(el.dlgSettings && el.dlgSettings.open),
+    };
+  },
+  isSettingsDialogOpen: () => !!(el.dlgSettings && el.dlgSettings.open),
+  closeSettingsDialog: () => {
+    if (el.dlgSettings && el.dlgSettings.open) el.dlgSettings.close();
+    return !!(el.dlgSettings && el.dlgSettings.open);
+  },
   getPanelTopVsRow: () => {
     const bar = el.topbar;
     const slot = el.grid.querySelector('.panel-slot');

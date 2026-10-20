@@ -197,17 +197,15 @@ async function runTitlebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  const dragOk =
-    metrics.appRegion === 'drag' ||
-    metrics.spacerRegion === 'drag' ||
-    metrics.appRegion === 'drag';
-  if (!dragOk && metrics.spacerRegion !== 'drag') {
-    // Empty spacer should be drag; topbar itself is drag
-    if (metrics.appRegion !== 'drag') {
-      console.log('FAIL: expected drag region on topbar/spacer', metrics);
-      app.exit(1);
-      return;
-    }
+  if (metrics.appRegion !== 'drag') {
+    console.log('FAIL: expected app-region drag on #topbar', metrics);
+    app.exit(1);
+    return;
+  }
+  if (metrics.spacerRegion && metrics.spacerRegion !== 'drag') {
+    console.log('FAIL: expected drag region on .spacer', metrics.spacerRegion);
+    app.exit(1);
+    return;
   }
   if (metrics.tabRegion && metrics.tabRegion !== 'no-drag') {
     console.log('FAIL: tabs should be no-drag', metrics.tabRegion);
