@@ -339,6 +339,13 @@ async function runSidebarSelftest(ctx) {
   await sleep(400);
   await waitForLayoutSettle();
 
+  // Phase 2 only checks ui.sidebarAutoHide — drop panel URLs so restart does not hit a dead server.
+  updateState((s) => {
+    s.accounts = [];
+    s.maximizedAccountId = null;
+  });
+  flushSave();
+
   try {
     server.close();
   } catch {
