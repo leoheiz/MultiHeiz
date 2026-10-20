@@ -227,6 +227,7 @@
         <aside class="settings-nav" aria-label="Seções">
           <button type="button" class="settings-nav-btn active" data-section="geral">Geral</button>
           <button type="button" class="settings-nav-btn" data-section="navegacao">Navegação</button>
+          <button type="button" class="settings-nav-btn" data-section="rede">Rede</button>
           <button type="button" class="settings-nav-btn" data-section="downloads">Downloads</button>
           <button type="button" class="settings-nav-btn" data-section="adblock">Bloqueador de anúncios</button>
           <button type="button" class="settings-nav-btn" data-section="extensoes">Extensões <span class="badge-experimental">em testes</span></button>
@@ -317,6 +318,41 @@
               >Modelo personalizado
               <input name="searchTemplate" id="search-template" placeholder="https://...?q=%s" />
             </label>
+          </section>
+
+          <section class="settings-pane" data-pane="rede">
+            <label
+              >DNS criptografado (DNS sobre HTTPS)
+              <select name="dohMode" id="doh-mode">
+                <option value="off">Desligado</option>
+                <option value="automatic">Automático</option>
+                <option value="secure">Sempre criptografado</option>
+              </select>
+            </label>
+            <label id="doh-provider-wrap" hidden
+              >Provedor
+              <select name="dohProvider" id="doh-provider">
+                <option value="cloudflare">Cloudflare</option>
+                <option value="google">Google</option>
+                <option value="quad9">Quad9</option>
+                <option value="adguard">AdGuard</option>
+                <option value="custom">Personalizado</option>
+              </select>
+            </label>
+            <label id="doh-custom-wrap" hidden
+              >URL personalizada (https)
+              <input
+                name="dohCustomUrl"
+                id="doh-custom-url"
+                type="url"
+                spellcheck="false"
+                placeholder="https://dns.exemplo/dns-query"
+              />
+            </label>
+            <p class="muted-note">
+              Vale para o MultiHeiz inteiro. Janelas com proxy resolvem o DNS pelo proxy.
+            </p>
+            <p class="muted-note" id="doh-error" hidden role="alert"></p>
           </section>
 
           <section class="settings-pane" data-pane="downloads">

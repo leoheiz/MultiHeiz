@@ -39,6 +39,7 @@ const ipcGuard = require('./ipc-guard');
 const permissions = require('./permissions');
 const { sanitizeUserStartUrl } = require('./url-policy');
 const proxy = require('./proxy');
+const doh = require('./doh');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -213,6 +214,7 @@ const SELFTEST_SIDEBAR = selftestMode === 'sidebar';
 const SELFTEST_WORKSPACE_DELETE = selftestMode === 'workspace-delete';
 const SELFTEST_CONTEXTMENU = selftestMode === 'contextmenu';
 const SELFTEST_PROXY = selftestMode === 'proxy';
+const SELFTEST_DOH = selftestMode === 'doh';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -241,7 +243,8 @@ const ANY_SELFTEST =
   SELFTEST_SIDEBAR ||
   SELFTEST_WORKSPACE_DELETE ||
   SELFTEST_CONTEXTMENU ||
-  SELFTEST_PROXY;
+  SELFTEST_PROXY ||
+  SELFTEST_DOH;
 
 // YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
 if (SELFTEST_ABU_YT || SELFTEST_BUILTIN_YT) {
@@ -1301,6 +1304,31 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_DOH) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runDohSelftest } = require('./selftest-doh');
+          runDohSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            app,
+            doh,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -1456,10 +1484,22 @@ function registerIpc() {
       partial && partial.extensions && typeof partial.extensions === 'object'
         ? partial.extensions
         : null;
+    const dohPartial =
+      partial && partial.doh && typeof partial.doh === 'object' ? partial.doh : null;
+    let dohError = null;
+    if (dohPartial) {
+      const prevDoh = doh.normalizeDoh(getState().settings && getState().settings.doh);
+      const mergedDoh = doh.normalizeDoh({ ...prevDoh, ...dohPartial });
+      const check = doh.validateDohSettings(mergedDoh);
+      if (!check.ok) {
+        dohError = check.error || 'Configuração de DNS criptografado inválida.';
+      }
+    }
     updateState((s) => {
       const next = { ...partial };
       delete next.adblock;
       delete next.extensions;
+      delete next.doh;
       if (next.homepage != null) {
         next.homepage = sanitizeUserStartUrl(
           next.homepage,
@@ -1495,9 +1535,16 @@ function registerIpc() {
           ...extensionsPartial,
         };
       }
+      if (dohPartial && !dohError) {
+        const prevDoh = doh.normalizeDoh(s.settings.doh);
+        s.settings.doh = doh.normalizeDoh({ ...prevDoh, ...dohPartial });
+      }
     });
     if (adblockPartial) {
       await adblock.applySettings(adblockPartial);
+    }
+    if (dohPartial && !dohError) {
+      doh.applyDohSettings(getState().settings.doh);
     }
     if (partial && (partial.uaIdentity || partial.preferHighPerfGpu !== undefined)) {
       userAgent.applyAppUserAgentFallback();
@@ -1512,7 +1559,31 @@ function registerIpc() {
     } else {
       panels.applyThrottling();
     }
+    if (dohError) {
+      return { dohError, state: publicState() };
+    }
     return publicState();
+  });
+
+  ipcMain.handle('doh:set', (_e, partial) => {
+    const r = doh.setDohSettings(partial || {}, { getState, updateState });
+    if (!r.ok) {
+      return { ok: false, error: r.error, state: publicState(), doh: r.doh };
+    }
+    return {
+      ok: true,
+      doh: r.doh,
+      applied: r.applied,
+      options: r.options,
+      state: publicState(),
+    };
+  });
+
+  ipcMain.handle('doh:get-selftest-calls', () => {
+    if (!SELFTEST_DOH && envGet('MULTIHEIZ_SELFTEST') !== 'doh') {
+      return { ok: false, calls: [] };
+    }
+    return { ok: true, calls: doh.getSelftestCalls() };
   });
 
   ipcMain.handle('adblock:status', () => adblock.getStatus());
@@ -4194,6 +4265,11 @@ app.whenReady().then(async () => {
     await proxy.applyAllAccountProxies();
   } catch (err) {
     console.warn('[proxy] applyAll', err && err.message ? err.message : err);
+  }
+  try {
+    doh.applyDohSettings(getState().settings && getState().settings.doh);
+  } catch (err) {
+    console.warn('[doh] apply', err && err.message ? err.message : err);
   }
   v16 = initV16({
     getMainWindow: () => mainWindow,

@@ -41,6 +41,7 @@
     "selftest:builtin-yt": "node tools/selftest-builtin-yt.js",
     "selftest:contextmenu": "node tools/selftest-contextmenu.js",
     "selftest:proxy": "node tools/selftest-proxy.js",
+    "selftest:doh": "node tools/selftest-doh.js",
     "check:update-live": "node tools/check-update-live.js",
     "check:adblock-real": "node tools/check-adblock-real.js",
     "check:encoding": "node tools/check-encoding.js",

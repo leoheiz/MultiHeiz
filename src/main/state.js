@@ -93,6 +93,15 @@ function defaultState() {
        * auto-hide, hot-zone, or overlay inset. Default off = new fixed/auto-hide toggle.
        */
       sidebarAlwaysActive: false,
+      /**
+       * DNS over HTTPS (app-wide). mode: off | automatic | secure.
+       * provider: cloudflare | google | quad9 | adguard | custom (+ customUrl https).
+       */
+      doh: {
+        mode: 'off',
+        provider: 'cloudflare',
+        customUrl: '',
+      },
       backgroundPreset: 'balanced', // balanced | always | max-save
       preferHighPerfGpu: false,
       frameCapHidden: 30,
@@ -296,6 +305,12 @@ function migrate(parsed) {
   if (typeof next.settings.lightMode !== 'boolean') next.settings.lightMode = false;
   if (typeof next.settings.sidebarAlwaysActive !== 'boolean') {
     next.settings.sidebarAlwaysActive = false;
+  }
+  {
+    const { normalizeDoh, defaultDohSettings } = require('./doh');
+    const rawDoh =
+      next.settings.doh && typeof next.settings.doh === 'object' ? next.settings.doh : null;
+    next.settings.doh = rawDoh ? normalizeDoh(rawDoh) : defaultDohSettings();
   }
   if (!next.settings.backgroundPreset) next.settings.backgroundPreset = 'balanced';
   if (typeof next.settings.preferHighPerfGpu !== 'boolean') {

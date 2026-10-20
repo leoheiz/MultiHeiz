@@ -1698,10 +1698,24 @@
     const form = document.getElementById('form-settings');
     if (!form) return;
 
-    form.addEventListener('change', () => autosaveSettings());
+    form.addEventListener('change', (e) => {
+      const t = e.target;
+      if (t && (t.name === 'dohMode' || t.name === 'dohProvider')) {
+        syncDohFormVisibility();
+      }
+      autosaveSettings();
+    });
     form.addEventListener('input', (e) => {
       const t = e.target;
-      if (t && (t.name === 'homepage' || t.name === 'searchTemplate' || t.name === 'suspendDelayMs' || t.name === 'memoryLimitMb' || t.name === 'panelMemoryLimitMb')) {
+      if (
+        t &&
+        (t.name === 'homepage' ||
+          t.name === 'searchTemplate' ||
+          t.name === 'suspendDelayMs' ||
+          t.name === 'memoryLimitMb' ||
+          t.name === 'panelMemoryLimitMb' ||
+          t.name === 'dohCustomUrl')
+      ) {
         autosaveSettings();
       }
     });
@@ -1829,6 +1843,17 @@
     if (kofiStatus) kofiStatus.addEventListener('click', openKofi);
   }
 
+  function syncDohFormVisibility() {
+    const form = document.getElementById('form-settings');
+    if (!form) return;
+    const mode = (form.dohMode && form.dohMode.value) || 'off';
+    const provider = (form.dohProvider && form.dohProvider.value) || 'cloudflare';
+    const providerWrap = document.getElementById('doh-provider-wrap');
+    const customWrap = document.getElementById('doh-custom-wrap');
+    if (providerWrap) providerWrap.hidden = mode === 'off';
+    if (customWrap) customWrap.hidden = mode === 'off' || provider !== 'custom';
+  }
+
   let settingsSaveTimer = null;
   function autosaveSettings() {
     if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
@@ -1857,6 +1882,11 @@
           backgroundPreset: (form.backgroundPreset && form.backgroundPreset.value) || 'balanced',
           lightMode: !!(form.lightMode && form.lightMode.checked),
           sidebarAlwaysActive: !!(form.sidebarAlwaysActive && form.sidebarAlwaysActive.checked),
+          doh: {
+            mode: (form.dohMode && form.dohMode.value) || 'off',
+            provider: (form.dohProvider && form.dohProvider.value) || 'cloudflare',
+            customUrl: (form.dohCustomUrl && form.dohCustomUrl.value) || '',
+          },
           frameCapHidden: Number(form.frameCapHidden && form.frameCapHidden.value) || 30,
           frameCapAll: Number(form.frameCapAll && form.frameCapAll.value) || 0,
           preferHighPerfGpu: !!(form.preferHighPerfGpu && form.preferHighPerfGpu.checked),
@@ -1879,12 +1909,30 @@
         };
         const prevSidebarAlways = !!(getState().settings && getState().settings.sidebarAlwaysActive);
         const st = await window.multiheiz.updateSettings(partial);
+        if (st && st.dohError) {
+          const errEl = document.getElementById('doh-error');
+          if (errEl) {
+            errEl.hidden = false;
+            errEl.textContent = st.dohError;
+          }
+          toast(st.dohError);
+          // Keep previous DoH in state; refresh form from returned state snapshot.
+          if (st.state) applyState(st.state);
+          fillSettingsForm().catch(() => {});
+          return;
+        }
+        const errClear = document.getElementById('doh-error');
+        if (errClear) {
+          errClear.hidden = true;
+          errClear.textContent = '';
+        }
         applyState(st);
         if (prevSidebarAlways !== !!partial.sidebarAlwaysActive) {
           if (hooks().syncSidebarAfterLegacyChange) {
             await hooks().syncSidebarAfterLegacyChange();
           }
         }
+        syncDohFormVisibility();
         await window.multiheiz.downloadsSettings({
           askWhereToSave: !!form.askWhereToSave.checked,
         });
@@ -2079,6 +2127,11 @@
     if (form.backgroundPreset) form.backgroundPreset.value = s.backgroundPreset || 'balanced';
     if (form.lightMode) form.lightMode.checked = !!s.lightMode;
     if (form.sidebarAlwaysActive) form.sidebarAlwaysActive.checked = !!s.sidebarAlwaysActive;
+    const doh = s.doh || {};
+    if (form.dohMode) form.dohMode.value = doh.mode || 'off';
+    if (form.dohProvider) form.dohProvider.value = doh.provider || 'cloudflare';
+    if (form.dohCustomUrl) form.dohCustomUrl.value = doh.customUrl || '';
+    syncDohFormVisibility();
     if (form.frameCapHidden) form.frameCapHidden.value = String(Number(s.frameCapHidden) || 30);
     if (form.frameCapAll) form.frameCapAll.value = String(Number(s.frameCapAll) || 0);
     if (form.preferHighPerfGpu) form.preferHighPerfGpu.checked = !!s.preferHighPerfGpu;
