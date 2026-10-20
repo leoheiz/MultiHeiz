@@ -424,6 +424,7 @@ function registerExtresScheme() {
 function ensureExtresProtocol() {
   if (extresProtocolReady) return;
   try {
+    if (!protocol || typeof protocol.handle !== 'function') return;
     protocol.handle(EXTRES_SCHEME, (request) => {
       try {
         const u = new URL(request.url);

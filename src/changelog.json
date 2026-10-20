@@ -1,6 +1,29 @@
 {
   "versions": [
     {
+      "version": "1.3.0",
+      "date": "2026-10-19",
+      "title": "AdBlocker Ultimate no YouTube e sandbox",
+      "entries": [
+        {
+          "tag": "Novo",
+          "text": "AdBlocker Ultimate agora bloqueia anúncios do YouTube sozinho (scriptlets, cosmético e rede), ainda Experimental (em testes)."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Compatibilidade MV3: shims de webNavigation/webRequest/tabs, cache early-replay e warm-up oculto para o YouTube."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Sandbox do Chromium forçado (enableSandbox) para preloads de service worker; DNR com redirect/modifyHeaders."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Extensões de terceiros continuam rotuladas Experimental (em testes)."
+        }
+      ]
+    },
+    {
       "version": "1.2.1",
       "date": "2026-10-19",
       "title": "Login do Google e passkeys",
