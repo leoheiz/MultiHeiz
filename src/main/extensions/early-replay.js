@@ -300,13 +300,22 @@ function noteCommitted(installId, accountId, url) {
     bucket.timer = null;
     c.collecting.delete(host);
     if (bucket.items.size === 0) {
+      // ABU injected nothing → allowlisted / paused
       if (c.hosts.has(host)) {
         c.hosts.delete(host);
         schedulePersist(c);
       }
     } else {
-      c.hosts.set(host, bucket.items);
-      schedulePersist(c);
+      const prev = c.hosts.get(host);
+      // Incomplete collection (e.g. SW still restarting) can be much smaller
+      // than a warm cache — merge instead of clobbering.
+      if (prev && prev.size > 0 && bucket.items.size * 2 < prev.size) {
+        for (const [k, v] of bucket.items) prev.set(k, v);
+        schedulePersist(c);
+      } else {
+        c.hosts.set(host, bucket.items);
+        schedulePersist(c);
+      }
     }
   }, COLLECT_MS);
 }
@@ -355,6 +364,14 @@ function observe(installId, accountId, meta) {
 function scriptletKey(funcSrc, args) {
   try {
     const a = Array.isArray(args) ? args.slice() : [];
+    // ABU/tswebextension: args[0] = { name, args, uniqueId, ... }
+    if (a[0] && typeof a[0] === 'object' && !Array.isArray(a[0]) && typeof a[0].name === 'string') {
+      const copy = Object.assign({}, a[0]);
+      delete copy.uniqueId;
+      delete copy.verbose;
+      delete copy.domainName;
+      return 's:' + copy.name + ':' + JSON.stringify(copy.args || []);
+    }
     if (typeof a[0] === 'string' && a[0].length < 80 && /^[a-z0-9_-]+$/i.test(a[0])) {
       const name = a[0];
       const rest = a.slice(1).map((x) => {

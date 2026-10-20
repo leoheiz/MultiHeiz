@@ -618,8 +618,13 @@ function ruleMatches(rule, ctx) {
   }
   if (rule.domainType === 'firstParty' && !ctx.firstParty) return false;
   if (rule.domainType === 'thirdParty' && ctx.firstParty) return false;
-  if (rule.urlRe && !rule.urlRe.test(ctx.url)) return false;
-  if (rule.regexRe && !rule.regexRe.test(ctx.url)) return false;
+  const urlNoPort = ctx.urlNoPort || urlWithoutPort(ctx.url);
+  if (rule.urlRe && !(rule.urlRe.test(ctx.url) || rule.urlRe.test(urlNoPort))) {
+    return false;
+  }
+  if (rule.regexRe && !(rule.regexRe.test(ctx.url) || rule.regexRe.test(urlNoPort))) {
+    return false;
+  }
   return true;
 }
 
@@ -687,6 +692,22 @@ function hostnameOf(url) {
 }
 
 /**
+ * Chromium urlFilter matching ignores non-default ports in the host.
+ * Selftests (and rare sites) use https://host:port/... — strip port for regex tests.
+ * @param {string} url
+ */
+function urlWithoutPort(url) {
+  try {
+    const u = new URL(url);
+    if (!u.port) return url;
+    u.port = '';
+    return u.href;
+  } catch {
+    return url;
+  }
+}
+
+/**
  * Registrable-ish same-site check (suffix equality).
  * @param {string} a
  * @param {string} b
@@ -742,7 +763,14 @@ function evaluate(accountId, details) {
     }
   }
   const firstParty = sameSite(host, initiatorHost);
-  const ctx = { url, host, initiatorHost, resourceType, firstParty };
+  const ctx = {
+    url,
+    urlNoPort: urlWithoutPort(url),
+    host,
+    initiatorHost,
+    resourceType,
+    firstParty,
+  };
 
   // Fail-closed: only apply engines explicitly mapped for this account (or '*').
   // Missing map must NOT fall back to all engines (cross-account leak).

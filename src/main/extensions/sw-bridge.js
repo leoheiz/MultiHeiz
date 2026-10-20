@@ -1361,14 +1361,25 @@ function refreshEarlyVersion(br, binding, state) {
   );
 }
 
+/** Debounce timers for warm-up per install::account */
+/** @type {Map<string, ReturnType<typeof setTimeout>>} */
+const warmTimers = new Map();
+
 /**
- * After SW ready: ensure cache version, then warm YouTube robots.txt if needed.
+ * After SW ready / ruleset updates: wait for ABU engine to settle, then warm
+ * YouTube robots.txt. Early warm-up (before tswebextension starts) yields a
+ * thin cache missing set-constant / cosmetics.
  * @param {SessionBridge} br
  * @param {ExtBinding} binding
  * @param {WorkerState} state
  */
 function scheduleWarmUp(br, binding, state) {
-  setTimeout(() => {
+  const key = String(binding.installId) + '::' + String(binding.accountId || '');
+  const prev = warmTimers.get(key);
+  if (prev) clearTimeout(prev);
+  // ABU needs a few seconds for IDB ruleset sync + Engine.start after shim ready.
+  const timer = setTimeout(() => {
+    warmTimers.delete(key);
     try {
       const versionStr = earlyVersionStr(binding, state);
       earlyReplay.ensureVersion(
@@ -1384,7 +1395,8 @@ function scheduleWarmUp(br, binding, state) {
     } catch (err) {
       console.warn('[sw-bridge] scheduleWarmUp', err && err.message);
     }
-  }, 400);
+  }, 4500);
+  warmTimers.set(key, timer);
 }
 
 /**

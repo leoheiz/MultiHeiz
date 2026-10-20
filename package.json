@@ -34,6 +34,7 @@
     "selftest:security": "node tools/selftest-security.js",
     "selftest:ua": "node tools/selftest-ua.js",
     "selftest:gis": "node tools/selftest-gis.js",
+    "selftest:abu-yt": "node tools/selftest-abu-yt.js",
     "check:update-live": "node tools/check-update-live.js",
     "check:adblock-real": "node tools/check-adblock-real.js",
     "check:encoding": "node tools/check-encoding.js",

@@ -492,7 +492,15 @@ const { contextBridge, ipcRenderer } = require('electron');
       const scriptletKey = (funcSrc, args) => {
         try {
           const a = Array.isArray(args) ? args.slice() : [];
-          // Scriptlet path: often args[0] is name; strip uniqueId/verbose/domainName from objects
+          // ABU/tswebextension: args[0] = { name, args, uniqueId, ... }
+          if (a[0] && typeof a[0] === 'object' && !Array.isArray(a[0]) && typeof a[0].name === 'string') {
+            const copy = Object.assign({}, a[0]);
+            delete copy.uniqueId;
+            delete copy.verbose;
+            delete copy.domainName;
+            return 's:' + copy.name + ':' + JSON.stringify(copy.args || []);
+          }
+          // Legacy / other: args[0] is scriptlet name string
           if (typeof a[0] === 'string' && a[0].length < 80 && /^[a-z0-9_-]+$/i.test(a[0])) {
             const name = a[0];
             const rest = a.slice(1).map((x) => {
@@ -541,17 +549,20 @@ const { contextBridge, ipcRenderer } = require('electron');
                 } catch {
                   skip = false;
                 }
+                // Always observe — even when skipping — so the per-host early
+                // cache is not wiped after a warm navigation (empty collection
+                // would look like an allowlist and delete the entry).
+                try {
+                  B.send('scripting.observed', meta);
+                } catch {
+                  /* ignore */
+                }
                 if (skip) {
                   const frameId =
                     Array.isArray(target.frameIds) && target.frameIds.length
                       ? target.frameIds[0]
                       : 0;
                   return [{ frameId, documentId: '', result: null }];
-                }
-                try {
-                  B.send('scripting.observed', meta);
-                } catch {
-                  /* ignore */
                 }
               }
             } catch {
