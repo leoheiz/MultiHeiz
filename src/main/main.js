@@ -1588,7 +1588,9 @@ function registerIpc() {
     } catch {
       /* ignore */
     }
-    return { state: publicState(), account };
+    const next = publicState();
+    emitToRenderer({ type: 'state:changed', state: next });
+    return { state: next, account };
   });
 
   ipcMain.handle('account:update', (_e, { id, ...fields }) => {

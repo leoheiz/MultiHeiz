@@ -21,14 +21,26 @@ function sleep(ms) {
 }
 
 /**
- * @param {string} kind 'chrome' | 'edge' | 'home'
+ * @param {string} kind 'chrome' | 'edge' | 'home' | 'spa-home'
  * @param {string} [extId]
+ * @param {string} [spaTarget] absolute or path URL for SPA pushState target
  */
-function fakeStoreHtml(kind, extId) {
+function fakeStoreHtml(kind, extId, spaTarget) {
   if (kind === 'home') {
     return (
       '<!DOCTYPE html><html><head><meta charset="utf-8"><title>store home</title></head>' +
       '<body><h1 id="home">Fake store home (not a detail page)</h1></body></html>'
+    );
+  }
+  if (kind === 'spa-home') {
+    const target = String(spaTarget || '/detail/x/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    return (
+      '<!DOCTYPE html><html><head><meta charset="utf-8"><title>store spa home</title></head>' +
+      '<body><h1 id="home">Fake store SPA home</h1>' +
+      '<script>(function(){try{history.pushState({},"",' +
+      JSON.stringify(target) +
+      ');}catch(e){}})();</script>' +
+      '</body></html>'
     );
   }
   const isEdge = kind === 'edge';
@@ -47,6 +59,7 @@ function fakeStoreHtml(kind, extId) {
     '">' +
     btnText +
     '</button>' +
+    '<button type="button" id="native-install-text">Add to Chrome</button>' +
     '<div class="webstore-test-unsupported" id="unsupported-banner">' +
     'This browser is not supported. Use Google Chrome or Microsoft Edge.' +
     '</div>' +
@@ -120,6 +133,8 @@ async function runStoreSelftest(ctx) {
   let storePort = 0;
   /** @type {http.Server|null} */
   let storeServer = null;
+  /** @type {string} detail URL used by /spa-home inline pushState */
+  let spaHomeTarget = '';
 
   await new Promise((resolve, reject) => {
     storeServer = http.createServer((req, res) => {
@@ -171,6 +186,13 @@ async function runStoreSelftest(ctx) {
       if (pathname === '/' || pathname === '/home' || pathname === '/search') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(fakeStoreHtml('home'));
+        return;
+      }
+
+      // Loads as non-detail document, then pushState → detail (SPA / did-navigate-in-page)
+      if (pathname === '/spa-home') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(fakeStoreHtml('spa-home', null, spaHomeTarget || '/home'));
         return;
       }
 
@@ -400,44 +422,53 @@ async function runStoreSelftest(ctx) {
   }
   bumpPass('CWS detail shows MultiHeiz store bar with Instalar no MultiHeiz');
 
-  // --- CSS hide native button / banner (best-effort) ---
+  // --- Hide native buttons (CSS aria-label + JS text match) ---
   {
-    const css = await evalPanel(`
-      (function () {
-        const btn = document.getElementById('native-install');
-        const banner = document.getElementById('unsupported-banner');
-        if (!btn || !banner) return { ok: false, reason: 'missing nodes' };
-        const bs = getComputedStyle(btn);
-        const ban = getComputedStyle(banner);
-        const btnHidden =
-          bs.visibility === 'hidden' ||
-          bs.opacity === '0' ||
-          bs.pointerEvents === 'none' ||
-          parseFloat(bs.maxHeight) === 0;
-        const bannerHint =
-          ban.display === 'none' ||
-          ban.visibility === 'hidden' ||
-          ban.opacity === '0' ||
-          true; /* class targeted; best-effort */
-        return {
-          ok: true,
-          btnHidden,
-          btnVisibility: bs.visibility,
-          btnOpacity: bs.opacity,
-          btnPointer: bs.pointerEvents,
-          bannerClass: banner.className,
-          bannerHint,
-        };
-      })()
-    `);
-    if (!css || !css.ok) {
-      console.log('WARN: CSS hide probe incomplete', css);
-    } else if (css.btnHidden) {
-      bumpPass('native store button hidden by injected CSS (best-effort)');
+    const start = Date.now();
+    let probe = null;
+    while (Date.now() - start < 8000) {
+      probe = await evalPanel(`
+        (function () {
+          const btn = document.getElementById('native-install');
+          const textBtn = document.getElementById('native-install-text');
+          const banner = document.getElementById('unsupported-banner');
+          if (!btn || !textBtn) return { ok: false, reason: 'missing nodes' };
+          const bs = getComputedStyle(btn);
+          const ts = getComputedStyle(textBtn);
+          const btnHidden =
+            bs.display === 'none' ||
+            bs.visibility === 'hidden' ||
+            bs.opacity === '0' ||
+            bs.pointerEvents === 'none' ||
+            parseFloat(bs.maxHeight) === 0;
+          const textHidden = ts.display === 'none';
+          return {
+            ok: true,
+            btnHidden,
+            textHidden,
+            textDisplay: ts.display,
+            guard: !!window.__mhStoreHide,
+            bannerClass: banner ? banner.className : '',
+          };
+        })()
+      `);
+      if (probe && probe.ok && probe.textHidden) break;
+      await wait(200);
+    }
+    if (!probe || !probe.ok) {
+      throw new Error('native hide probe failed: ' + JSON.stringify(probe));
+    }
+    if (!probe.textHidden) {
+      throw new Error(
+        'Add to Chrome (no aria-label) should be display:none after JS hide: ' +
+          JSON.stringify(probe)
+      );
+    }
+    bumpPass('native "Add to Chrome" (sem aria-label) escondido via JS (display:none)');
+    if (probe.btnHidden) {
+      bumpPass('native store button com aria-label escondido (CSS/JS)');
     } else {
-      // Soft: CSS is best-effort; still count as pass if selectors exist and insert ran
-      console.log('WARN: native button not fully hidden yet', css);
-      bumpPass('native store CSS inject attempted (best-effort; button probe soft)');
+      bumpPass('native store CSS/JS inject attempted (aria button probe soft)');
     }
   }
 
@@ -608,6 +639,115 @@ async function runStoreSelftest(ctx) {
     }
     if (!hidden) throw new Error('store bar still visible on non-detail page');
     bumpPass('non-detail page hides store bar');
+  }
+
+  // --- Conta criada após UI + SPA pushState (did-navigate-in-page) ---
+  {
+    const spaId = hasAbuFixture ? ABU_ID : genId;
+    const spaDetailPath =
+      '/detail/' + ABU_SLUG + '/' + spaId + '?store=chrome';
+    const spaDetail = origin + spaDetailPath;
+    spaHomeTarget = spaDetailPath;
+
+    const created = await rendererEval(`
+      (async () => {
+        const apply =
+          (window.__mhV16Hooks && window.__mhV16Hooks.applyState) ||
+          (window.__multiheizUi && window.__multiheizUi.applyState);
+        const res = await window.multiheiz.createAccount({
+          name: 'Janela SPA Store',
+          color: '#3d8bfd',
+          startUrl: ${JSON.stringify(origin + '/home')},
+          workspaceId: 'ws-store',
+        });
+        // createAccount emite state:changed; applyState do retorno cobre race com o evento
+        if (res && res.state && apply) apply(res.state);
+        const id = res && res.account ? res.account.id : null;
+        if (!id) return null;
+        const st = await window.multiheiz.setMaximized(id);
+        if (st && apply) apply(st);
+        return id;
+      })()
+    `);
+    if (!created) throw new Error('createAccount after UI failed');
+    await wait(600);
+    const bw2 = mainWindow.getContentBounds().width;
+    const bh2 = mainWindow.getContentBounds().height;
+    panels.syncVisiblePanels([
+      { accountId: created, x: 0, y: 80, width: bw2, height: bh2 - 80 },
+    ]);
+    await wait(500);
+
+    // Full load of non-detail page whose inline script pushState → detail (SPA)
+    const wcSpa = panels.getPanelCapture(created);
+    if (!wcSpa) throw new Error('no panel for SPA account');
+    let sawInPage = false;
+    const onInPage = (_e, url) => {
+      if (String(url || '').includes('/detail/') && String(url || '').includes(spaId)) {
+        sawInPage = true;
+      }
+    };
+    wcSpa.on('did-navigate-in-page', onInPage);
+    try {
+      panels.panelNavigate(created, origin + '/spa-home');
+      await waitForUrl(
+        created,
+        (u) => u.includes('/detail/') && u.includes(spaId),
+        30000
+      );
+      await wait(500);
+      if (!sawInPage) {
+        // pushState from page script should have fired; accept getURL if event missed
+        const cur = wcSpa.getURL();
+        if (!String(cur || '').includes('/detail/')) {
+          throw new Error('SPA did not reach detail URL: ' + cur);
+        }
+      }
+    } finally {
+      try {
+        wcSpa.removeListener('did-navigate-in-page', onInPage);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const start = Date.now();
+    let barProbe = null;
+    while (Date.now() - start < 15000) {
+      barProbe = await rendererEval(`
+        (function () {
+          const slot = document.querySelector('.panel-slot[data-account-id="${created}"]');
+          const bar = slot
+            ? slot.querySelector('.panel-store-bar')
+            : document.querySelector('.panel-store-bar');
+          if (!bar) return { present: false, visible: false, hasSlot: !!slot };
+          return {
+            present: true,
+            visible: bar.offsetParent !== null,
+            extId: bar.dataset.extId || '',
+            hasSlot: !!slot,
+          };
+        })()
+      `);
+      if (barProbe && barProbe.present && barProbe.visible && barProbe.extId === spaId) {
+        break;
+      }
+      await wait(200);
+    }
+    if (!barProbe || !barProbe.present || !barProbe.visible) {
+      throw new Error(
+        'store bar not visible after SPA pushState on new account: ' +
+          JSON.stringify(barProbe) +
+          ' sawInPage=' +
+          sawInPage +
+          ' url=' +
+          (wcSpa.isDestroyed() ? '' : wcSpa.getURL())
+      );
+    }
+    if (barProbe.extId !== spaId) {
+      throw new Error('SPA bar wrong ext id: ' + JSON.stringify(barProbe));
+    }
+    bumpPass('conta nova + SPA pushState mostra .panel-store-bar (offsetParent)');
   }
 
   // Cleanup any leftover installs

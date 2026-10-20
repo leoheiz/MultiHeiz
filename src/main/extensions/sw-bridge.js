@@ -660,7 +660,22 @@ async function tabsCreate(br, binding, props) {
     });
     if (uiEmit) {
       try {
-        uiEmit({ type: 'state:changed' });
+        const st2 = getState();
+        uiEmit({
+          type: 'state:changed',
+          state: {
+            workspaces: st2.workspaces,
+            activeWorkspaceId: st2.activeWorkspaceId,
+            accounts: st2.accounts,
+            layout: st2.layout,
+            page: st2.page,
+            maximizedAccountId: st2.maximizedAccountId,
+            settings: st2.settings,
+            ui: st2.ui || { sidebarCollapsed: false, layoutLocked: true },
+            appearance: st2.appearance,
+            freeTiles: st2.freeTiles || {},
+          },
+        });
       } catch {
         /* ignore */
       }
