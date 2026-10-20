@@ -299,6 +299,87 @@ async function runNodeChecks() {
   assert(c2, 'CRX2 refused');
   console.log('PASS: CRX3 fixtures');
 
+  clearModuleMatch(/\/src\/main\/extensions\/webstore/);
+  clearModuleMatch(/\/src\/main\/extensions\/download/);
+  const webstore = require('../src/main/extensions/webstore');
+  const dl = require('../src/main/extensions/download');
+  const sampleId = 'abcdefghijklmnopabcdefghijklmnop';
+  assert(
+    webstore.parseStoreUrl(
+      'https://chromewebstore.google.com/detail/foo/' + sampleId
+    )?.id === sampleId,
+    'parse CWS detail slug/id'
+  );
+  assert(
+    webstore.parseStoreUrl('https://chromewebstore.google.com/detail/' + sampleId)?.store ===
+      'chrome',
+    'parse CWS detail id-only'
+  );
+  assert(
+    webstore.parseStoreUrl(
+      'https://chrome.google.com/webstore/detail/foo/' + sampleId
+    )?.id === sampleId,
+    'parse legacy CWS'
+  );
+  assert(
+    webstore.parseStoreUrl(
+      'https://microsoftedge.microsoft.com/addons/detail/bar/' + sampleId
+    )?.store === 'edge',
+    'parse Edge addons detail'
+  );
+  assert(webstore.parseStoreUrl('https://evil.example/detail/' + sampleId) === null, 'reject foreign host');
+  assert(webstore.isAllowedCrxDownloadHost('clients2.google.com'), 'allow clients2');
+  assert(webstore.isAllowedCrxDownloadHost('r2---sn-xx.gvt1.com'), 'allow gvt1');
+  assert(webstore.isAllowedCrxDownloadHost('edge.microsoft.com'), 'allow edge.microsoft');
+  assert(
+    webstore.isAllowedCrxDownloadHost('msedgeextensions.sf.tlu.dl.delivery.mp.microsoft.com'),
+    'allow edge CDN'
+  );
+  assert(!webstore.isAllowedCrxDownloadHost('evil.example'), 'deny evil host');
+  let crxHttpFail = false;
+  try {
+    dl.assertAllowedCrxUrl(new URL('http://clients2.google.com/x'));
+  } catch {
+    crxHttpFail = true;
+  }
+  assert(crxHttpFail, 'CRX download rejects http');
+  let crxHostFail = false;
+  try {
+    dl.assertAllowedCrxUrl(new URL('https://evil.example/x.crx'));
+  } catch {
+    crxHostFail = true;
+  }
+  assert(crxHostFail, 'CRX download rejects non-allowlisted host');
+  // MULTIHEIZ_WEBSTORE_TEST_BASE only when SELFTEST (already set)
+  process.env.MULTIHEIZ_WEBSTORE_TEST_BASE = 'http://127.0.0.1:9';
+  clearModuleMatch(/\/src\/main\/extensions\/webstore/);
+  clearModuleMatch(/\/src\/main\/extensions\/download/);
+  const webstore2 = require('../src/main/extensions/webstore');
+  assert(
+    webstore2.parseStoreUrl('http://127.0.0.1:9/detail/x/' + sampleId + '?store=chrome')?.id ===
+      sampleId,
+    'test-base detail parse'
+  );
+  assert(
+    webstore2.crxUrlFor('chrome', sampleId).startsWith('http://127.0.0.1:9/crx?'),
+    'test-base crx url'
+  );
+  delete process.env.MULTIHEIZ_WEBSTORE_TEST_BASE;
+  // Without SELFTEST, test base must be ignored
+  const savedSt = process.env.MULTIHEIZ_SELFTEST;
+  delete process.env.MULTIHEIZ_SELFTEST;
+  process.env.MULTIHEIZ_WEBSTORE_TEST_BASE = 'http://127.0.0.1:9';
+  clearModuleMatch(/\/src\/main\/extensions\/webstore/);
+  const webstoreProd = require('../src/main/extensions/webstore');
+  assert(webstoreProd.webstoreTestBase() === null, 'test base inert without SELFTEST');
+  assert(
+    !webstoreProd.crxUrlFor('chrome', sampleId).includes('127.0.0.1'),
+    'production crx URL unchanged'
+  );
+  delete process.env.MULTIHEIZ_WEBSTORE_TEST_BASE;
+  if (savedSt) process.env.MULTIHEIZ_SELFTEST = savedSt;
+  console.log('PASS: webstore parse + CRX host allowlist');
+
   try {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   } catch {

@@ -542,7 +542,7 @@ async function runExtSelftest(ctx) {
 
   // CRX3 pack + unpack install (persistence subject for phase 2)
   const crxPath = path.join(app.getPath('temp'), 'mh-ext-test.crx');
-  extensions.packDirAsCrx3(fixtureDir, crxPath);
+  const packed = extensions.packDirAsCrx3(fixtureDir, crxPath);
   const crxBuf = fs.readFileSync(crxPath);
   if (crxBuf.subarray(0, 4).toString() !== 'Cr24') throw new Error('CRX3 magic missing');
   if (crxBuf.readUInt32LE(4) !== 3) throw new Error('CRX version not 3');
@@ -561,6 +561,83 @@ async function runExtSelftest(ctx) {
     throw new Error('CRX extension not in session after install');
   }
   console.log('PASS: CRX3 fixture unpack + install (CS verified after restart in phase 2)');
+
+  // Webstore URL parse + install via MULTIHEIZ_WEBSTORE_TEST_BASE (selftest only)
+  {
+    const { parseStoreUrl, crxUrlFor } = require('./extensions/webstore');
+    const sid = packed.extensionId;
+    const sample = 'abcdefghijklmnopabcdefghijklmnop';
+    const p1 = parseStoreUrl('https://chromewebstore.google.com/detail/slug/' + sample);
+    if (!p1 || p1.store !== 'chrome' || p1.id !== sample) {
+      throw new Error('parseStoreUrl CWS failed');
+    }
+    const p2 = parseStoreUrl(
+      'https://microsoftedge.microsoft.com/addons/detail/slug/' + sample
+    );
+    if (!p2 || p2.store !== 'edge' || p2.id !== sample) {
+      throw new Error('parseStoreUrl Edge failed');
+    }
+
+    let storePort = 0;
+    const storeServer = http.createServer((req, res) => {
+      const u = new URL(req.url || '/', 'http://127.0.0.1');
+      if (u.pathname.startsWith('/detail/')) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><body>fake store</body></html>');
+        return;
+      }
+      if (u.pathname === '/crx') {
+        res.writeHead(200, {
+          'Content-Type': 'application/x-chrome-extension',
+          'Content-Length': crxBuf.length,
+        });
+        res.end(crxBuf);
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise((resolve, reject) => {
+      storeServer.listen(0, '127.0.0.1', () => {
+        storePort = storeServer.address().port;
+        resolve();
+      });
+      storeServer.on('error', reject);
+    });
+    process.env.MULTIHEIZ_WEBSTORE_TEST_BASE = 'http://127.0.0.1:' + storePort;
+    const detailUrl =
+      'http://127.0.0.1:' + storePort + '/detail/test/' + sid + '?store=chrome';
+    const parsedLocal = parseStoreUrl(detailUrl);
+    if (!parsedLocal || parsedLocal.id !== sid) {
+      throw new Error('test-base parseStoreUrl failed: ' + JSON.stringify(parsedLocal));
+    }
+    const expectedCrx = crxUrlFor('chrome', sid);
+    if (!expectedCrx.includes('127.0.0.1:' + storePort)) {
+      throw new Error('test-base crxUrlFor wrong: ' + expectedCrx);
+    }
+    await extensions.removeExtension(fromCrx.id);
+    const fromStore = await extensions.installFromStore(detailUrl, {
+      applyTo: ['acc-ext-a'],
+    });
+    if (!fromStore || fromStore.id !== sid) {
+      throw new Error(
+        'installFromStore via test base failed: ' +
+          JSON.stringify(fromStore && { id: fromStore.id, name: fromStore.name })
+      );
+    }
+    if (fromStore.source !== 'chrome-web-store') {
+      throw new Error('expected chrome-web-store source, got ' + fromStore.source);
+    }
+    console.log('PASS: webstore test-base download + CRX3 install (id match)');
+    delete process.env.MULTIHEIZ_WEBSTORE_TEST_BASE;
+    await new Promise((resolve) => {
+      try {
+        storeServer.close(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
+  }
 
   flushSave();
   await closeServer();

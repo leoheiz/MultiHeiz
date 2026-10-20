@@ -18,6 +18,7 @@ const userAgent = require('./user-agent');
 const sessionPersist = require('./session-persist');
 const permissions = require('./permissions');
 const chromeFullscreen = require('./chrome-fullscreen');
+const extensions = require('./extensions');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
@@ -926,16 +927,32 @@ function createPanel(accountId) {
     } catch {
       /* ignore */
     }
+    try {
+      extensions.onPanelNavigated(accountId, url, view.webContents);
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('did-navigate-in-page', (_e, url) => {
     rememberUrl(accountId, url);
     recordHistory(accountId, url);
     touchAccount(accountId);
     notifyNav(accountId);
+    try {
+      extensions.onPanelNavigated(accountId, url, view.webContents);
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('did-finish-load', () => {
     notifyNav(accountId);
     signalLoadCommitted(accountId);
+    try {
+      const u = view.webContents.getURL();
+      extensions.onPanelNavigated(accountId, u, view.webContents);
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('dom-ready', () => signalLoadCommitted(accountId));
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {

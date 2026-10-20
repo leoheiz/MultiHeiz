@@ -78,6 +78,13 @@ contextBridge.exposeInMainWorld('multiheiz', {
   extensionsInstallUnpacked: () => ipcRenderer.invoke('extensions:install-unpacked'),
   extensionsInstallCrx: () => ipcRenderer.invoke('extensions:install-crx'),
   extensionsInstallStore: (input) => ipcRenderer.invoke('extensions:install-store', input),
+  extensionsStoreBarInstall: (accountId, store, id) =>
+    ipcRenderer.invoke('extensions:store-bar-install', { accountId, store, id }),
+  extensionsStoreBarRemove: (accountId, id) =>
+    ipcRenderer.invoke('extensions:store-bar-remove', { accountId, id }),
+  extensionsStoreBarOffer: (accountId) =>
+    ipcRenderer.invoke('extensions:store-bar-offer', accountId),
+  extensionsOpenWebstore: (which) => ipcRenderer.invoke('extensions:open-webstore', which),
   extensionsSetEnabled: (id, enabled) =>
     ipcRenderer.invoke('extensions:set-enabled', { id, enabled }),
   extensionsSetApplyTo: (id, applyTo) =>

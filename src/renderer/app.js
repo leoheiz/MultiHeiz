@@ -77,6 +77,8 @@ let zoomToastTimer = null;
 
 /** @type {Map<string, { url: string, title?: string, domain?: string, canGoBack: boolean, canGoForward: boolean, muted: boolean }>} */
 const navState = new Map();
+/** @type {Map<string, { store: string, id: string, installed?: boolean, extensionId?: string|null, name?: string|null, status?: string, message?: string }>} */
+const storeOffers = new Map();
 /** @type {Map<string, string>} */
 const favicons = new Map();
 /** @type {Map<string, string|null>} */
@@ -1131,6 +1133,10 @@ function buildPanelSlot(acc, tile) {
   }
 
   slot.append(header, content);
+  const cachedOffer = storeOffers.get(acc.id);
+  if (cachedOffer) {
+    ensureStoreOfferBar(slot, acc.id, cachedOffer);
+  }
 
   if (isLivreEditMode()) {
     for (const dir of ['e', 's', 'se']) {
@@ -1150,6 +1156,137 @@ function buildPanelSlot(acc, tile) {
   }
 
   return slot;
+}
+
+/**
+ * Slim MultiHeiz bar under the panel header on store detail pages.
+ * @param {HTMLElement} slot
+ * @param {string} accountId
+ * @param {object|null} offer
+ */
+function ensureStoreOfferBar(slot, accountId, offer) {
+  let bar = slot.querySelector('.panel-store-bar');
+  if (!offer) {
+    if (bar) {
+      bar.remove();
+      scheduleSync();
+    }
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'panel-store-bar';
+    const content = slot.querySelector('.panel-content');
+    if (content) slot.insertBefore(bar, content);
+    else slot.appendChild(bar);
+  }
+  bar.dataset.accountId = accountId;
+  bar.dataset.store = offer.store || '';
+  bar.dataset.extId = offer.id || '';
+  const storeLabel = offer.store === 'edge' ? 'Edge' : 'Chrome Web Store';
+  const status = offer.status || '';
+  const busy = status === 'downloading' || status === 'installing';
+  const msg =
+    offer.message ||
+    (offer.installed
+      ? 'Já instalada' + (offer.name ? ': ' + offer.name : '')
+      : 'Extensão da ' + storeLabel);
+
+  bar.replaceChildren();
+  const label = document.createElement('span');
+  label.className = 'panel-store-bar-label';
+  label.textContent = msg;
+  bar.appendChild(label);
+
+  if (busy) {
+    const spin = document.createElement('span');
+    spin.className = 'panel-store-bar-busy';
+    spin.textContent = status === 'downloading' ? 'Baixando…' : 'Instalando…';
+    bar.appendChild(spin);
+  } else if (offer.installed) {
+    const badge = document.createElement('span');
+    badge.className = 'panel-store-bar-badge';
+    badge.textContent = 'Já instalada';
+    const btnRm = document.createElement('button');
+    btnRm.type = 'button';
+    btnRm.className = 'btn ghost panel-store-bar-btn';
+    btnRm.textContent = 'Remover';
+    btnRm.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      btnRm.disabled = true;
+      const r = await window.multiheiz.extensionsStoreBarRemove(accountId, offer.id);
+      if (!r || !r.ok) {
+        label.textContent = (r && r.error) || 'Falha ao remover';
+        btnRm.disabled = false;
+        return;
+      }
+      if (window.MultiHeizV16 && window.MultiHeizV16.refreshExtensionsUi) {
+        window.MultiHeizV16.refreshExtensionsUi().catch(() => {});
+      }
+    });
+    bar.append(badge, btnRm);
+  } else {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn primary panel-store-bar-btn';
+    btn.textContent = 'Instalar no MultiHeiz';
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      btn.disabled = true;
+      updateStoreOfferProgress(accountId, 'downloading', 'Baixando…');
+      const r = await window.multiheiz.extensionsStoreBarInstall(
+        accountId,
+        offer.store,
+        offer.id
+      );
+      if (!r || !r.ok) {
+        updateStoreOfferProgress(
+          accountId,
+          'error',
+          (r && r.error) || 'Falha ao instalar'
+        );
+        return;
+      }
+      if (window.MultiHeizV16 && window.MultiHeizV16.refreshExtensionsUi) {
+        window.MultiHeizV16.refreshExtensionsUi().catch(() => {});
+      }
+    });
+    bar.appendChild(btn);
+  }
+  scheduleSync();
+}
+
+function updateStoreOfferBar(accountId, offer) {
+  if (!offer) {
+    storeOffers.delete(accountId);
+  } else {
+    const prev = storeOffers.get(accountId) || {};
+    storeOffers.set(accountId, {
+      ...prev,
+      ...offer,
+      status: offer.status != null ? offer.status : prev.status,
+      message: offer.message != null ? offer.message : prev.message,
+    });
+  }
+  const slot = el.grid.querySelector(`.panel-slot[data-account-id="${accountId}"]`);
+  if (slot) ensureStoreOfferBar(slot, accountId, storeOffers.get(accountId) || null);
+}
+
+function updateStoreOfferProgress(accountId, status, message) {
+  const cur = storeOffers.get(accountId);
+  if (!cur) return;
+  cur.status = status || '';
+  cur.message = message || '';
+  if (status === 'done') {
+    cur.installed = true;
+    cur.status = '';
+  }
+  if (status === 'error') {
+    cur.status = '';
+  }
+  storeOffers.set(accountId, cur);
+  const slot = el.grid.querySelector(`.panel-slot[data-account-id="${accountId}"]`);
+  if (slot) ensureStoreOfferBar(slot, accountId, cur);
 }
 
 function showUrlEditor(slot, acc) {
@@ -2080,6 +2217,29 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'extensions:changed') {
     /* list refreshed when settings pane opens; puzzle menu fetches live */
+    if (window.MultiHeizV16 && window.MultiHeizV16.refreshExtensionsUi) {
+      window.MultiHeizV16.refreshExtensionsUi().catch(() => {});
+    }
+    return;
+  }
+  if (payload.type === 'extensions:store-offer') {
+    updateStoreOfferBar(payload.accountId, payload.offer || null);
+    return;
+  }
+  if (payload.type === 'extensions:store-progress') {
+    updateStoreOfferProgress(payload.accountId, payload.status, payload.message);
+    return;
+  }
+  if (payload.type === 'extensions:prompt-apply') {
+    // Reuse Configurações → Extensões applyTo radios (same as after file install)
+    const openBtn = document.getElementById('btn-settings');
+    if (openBtn) openBtn.click();
+    if (window.MultiHeizV16 && window.MultiHeizV16.openSettingsSection) {
+      setTimeout(() => window.MultiHeizV16.openSettingsSection('extensoes'), 40);
+    }
+    if (window.MultiHeizV16 && window.MultiHeizV16.refreshExtensionsUi) {
+      window.MultiHeizV16.refreshExtensionsUi().catch(() => {});
+    }
     return;
   }
   if (payload.type === 'adblock:progress' || payload.type === 'adblock:status') {

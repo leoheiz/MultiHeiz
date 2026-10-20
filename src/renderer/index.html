@@ -366,9 +366,34 @@
               Reinicie as janelas afetadas após alterar.
             </p>
             <p class="muted-note" id="ext-coexistence-hint" hidden></p>
-            <div class="ext-add-row">
-              <button type="button" class="btn primary" id="btn-ext-add">+ Adicionar extensão</button>
+            <div class="ext-add-row ext-store-open-row">
+              <button type="button" class="btn primary" id="btn-ext-open-cws">
+                Abrir Chrome Web Store
+              </button>
+              <button type="button" class="btn primary" id="btn-ext-open-edge">
+                Abrir loja do Edge
+              </button>
             </div>
+            <p class="muted-note">
+              Nas páginas de detalhe da loja, use <strong>Instalar no MultiHeiz</strong> na barra
+              acima do painel.
+            </p>
+            <details class="ext-advanced" id="ext-advanced">
+              <summary>Instalar de arquivo ou pasta (avançado)</summary>
+              <div class="ext-advanced-body">
+                <div class="row-inline ext-install-row">
+                  <button type="button" class="btn ghost" id="btn-ext-crx">Arquivo .crx…</button>
+                  <button type="button" class="btn ghost" id="btn-ext-unpacked">Pasta descompactada…</button>
+                </div>
+                <label class="ext-add-option">
+                  <span>Ou cole URL / ID da loja</span>
+                  <div class="row-inline">
+                    <input id="ext-store-input" placeholder="URL ou ID da extensão" />
+                    <button type="button" class="btn ghost" id="btn-ext-store">Instalar</button>
+                  </div>
+                </label>
+              </div>
+            </details>
             <p class="muted-note" id="ext-status"></p>
             <div id="ext-list" class="ext-cards"></div>
             <p class="muted-note">
@@ -550,28 +575,6 @@
           </section>
         </form>
       </div>
-    </dialog>
-
-    <dialog id="dlg-ext-add" class="dialog">
-      <form method="dialog" id="form-ext-add" class="dialog-body">
-        <h2>Adicionar extensão</h2>
-        <p class="muted-note">Escolha como instalar (Experimental — em testes).</p>
-        <label class="ext-add-option">
-          <span>Link ou ID da Chrome Web Store / Edge Add-ons</span>
-          <div class="row-inline">
-            <input id="ext-store-input" placeholder="URL ou ID da extensão" />
-            <button type="button" class="btn primary" id="btn-ext-store">Instalar</button>
-          </div>
-        </label>
-        <div class="row-inline ext-install-row">
-          <button type="button" class="btn ghost" id="btn-ext-crx">Arquivo .crx…</button>
-          <button type="button" class="btn ghost" id="btn-ext-unpacked">Pasta descompactada…</button>
-        </div>
-        <p class="muted-note" id="ext-add-status"></p>
-        <div class="dialog-actions">
-          <button type="submit" class="btn ghost" value="cancel">Fechar</button>
-        </div>
-      </form>
     </dialog>
 
     <dialog id="dlg-novidades" class="dlg-novidades">

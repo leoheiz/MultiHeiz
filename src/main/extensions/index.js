@@ -14,6 +14,8 @@ const store = require('./store');
 const { buildRecord } = require('./manifest');
 const { unpackCrxToDir, packDirAsCrx3, buildCrx3TestFixtures } = require('./crx');
 const { parseStoreInput, downloadCrx } = require('./download');
+const { parseStoreUrl, crxUrlFor } = require('./webstore');
+const storeBar = require('./store-bar');
 const loader = require('./loader');
 const popup = require('./popup');
 const dnr = require('./dnr-shim');
@@ -266,6 +268,7 @@ async function loadAllAccountSessions() {
  */
 function init(options) {
   deps = options || {};
+  storeBar.init({ emit });
   try {
     require('./sw-bridge').setUiEmit(deps.emit || null);
   } catch {
@@ -354,6 +357,73 @@ function registerIpc() {
     } catch (err) {
       return { ok: false, error: err && err.message ? err.message : String(err) };
     }
+  });
+
+  /**
+   * Install from the in-panel store bar (store + id already parsed).
+   * Progress events: extensions:store-progress.
+   */
+  ipcMain.handle('extensions:store-bar-install', async (_e, { accountId, store: storeName, id }) => {
+    const aid = String(accountId || '');
+    const sid = String(id || '').toLowerCase();
+    const which = storeName === 'edge' ? 'edge' : 'chrome';
+    if (!/^[a-p]{32}$/.test(sid)) {
+      return { ok: false, error: 'ID de extensão inválido' };
+    }
+    try {
+      storeBar.emitProgress(aid, 'downloading', 'Baixando…');
+      const chromeVer = process.versions.chrome || '137.0.0.0';
+      const { buffer } = await downloadCrx(which, sid, chromeVer);
+      storeBar.emitProgress(aid, 'installing', 'Instalando…');
+      const rec = await installFromCrxBuffer(buffer, {
+        source: which === 'edge' ? 'edge-addons' : 'chrome-web-store',
+        storeId: sid,
+        applyTo: 'all',
+      });
+      storeBar.emitProgress(
+        aid,
+        'done',
+        'Instalada: ' + (rec.name || rec.id) + ' — escolha as janelas em Extensões'
+      );
+      storeBar.refreshOffer(aid);
+      emit({
+        type: 'extensions:prompt-apply',
+        accountId: aid,
+        extensionId: rec.id,
+        extension: rec,
+      });
+      return { ok: true, extension: rec, extensions: publicList() };
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      storeBar.emitProgress(aid, 'error', msg);
+      return { ok: false, error: msg };
+    }
+  });
+
+  ipcMain.handle('extensions:store-bar-remove', async (_e, { accountId, id }) => {
+    const aid = String(accountId || '');
+    const target =
+      storeBar.findInstalledByStoreId(id) || store.getRecord(String(id || ''));
+    if (!target) return { ok: false, error: 'Extensão não encontrada' };
+    const ok = await removeExtension(target.id);
+    storeBar.refreshOffer(aid);
+    return { ok, extensions: publicList() };
+  });
+
+  ipcMain.handle('extensions:store-bar-offer', (_e, accountId) => {
+    return storeBar.getOffer(String(accountId || ''));
+  });
+
+  /** Open Chrome Web Store or Edge Add-ons in a new MultiHeiz window. */
+  ipcMain.handle('extensions:open-webstore', (_e, which) => {
+    const url =
+      which === 'edge'
+        ? 'https://microsoftedge.microsoft.com/addons/'
+        : 'https://chromewebstore.google.com/';
+    if (deps && typeof deps.openUrlInNewWindow === 'function') {
+      return deps.openUrlInNewWindow(url);
+    }
+    return { ok: false, error: 'Abrir janela indisponível' };
   });
 
   ipcMain.handle('extensions:set-enabled', async (_e, { id, enabled }) => {
@@ -512,6 +582,20 @@ const {
   abuCompatApplies,
 } = require('./abu-compat');
 
+/**
+ * Panel navigation hook (did-navigate / did-navigate-in-page).
+ * @param {string} accountId
+ * @param {string} url
+ * @param {Electron.WebContents} [wc]
+ */
+function onPanelNavigated(accountId, url, wc) {
+  try {
+    storeBar.onPanelUrl(accountId, url, wc);
+  } catch (err) {
+    console.warn('[extensions] store-bar', err && err.message ? err.message : err);
+  }
+}
+
 module.exports = {
   init,
   shutdown,
@@ -525,18 +609,22 @@ module.exports = {
   removeExtension,
   loadForAccount,
   loadAllAccountSessions,
+  onPanelNavigated,
   openActionPopup: (...args) => popup.openActionPopup(...args),
   openOptionsPage: (...args) => popup.openOptionsPage(...args),
   packDirAsCrx3,
   unpackCrxToDir,
   buildCrx3TestFixtures,
   parseStoreInput,
+  parseStoreUrl,
+  crxUrlFor,
   coexistenceHint,
   activeNetworkBlockers,
   isAbuCompatSettingOn,
   abuCompatApplies,
   loader,
   store,
+  storeBar,
   dnr,
   swBridge: require('./sw-bridge'),
   earlyReplay: require('./early-replay'),

@@ -259,6 +259,21 @@ let lastAccountMenuPopup = null;
 /** @type {{ x: number, y: number, labels: string[], at: number } | null} */
 let lastTopMenuPopup = null;
 
+function whichLabelForStoreUrl(url) {
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, '');
+    if (h.includes('microsoftedge') || h.includes('edge.microsoft')) {
+      return 'Loja do Edge';
+    }
+    if (h.includes('chromewebstore') || h.includes('chrome.google')) {
+      return 'Chrome Web Store';
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'Janela';
+}
+
 function makeId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -3923,6 +3938,33 @@ app.whenReady().then(() => {
           emit: emitToRenderer,
           getAccountIds: () => (getState().accounts || []).map((a) => a.id),
           getMainWindow: () => mainWindow,
+          openUrlInNewWindow: (url) => {
+            const raw = String(url || '').trim();
+            const { sanitizeUserStartUrl, isNavigableUrl } = require('./url-policy');
+            if (!isNavigableUrl(raw)) return { ok: false, reason: 'blocked-scheme' };
+            const st = getState();
+            const id =
+              'acc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+            const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
+            const account = {
+              id,
+              name: whichLabelForStoreUrl(raw),
+              color: colors[st.accounts.length % colors.length],
+              startUrl: sanitizeUserStartUrl(raw, 'https://www.google.com'),
+              workspaceId: st.activeWorkspaceId,
+              muted: false,
+              pauseInBackground: false,
+              keepAliveInBackground: false,
+              privateHistory: false,
+              lastUrl: null,
+            };
+            updateState((s) => {
+              s.accounts.push(account);
+            });
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+            panels.panelNavigate(id, raw);
+            return { ok: true, windowId: id, state: publicState() };
+          },
         });
       } catch (err) {
         console.warn('[extensions] init error', err && err.message ? err.message : err);

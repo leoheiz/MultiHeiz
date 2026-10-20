@@ -946,11 +946,78 @@ select {
   flex-shrink: 0;
 }
 
+.panel-store-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel-header-bg));
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-store-bar-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-store-bar-badge {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.panel-store-bar-busy {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.panel-store-bar-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 10px;
+  height: 22px;
+}
+
 .panel-content {
   position: relative;
   flex: 1;
   min-height: 0;
   background: transparent;
+}
+
+.ext-store-open-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ext-advanced {
+  margin: 10px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+}
+
+.ext-advanced > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ext-advanced-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .panel-snapshot {

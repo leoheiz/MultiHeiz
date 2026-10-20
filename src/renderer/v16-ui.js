@@ -2099,17 +2099,12 @@
   }
 
   function setExtStatus(msg, isError) {
-    for (const id of ['ext-status', 'ext-add-status']) {
+    for (const id of ['ext-status']) {
       const el = document.getElementById(id);
       if (!el) continue;
       el.textContent = msg || '';
       el.style.color = isError ? '#c96b6b' : '';
     }
-  }
-
-  function closeExtAddDialog() {
-    const dlg = document.getElementById('dlg-ext-add');
-    if (dlg && dlg.open) dlg.close();
   }
 
   function extSourceLabel(source) {
@@ -2126,24 +2121,24 @@
   }
 
   function wireExtensionsUi() {
-    const btnAdd = document.getElementById('btn-ext-add');
-    if (btnAdd) {
-      btnAdd.addEventListener('click', () => {
-        const dlg = document.getElementById('dlg-ext-add');
-        if (!dlg) return;
-        const st = document.getElementById('ext-add-status');
-        if (st) {
-          st.textContent = '';
-          st.style.color = '';
-        }
-        pushOverlay('dlg-ext-add');
-        dlg.showModal();
-      });
-    }
-    const dlgAdd = document.getElementById('dlg-ext-add');
-    if (dlgAdd) {
-      dlgAdd.addEventListener('close', () => popOverlay('dlg-ext-add'));
-    }
+    const openStore = async (which) => {
+      if (!window.multiheiz.extensionsOpenWebstore) return;
+      setExtStatus(which === 'edge' ? 'Abrindo loja do Edge…' : 'Abrindo Chrome Web Store…');
+      const r = await window.multiheiz.extensionsOpenWebstore(which);
+      if (!r || !r.ok) {
+        setExtStatus((r && (r.error || r.reason)) || 'Falha ao abrir a loja', true);
+        return;
+      }
+      setExtStatus('');
+      // Fechar configurações para ver a nova janela
+      const dlg = document.getElementById('dlg-settings');
+      if (dlg && dlg.open) dlg.close();
+      if (r.state && hooks().applyState) hooks().applyState(r.state);
+    };
+    const btnCws = document.getElementById('btn-ext-open-cws');
+    if (btnCws) btnCws.addEventListener('click', () => openStore('chrome'));
+    const btnEdge = document.getElementById('btn-ext-open-edge');
+    if (btnEdge) btnEdge.addEventListener('click', () => openStore('edge'));
 
     const btnUnp = document.getElementById('btn-ext-unpacked');
     if (btnUnp) {
@@ -2159,7 +2154,6 @@
           return;
         }
         setExtStatus('Instalada: ' + (r.extension && r.extension.name));
-        closeExtAddDialog();
         await refreshExtensionsUi();
         showSaved();
       });
@@ -2178,7 +2172,6 @@
           return;
         }
         setExtStatus('Instalada: ' + (r.extension && r.extension.name));
-        closeExtAddDialog();
         await refreshExtensionsUi();
         showSaved();
       });
@@ -2202,7 +2195,6 @@
           }
           setExtStatus('Instalada: ' + (r.extension && r.extension.name));
           if (inp) inp.value = '';
-          closeExtAddDialog();
           await refreshExtensionsUi();
           showSaved();
         } finally {
@@ -2257,7 +2249,7 @@
         h('p', {
           className: 'muted-note ext-empty',
           text:
-            'Nenhuma extensão instalada. Clique em “+ Adicionar extensão” para instalar da Chrome Web Store / Edge, um arquivo .crx ou uma pasta descompactada.',
+            'Nenhuma extensão instalada. Abra a Chrome Web Store ou a loja do Edge e use “Instalar no MultiHeiz”, ou use a seção avançada (arquivo / pasta).',
         })
       );
       return;
