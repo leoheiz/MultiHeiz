@@ -6,6 +6,8 @@ const { session } = require('electron');
 const store = require('./store');
 const dnr = require('./dnr-shim');
 const { readManifestForDnr } = require('./dnr-prepare');
+const swBridge = require('./sw-bridge');
+const { abuCompatApplies } = require('./abu-compat');
 
 /** @type {Map<string, Map<string, string>>} accountId -> extId -> electronExtensionId */
 const loadedByAccount = new Map();
@@ -111,6 +113,10 @@ async function loadOne(accountId, record) {
     const ses = getSession(accountId);
     try {
       ensureDnrLoaded(record);
+      // SW API shim preload must be registered before loadExtension.
+      if (abuCompatApplies(record)) {
+        swBridge.prepareForLoad(ses, accountId, record);
+      }
       // allowFileAccess: false — extensions must not read arbitrary file:// pages.
       // Content scripts / DNR on http(s) panels do not need file access.
       const ext = await ses.extensions.loadExtension(record.path, {
@@ -118,6 +124,9 @@ async function loadOne(accountId, record) {
       });
       const eid = ext && ext.id ? ext.id : record.id;
       map.set(record.id, eid);
+      if (abuCompatApplies(record)) {
+        swBridge.afterLoad(ses, accountId, record, eid);
+      }
       syncDnrForAccount(accountId);
       if (Array.isArray(record.warnings) && record.warnings.length) {
         console.warn(

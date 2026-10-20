@@ -497,39 +497,10 @@ function shutdown() {
   popup.closeAllPopups();
 }
 
-/**
- * Global settings.extensions.abuCompat (default ON).
- * @returns {boolean}
- */
-function isAbuCompatSettingOn() {
-  try {
-    const { getState } = require('../state');
-    const s = getState();
-    const ext = s && s.settings && s.settings.extensions;
-    return !(ext && ext.abuCompat === false);
-  } catch {
-    return true;
-  }
-}
-
-/**
- * True when abuCompat applies to this install: setting ON and MV3 service_worker
- * background (from live manifest or DNR snapshot path).
- * @param {object|null|undefined} record
- * @returns {boolean}
- */
-function abuCompatApplies(record) {
-  if (!record || !isAbuCompatSettingOn()) return false;
-  try {
-    const manifestPath = path.join(record.path, 'manifest.json');
-    if (!fs.existsSync(manifestPath)) return false;
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    const bg = manifest && manifest.background;
-    return !!(bg && bg.service_worker);
-  } catch {
-    return false;
-  }
-}
+const {
+  isAbuCompatSettingOn,
+  abuCompatApplies,
+} = require('./abu-compat');
 
 module.exports = {
   init,
@@ -557,4 +528,5 @@ module.exports = {
   loader,
   store,
   dnr,
+  swBridge: require('./sw-bridge'),
 };
