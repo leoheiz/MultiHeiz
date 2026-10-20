@@ -4,7 +4,8 @@
  * Self-test MultiHeiz 1.3.0 — sidebar fixed/auto-hide + legacy "always active"
  * Uso: npm run selftest:sidebar
  *
- * Phase 1: default fixed, auto-hide hot-zone/overlay, legacy collapse, F11, disk writes.
+ * Phase 1: default fixed, auto-hide hot-zone/overlay, main cursor poll (reveal ≤12px /
+ *   outside edge / keep-open / pin-while-revealed), legacy collapse, F11, disk writes.
  * Phase 2: same MULTIHEIZ_USERDATA — asserts sidebarAlwaysActive persisted (legacy mode).
  *
  * Env opcional:

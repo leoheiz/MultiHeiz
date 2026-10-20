@@ -129,6 +129,7 @@ async function runSidebarSelftest(ctx) {
     waitForLayoutSettle,
     waitForPanels,
     chromeFullscreen,
+    sidebarCursor,
   } = ctx;
 
   const phase = String(envGet('MULTIHEIZ_SELFTEST_PHASE') || '1');
@@ -223,6 +224,22 @@ async function runSidebarSelftest(ctx) {
     return Math.abs(a - b) <= tol;
   }
 
+  if (!sidebarCursor || typeof sidebarCursor.setCursorOverride !== 'function') {
+    console.log('FAIL: sidebarCursor selftest hooks missing');
+    app.exit(1);
+    return;
+  }
+  function setCursorContent(cx, cy) {
+    const pt = sidebarCursor.contentPointToScreen(cx, cy);
+    if (!pt) throw new Error('contentPointToScreen failed');
+    sidebarCursor.setCursorOverride(pt);
+  }
+  const midY = Math.round((mainWindow.getContentSize()[1] || 900) / 2);
+  /** Park cursor far from the left edge so polling does not race DOM-simulated reveals. */
+  function parkCursorAway() {
+    setCursorContent(400, midY);
+  }
+
   /* ---------- Fixed mode (default on new profile) ---------- */
   let mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (!mode || mode.autoHide !== false || mode.open !== false || mode.legacyAlwaysActive) {
@@ -266,8 +283,8 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (mode.hotzoneHidden || !(mode.hotzoneWidth >= 3 && mode.hotzoneWidth <= 8)) {
-    console.log('FAIL: hotzone should be visible ~5px', mode);
+  if (mode.hotzoneHidden || !(mode.hotzoneWidth >= 4 && mode.hotzoneWidth <= 10)) {
+    console.log('FAIL: hotzone should be visible ~6px', mode);
     app.exit(1);
     return;
   }
@@ -292,8 +309,13 @@ async function runSidebarSelftest(ctx) {
   console.log('PASS: auto-hide hidden + hotzone', { mode, bounds: hidden.bounds });
   await saveSidebarShot(ctx, 'sidebar-autohidden.png');
 
+  parkCursorAway();
+  await sleep(100);
+
   /* ---------- Hot-zone show (simulate + delay) ---------- */
+  // DOM enter + cursor on hot edge so main polling does not cancel the show timer.
   await rendererEval('window.__multiheizUi.sidebarHotzoneEnter()');
+  setCursorContent(5, midY);
   await sleep(80);
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (mode.open) {
@@ -309,6 +331,9 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
+  // Hold cursor inside the open strip so main polling does not race-hide.
+  setCursorContent(80, midY);
+  await sleep(80);
   const openB = panelBounds();
   if (!(openB.overlayW >= 200)) {
     console.log('FAIL: overlay width should match sidebar when open', openB);
@@ -338,20 +363,24 @@ async function runSidebarSelftest(ctx) {
   console.log('PASS: hotzone reveal + shift-x overlay bounds', openB);
   await saveSidebarShot(ctx, 'sidebar-hovered.png');
 
-  /* ---------- Leave → hide (delay) ---------- */
-  await rendererEval('window.__multiheizUi.sidebarMouseLeave()');
-  await sleep(120);
+  /* ---------- Leave → hide (delay ~700ms) ---------- */
+  const leaveT0 = Date.now();
+  setCursorContent(440, midY);
+  await sleep(500);
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (!mode.open) {
-    console.log('FAIL: should still be open before hide delay', mode);
+    console.log('FAIL: should still be open before ~700ms hide delay (at 500ms)', mode);
     app.exit(1);
     return;
   }
-  await sleep(250);
+  await sleep(700);
   await waitForLayoutSettle();
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (mode.open) {
-    console.log('FAIL: should hide after ~300ms leave', mode);
+    console.log('FAIL: should hide after ~700ms leave (by 1200ms)', {
+      mode,
+      elapsedMs: Date.now() - leaveT0,
+    });
     app.exit(1);
     return;
   }
@@ -361,9 +390,187 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  console.log('PASS: leave hides sidebar', afterHide.bounds);
+  console.log('PASS: leave hides sidebar (~700ms)', afterHide.bounds);
 
-  /* ---------- Toggle back to fixed ---------- */
+  /* ---------- Main cursor poll: reveal zone width ---------- */
+  // Ensure tracking is on and sidebar closed.
+  await rendererEval('window.__multiheizUi.setSidebarAutoHideOpen(false)');
+  parkCursorAway();
+  await sleep(100);
+  setCursorContent(30, midY);
+  await sleep(280);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.open) {
+    console.log('FAIL: cursor at content x=30 must NOT reveal', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: cursor x=30 does not reveal');
+
+  setCursorContent(10, midY);
+  await sleep(80);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.open) {
+    console.log('FAIL: should still be closed before show delay (x=10)', mode);
+    app.exit(1);
+    return;
+  }
+  await sleep(120);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: cursor at content x=10 should reveal after ~150ms', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: cursor x=10 reveals (over panel)');
+
+  await rendererEval('window.__multiheizUi.setSidebarAutoHideOpen(false)');
+  await sleep(80);
+  setCursorContent(-4, midY);
+  await sleep(280);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: cursor at content x=-4 (outside left edge) should reveal', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: cursor x=-4 outside left edge reveals');
+
+  /* ---------- Diagonal trajectory edge → pin must not hide ---------- */
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  const pin = mode.pinCenter;
+  if (!pin || !(pin.x > 20 && pin.y > 0)) {
+    console.log('FAIL: pinCenter missing', mode);
+    app.exit(1);
+    return;
+  }
+  const steps = 12;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const cx = 4 + (pin.x - 4) * t;
+    const cy = midY + (pin.y - midY) * t;
+    setCursorContent(cx, cy);
+    await sleep(40);
+    mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+    if (!mode.open) {
+      console.log('FAIL: diagonal to pin closed sidebar at step', i, { cx, cy, mode });
+      app.exit(1);
+      return;
+    }
+  }
+  // Rest briefly on pin
+  setCursorContent(pin.x, pin.y);
+  await sleep(400);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: sidebar closed while cursor on pin', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: diagonal edge→pin keeps sidebar open');
+
+  /* ---------- Leave far right → hide after ~700ms ---------- */
+  const sw = Math.max(180, Math.min(400, Math.round(mode.sidebarWidth || 240)));
+  setCursorContent(sw + 200, midY);
+  await sleep(500);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: far leave must still be open at 500ms', mode);
+    app.exit(1);
+    return;
+  }
+  await sleep(700);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.open) {
+    console.log('FAIL: far leave must hide by ~1200ms', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: far leave hides after ~700ms');
+
+  /* ---------- Hold open while native menu / rename ---------- */
+  setCursorContent(10, midY);
+  await sleep(280);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: expected open before hold test', mode);
+    app.exit(1);
+    return;
+  }
+  await rendererEval('window.__multiheizUi.setSidebarNativeMenuOpen(true)');
+  setCursorContent(sw + 200, midY);
+  await sleep(1100);
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open) {
+    console.log('FAIL: must stay open while native menu hold', mode);
+    app.exit(1);
+    return;
+  }
+  await rendererEval('window.__multiheizUi.setSidebarNativeMenuOpen(false)');
+  // Cursor still far — should schedule hide after hold clears
+  await sleep(1100);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.open) {
+    console.log('FAIL: should hide after hold cleared + delay', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: hold open with menu; hides after clear');
+
+  /* ---------- Pin while revealed → fixed (no autoHide, overlay 0) ---------- */
+  setCursorContent(8, midY);
+  await sleep(280);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.open || !mode.autoHide) {
+    console.log('FAIL: expected revealed auto-hide before pin', mode);
+    app.exit(1);
+    return;
+  }
+  mode = await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.autoHide || mode.open || mode.toggleTitle !== 'Esconder automaticamente') {
+    console.log('FAIL: pin while revealed should fix', mode);
+    app.exit(1);
+    return;
+  }
+  const pinnedFromOpen = panelBounds();
+  if (pinnedFromOpen.overlayW !== 0 || !(pinnedFromOpen.bounds.x >= 160)) {
+    console.log('FAIL: pin-from-revealed bounds', pinnedFromOpen);
+    app.exit(1);
+    return;
+  }
+  if (!(mode.sidebarWidth >= 160) || mode.appClassAutoHide) {
+    console.log('FAIL: pin-from-revealed sidebar should be in-flow visible', mode);
+    app.exit(1);
+    return;
+  }
+  const tracking = sidebarCursor.getTracking();
+  if (tracking.enabled) {
+    console.log('FAIL: cursor polling must stop when fixed', tracking);
+    app.exit(1);
+    return;
+  }
+  sidebarCursor.setCursorOverride(null);
+  console.log('PASS: pin while revealed → fixed + polling stopped', pinnedFromOpen.bounds);
+
+  /* ---------- Toggle back into auto-hide then to fixed (legacy path still works) ---------- */
+  mode = await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.autoHide || mode.open) {
+    console.log('FAIL: toggle to auto-hide hidden', mode);
+    app.exit(1);
+    return;
+  }
   mode = await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
   await sleep(200);
   await waitForLayoutSettle();
