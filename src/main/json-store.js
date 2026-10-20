@@ -7,6 +7,7 @@ const recovery = require('./recovery');
 
 /**
  * Atomic JSON write: keep .bak of last good file, then tmp + rename.
+ * Sync path used on quit / load repair. Prefer writeJsonDurableAsync on hot paths.
  * @param {string} file
  * @param {unknown} data
  */
@@ -14,12 +15,12 @@ function writeJsonDurable(file, data) {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
   const bak = `${file}.bak`;
+  // Copy previous primary to .bak without re-parsing (parse was a main-thread stall).
   if (fs.existsSync(file)) {
     try {
-      JSON.parse(fs.readFileSync(file, 'utf8'));
       fs.copyFileSync(file, bak);
     } catch {
-      /* don't clobber a good .bak with a corrupt primary */
+      /* don't fail the write if bak copy fails */
     }
   }
   const tmp = `${file}.${process.pid}.tmp`;
@@ -29,6 +30,44 @@ function writeJsonDurable(file, data) {
   } catch (err) {
     try {
       fs.unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+}
+
+/**
+ * Async durable write — stringify may still cost a turn; fs I/O is non-blocking.
+ * @param {string} file
+ * @param {unknown} data
+ * @returns {Promise<void>}
+ */
+async function writeJsonDurableAsync(file, data) {
+  const fsp = fs.promises;
+  const dir = path.dirname(file);
+  await fsp.mkdir(dir, { recursive: true });
+  const bak = `${file}.bak`;
+  try {
+    await fsp.access(file);
+    try {
+      await fsp.copyFile(file, bak);
+    } catch {
+      /* ignore bak errors */
+    }
+  } catch {
+    /* file does not exist yet */
+  }
+  const tmp = `${file}.${process.pid}.tmp`;
+  const text = JSON.stringify(data, null, 2);
+  // Yield so the stringify cost is not stacked with the write syscall on the same turn.
+  await new Promise((r) => setImmediate(r));
+  try {
+    await fsp.writeFile(tmp, text, 'utf8');
+    await fsp.rename(tmp, file);
+  } catch (err) {
+    try {
+      await fsp.unlink(tmp);
     } catch {
       /* ignore */
     }
@@ -162,5 +201,6 @@ function structuredCloneSafe(obj) {
 module.exports = {
   createJsonStore,
   writeJsonDurable,
+  writeJsonDurableAsync,
   readJsonDurable,
 };

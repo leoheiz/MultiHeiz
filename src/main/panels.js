@@ -401,23 +401,29 @@ function compressSnapshotImage(img) {
  */
 async function captureVisibleSnapshots() {
   noteOverlaySpy('capturePage');
-  const tasks = lastSlots.map(async (slot) => {
+  // Sequential + yield between panels so the main event loop stays responsive
+  // (Promise.all of N capturePage+JPEG used to spike lag when opening modals).
+  const out = [];
+  for (const slot of lastSlots) {
     const accountId = slot.accountId;
     const acc = getAccount(accountId);
     const color = (acc && acc.color) || '#2bb8a6';
     const entry = panels.get(accountId);
     if (!entry || entry.parked || !entry.visible) {
-      return { accountId, dataUrl: null, color };
+      out.push({ accountId, dataUrl: null, color });
+      continue;
     }
     try {
       const img = await withTimeout(entry.view.webContents.capturePage(), CAPTURE_TIMEOUT_MS);
+      await new Promise((r) => setImmediate(r));
       const dataUrl = compressSnapshotImage(img);
-      return { accountId, dataUrl, color };
+      out.push({ accountId, dataUrl, color });
     } catch {
-      return { accountId, dataUrl: null, color };
+      out.push({ accountId, dataUrl: null, color });
     }
-  });
-  return Promise.all(tasks);
+    await new Promise((r) => setImmediate(r));
+  }
+  return out;
 }
 
 function touchSnapshotLru(accountId) {
@@ -1669,7 +1675,7 @@ function ensureAntiThrottleLoop() {
       clearInterval(antiThrottleTimer);
       antiThrottleTimer = null;
     }
-  }, 200);
+  }, 250);
 }
 
 function repaintPanel(accountId) {

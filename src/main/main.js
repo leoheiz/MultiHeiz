@@ -237,6 +237,7 @@ const SELFTEST_SHOTS_VOLUME = selftestMode === 'shots-volume';
 const SELFTEST_LAYOUT_WORKSPACE = selftestMode === 'layout-workspace';
 const SELFTEST_POPOVER_OVERLAY = selftestMode === 'popover-overlay';
 const SELFTEST_REALHOVER_VOLUME = selftestMode === 'realhover-volume';
+const SELFTEST_LAG_AUDIT = selftestMode === 'lag-audit';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -284,7 +285,8 @@ const ANY_SELFTEST =
   SELFTEST_SHOTS_VOLUME ||
   SELFTEST_LAYOUT_WORKSPACE ||
   SELFTEST_POPOVER_OVERLAY ||
-  SELFTEST_REALHOVER_VOLUME;
+  SELFTEST_REALHOVER_VOLUME ||
+  SELFTEST_LAG_AUDIT;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -292,7 +294,7 @@ if (SELFTEST_PERMISSIONS) {
 }
 
 // Volume selftest: permite tom/Oscillator sem gesto do usuário.
-if (SELFTEST_VOLUME) {
+if (SELFTEST_VOLUME || SELFTEST_LAG_AUDIT || SELFTEST_POPOVER_OVERLAY) {
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 }
 
@@ -1877,6 +1879,32 @@ function createWindow() {
         try {
           const { runRealhoverVolumeSelftest } = require('./selftest-realhover-volume');
           runRealhoverVolumeSelftest({
+            mainWindow,
+            panels,
+            popoverOverlay,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_LAG_AUDIT) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runLagAuditSelftest } = require('./selftest-lag-audit');
+          runLagAuditSelftest({
             mainWindow,
             panels,
             popoverOverlay,

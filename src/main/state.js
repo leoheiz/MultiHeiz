@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { app } = require('electron');
-const { readJsonDurable, writeJsonDurable } = require('./json-store');
+const { readJsonDurable, writeJsonDurable, writeJsonDurableAsync } = require('./json-store');
 
 const STATE_FILE = 'multiheiz-state.json';
 const SAVE_DEBOUNCE_MS = 400;
@@ -524,6 +524,11 @@ function saveNow() {
   }
 }
 
+/** @type {Promise<void> | null} */
+let saveInFlight = null;
+/** @type {boolean} */
+let saveQueuedAgain = false;
+
 function saveNowAsync() {
   const file = getStatePath();
   try {
@@ -531,13 +536,31 @@ function saveNowAsync() {
   } catch {
     /* ignore */
   }
-  const snapshot = state;
+  // structuredClone keeps a frozen snapshot without blocking on JSON.stringify yet.
+  let snapshot;
   try {
-    // writeJsonDurable is sync fs; run off the current turn via setImmediate caller.
-    writeJsonDurable(file, snapshot);
-  } catch (err) {
-    console.error('Falha ao salvar estado:', err);
+    snapshot = typeof structuredClone === 'function' ? structuredClone(state) : JSON.parse(JSON.stringify(state));
+  } catch {
+    snapshot = state;
   }
+  const run = async () => {
+    try {
+      await writeJsonDurableAsync(file, snapshot);
+    } catch (err) {
+      console.error('Falha ao salvar estado:', err);
+    } finally {
+      saveInFlight = null;
+      if (saveQueuedAgain) {
+        saveQueuedAgain = false;
+        saveNowAsync();
+      }
+    }
+  };
+  if (saveInFlight) {
+    saveQueuedAgain = true;
+    return;
+  }
+  saveInFlight = run();
 }
 
 function flushSave() {
@@ -545,6 +568,9 @@ function flushSave() {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+  // Drop async queue — sync write on quit / selftest barriers.
+  saveQueuedAgain = false;
+  saveInFlight = null;
   saveNow();
 }
 

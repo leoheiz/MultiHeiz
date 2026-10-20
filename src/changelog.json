@@ -128,6 +128,10 @@
         {
           "tag": "Correção",
           "text": "Popovers e menus pequenos (volume, permissões do site, Layout, menus da barra superior/cabeçalhos, memória) deixam de congelar e borrar os painéis: abrem numa WebContentsView transparente só no retângulo do popover, sem capturar nem esconder as páginas."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Auditoria de lag: persistência de estado assíncrona, render incremental (volume/mudo sem recriar a grade), captura de snapshot modal sequencial; check:lag-audit com orçamento de 100 ms em ações leves."
         }
       ]
     },

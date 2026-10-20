@@ -432,10 +432,55 @@ function applyAppearance(appearance) {
 }
 
 /**
+ * Same workspace / layout / page / account set → skip wiping the panel grid.
+ * @param {object|null} prev
+ * @param {object} next
+ */
+function canIncrementalApply(prev, next) {
+  if (!prev || !next) return false;
+  if (prev.activeWorkspaceId !== next.activeWorkspaceId) return false;
+  if (normalizeLayout(prev.layout) !== normalizeLayout(next.layout)) return false;
+  if ((prev.page || 0) !== (next.page || 0)) return false;
+  if ((prev.maximizedAccountId || null) !== (next.maximizedAccountId || null)) return false;
+  const idsPrev = (prev.accounts || []).map((a) => a.id).join('\0');
+  const idsNext = (next.accounts || []).map((a) => a.id).join('\0');
+  if (idsPrev !== idsNext) return false;
+  return true;
+}
+
+/**
+ * Refresh chrome without destroying `.panel-slot` nodes (volume/mute/settings).
+ */
+function renderIncrementalChrome() {
+  updateSidebarCollapseClasses();
+  syncLayoutSelect();
+  updateLockButton();
+  renderTabs();
+  renderPager();
+  renderSidebar();
+  // Patch mute / volume affordances on existing slots
+  for (const slot of el.grid.querySelectorAll('.panel-slot[data-account-id]')) {
+    const id = slot.getAttribute('data-account-id');
+    if (!id) continue;
+    const muted = accountIsMuted(id);
+    const volBtn = slot.querySelector('[data-role="panel-volume"]');
+    if (volBtn) {
+      volBtn.classList.toggle('is-muted', muted);
+      volBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
+      const pct = accountVolumePercent(id);
+      if (volBtn.title != null) volBtn.title = muted ? 'Sem som' : `Volume ${pct}%`;
+    }
+  }
+  updateMemBadges();
+  updateStatusBar();
+}
+
+/**
  * @param {object} next
  * @param {{ soft?: boolean }} [opts] soft=true: update state without full re-render (settings apply)
  */
 function applyState(next, opts = {}) {
+  const prev = state;
   state = next;
   if (!state.ui) {
     state.ui = {
@@ -463,8 +508,22 @@ function applyState(next, opts = {}) {
   }
   applyAppearance(state.appearance);
   applySidebarWidthCss();
-  render();
-  scheduleSync();
+  if (canIncrementalApply(prev, state) && el.grid && el.grid.querySelector('.panel-slot')) {
+    renderIncrementalChrome();
+    // Sidebar width / auto-hide may still need a bounds sync.
+    const prevW = prev && prev.ui && prev.ui.sidebarWidth;
+    const nextW = state.ui && state.ui.sidebarWidth;
+    const prevAh = prev && prev.ui && prev.ui.sidebarAutoHide;
+    const nextAh = state.ui && state.ui.sidebarAutoHide;
+    const prevCol = prev && prev.ui && prev.ui.sidebarCollapsed;
+    const nextCol = state.ui && state.ui.sidebarCollapsed;
+    if (prevW !== nextW || prevAh !== nextAh || prevCol !== nextCol) {
+      scheduleSync();
+    }
+  } else {
+    render();
+    scheduleSync();
+  }
   if (window.MultiHeizV16 && window.MultiHeizV16.renderSidebarModules) {
     window.MultiHeizV16.renderSidebarModules();
   }
@@ -1038,11 +1097,21 @@ async function setAccountVolume(accountId, percent) {
   const p = normalizeVolumeUi(percent);
   if (!window.multiheiz.panelSetVolume) return p;
   const res = await window.multiheiz.panelSetVolume(accountId, p);
-  if (res && res.state) applyState(res.state);
+  if (res && res.state) applyState(res.state, { soft: true });
   else {
     const acc = (state.accounts || []).find((a) => a.id === accountId);
     if (acc) acc.volume = p;
   }
+  // Soft path skips chrome; refresh mute/volume affordances in place.
+  for (const slot of el.grid.querySelectorAll(`.panel-slot[data-account-id="${accountId}"]`)) {
+    const volBtn = slot.querySelector('[data-role="panel-volume"]');
+    if (volBtn) {
+      const muted = accountIsMuted(accountId);
+      volBtn.classList.toggle('is-muted', muted);
+      if (volBtn.title != null) volBtn.title = muted ? 'Sem som' : `Volume ${p}%`;
+    }
+  }
+  renderSidebar();
   refreshVolumePopoverUi();
   return (res && res.volume != null ? res.volume : p);
 }
@@ -1141,7 +1210,8 @@ async function handlePopoverAction(payload) {
   if (type === 'volume-mute') {
     const id = payload.accountId || (volumePopover && volumePopover.accountId);
     if (!id) return;
-    applyState(await window.multiheiz.panelSetMuted(id, !!payload.muted));
+    applyState(await window.multiheiz.panelSetMuted(id, !!payload.muted), { soft: true });
+    renderIncrementalChrome();
     refreshVolumePopoverUi();
     return;
   }
@@ -1428,7 +1498,10 @@ function renderSidebar() {
       audioBtn.innerHTML = svg(accountIsMuted(acc.id) ? ICO.mute : ICO.unmute);
       audioBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        applyState(await window.multiheiz.panelSetMuted(acc.id, !accountIsMuted(acc.id)));
+        applyState(await window.multiheiz.panelSetMuted(acc.id, !accountIsMuted(acc.id)), {
+          soft: true,
+        });
+        renderIncrementalChrome();
       });
       bindVolumeHover(audioBtn, acc.id);
     }
@@ -1678,7 +1751,10 @@ function buildPanelSlot(acc, tile) {
   const volPct = normalizeVolumeUi(acc.volume != null ? acc.volume : 100);
   const btnMute = iconBtn(nav.muted ? ICO.mute : ICO.unmute, 'Volume / Mudo', async (e) => {
     e.stopPropagation();
-    applyState(await window.multiheiz.panelSetMuted(acc.id, !accountIsMuted(acc.id)));
+    applyState(await window.multiheiz.panelSetMuted(acc.id, !accountIsMuted(acc.id)), {
+      soft: true,
+    });
+    renderIncrementalChrome();
   });
   btnMute.dataset.role = 'panel-volume';
   if (!nav.muted && volPct > 100) btnMute.classList.add('is-boost');
