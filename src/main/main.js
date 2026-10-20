@@ -38,6 +38,7 @@ const sidebarCursor = require('./sidebar-cursor');
 const ipcGuard = require('./ipc-guard');
 const permissions = require('./permissions');
 const { sanitizeUserStartUrl } = require('./url-policy');
+const catalog = require('./catalog');
 const proxy = require('./proxy');
 const doh = require('./doh');
 const settingsApply = require('./settings-apply');
@@ -220,6 +221,7 @@ const SELFTEST_PROXY = selftestMode === 'proxy';
 const SELFTEST_DOH = selftestMode === 'doh';
 const SELFTEST_SETTINGS_PERF = selftestMode === 'settings-perf';
 const SELFTEST_PERMISSIONS = selftestMode === 'permissions';
+const SELFTEST_CATALOG = selftestMode === 'catalog';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -253,7 +255,8 @@ const ANY_SELFTEST =
   SELFTEST_PROXY ||
   SELFTEST_DOH ||
   SELFTEST_SETTINGS_PERF ||
-  SELFTEST_PERMISSIONS;
+  SELFTEST_PERMISSIONS ||
+  SELFTEST_CATALOG;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -542,7 +545,8 @@ function createWindow() {
     SELFTEST_CONTEXTMENU ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
-    SELFTEST_PERMISSIONS
+    SELFTEST_PERMISSIONS ||
+    SELFTEST_CATALOG
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -553,7 +557,10 @@ function createWindow() {
   // pops on the desktop, but still paint (layout / WebContentsView bounds).
   // realclick-sidebar / realhover-fullscreen must be on-screen for a real OS mouse.
   const offscreenSelftest =
-    SELFTEST_ADBLOCK_REAL || SELFTEST_SIDEBAR || SELFTEST_WORKSPACE_DELETE;
+    SELFTEST_ADBLOCK_REAL ||
+    SELFTEST_SIDEBAR ||
+    SELFTEST_WORKSPACE_DELETE ||
+    SELFTEST_CATALOG;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -611,6 +618,7 @@ function createWindow() {
       SELFTEST_CONTEXTMENU ||
       SELFTEST_SETTINGS_PERF ||
       SELFTEST_WORKSPACE_DELETE ||
+      SELFTEST_CATALOG ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
       SELFTEST_UA,
@@ -1464,6 +1472,31 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_CATALOG) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runCatalogSelftest } = require('./selftest-catalog');
+          runCatalogSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            app,
+            catalog,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -1522,7 +1555,7 @@ function createWindow() {
 function publicState() {
   const s = getState();
   const accounts = Array.isArray(s.accounts)
-    ? s.accounts.map((a) => proxy.sanitizeAccountProxyForPublic(a))
+    ? s.accounts.map((a) => catalog.enrichAccountPublic(proxy.sanitizeAccountProxyForPublic(a)))
     : [];
   return {
     workspaces: s.workspaces,
@@ -2003,6 +2036,8 @@ function registerIpc() {
     return publicState();
   });
 
+  ipcMain.handle('catalog:list', () => catalog.listAppsPublic());
+
   ipcMain.handle('account:create', (_e, data) => {
     const s = getState();
     const id = makeId('acc');
@@ -2014,15 +2049,34 @@ function registerIpc() {
     if (pauseInBackground && keepAliveInBackground) {
       keepAliveInBackground = false;
     }
+    const workspaceId = (data && data.workspaceId) || s.activeWorkspaceId;
+    const catalogId = data && data.catalogId ? String(data.catalogId).trim() : '';
+    const catalogApp = catalogId ? catalog.getAppById(catalogId) : null;
+    let name = (data && data.name) || `Janela ${s.accounts.length + 1}`;
+    let color = (data && data.color) || colors[s.accounts.length % colors.length];
+    let startUrl = sanitizeUserStartUrl(
+      (data && data.startUrl) || homepageFallback,
+      homepageFallback
+    );
+    /** @type {string|undefined} */
+    let catalogIcon;
+    if (catalogApp) {
+      name = catalog.uniqueNameInWorkspace(
+        catalogApp.defaultName || catalogApp.name,
+        s.accounts,
+        workspaceId
+      );
+      color = catalogApp.color || color;
+      startUrl = catalogApp.url;
+      catalogIcon = catalogApp.icon;
+      // tweaks.userAgent: UA Chrome já é global — não aplica override por janela.
+    }
     const account = {
       id,
-      name: (data && data.name) || `Janela ${s.accounts.length + 1}`,
-      color: (data && data.color) || colors[s.accounts.length % colors.length],
-      startUrl: sanitizeUserStartUrl(
-        (data && data.startUrl) || homepageFallback,
-        homepageFallback
-      ),
-      workspaceId: (data && data.workspaceId) || s.activeWorkspaceId,
+      name,
+      color,
+      startUrl,
+      workspaceId,
       muted: false,
       pauseInBackground,
       keepAliveInBackground,
@@ -2031,6 +2085,10 @@ function registerIpc() {
       lastUrl: null,
       zoomFactor: 1,
     };
+    if (catalogApp) {
+      account.catalogId = catalogApp.id;
+      account.catalogIcon = catalogIcon;
+    }
     updateState((st) => {
       st.accounts.push(account);
     });
@@ -2045,8 +2103,9 @@ function registerIpc() {
       /* ignore */
     }
     const next = publicState();
+    const publicAccount = (next.accounts || []).find((a) => a.id === id) || account;
     emitToRenderer({ type: 'state:changed', state: next });
-    return { state: next, account };
+    return { state: next, account: publicAccount };
   });
 
   ipcMain.handle('account:update', (_e, { id, ...fields }) => {

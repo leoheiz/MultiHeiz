@@ -171,6 +171,10 @@ const el = {
   memPopoverTotal: document.getElementById('mem-popover-total'),
   btnMemClose: document.getElementById('btn-mem-close'),
   toast: document.getElementById('toast'),
+  dlgCatalog: document.getElementById('dlg-catalog'),
+  catalogSearch: document.getElementById('catalog-search'),
+  catalogGrid: document.getElementById('catalog-grid'),
+  btnCatalogClose: document.getElementById('btn-catalog-close'),
   dlgAccount: document.getElementById('dlg-account'),
   formAccount: document.getElementById('form-account'),
   dlgAccountTitle: document.getElementById('dlg-account-title'),
@@ -495,6 +499,7 @@ function shouldHoldSidebarOpen() {
   if (tileDrag) return true;
   if (
     openOverlays.has('dlg-account') ||
+    openOverlays.has('dlg-catalog') ||
     openOverlays.has('dlg-workspace') ||
     openOverlays.has('dlg-settings') ||
     openOverlays.has('dlg-confirm') ||
@@ -1115,7 +1120,8 @@ function renderSidebar() {
     const fav = document.createElement('img');
     fav.className = 'sidebar-fav';
     fav.alt = '';
-    const favUrl = favicons.get(acc.id);
+    // Favicon da página tem prioridade; senão ícone do catálogo (persistido).
+    const favUrl = favicons.get(acc.id) || acc.catalogIconUrl || '';
     if (favUrl) fav.src = favUrl;
     else fav.style.opacity = '0.35';
 
@@ -1313,7 +1319,7 @@ function buildPanelSlot(acc, tile) {
   const fav = document.createElement('img');
   fav.className = 'panel-fav';
   fav.alt = '';
-  const favUrl = favicons.get(acc.id);
+  const favUrl = favicons.get(acc.id) || acc.catalogIconUrl || '';
   if (favUrl) fav.src = favUrl;
 
   const nav = navState.get(acc.id) || {
@@ -2102,6 +2108,134 @@ function showToast(message, action) {
   }, 8000);
 }
 
+/** @type {Array<object>|null} */
+let catalogAppsCache = null;
+
+async function ensureCatalogApps() {
+  if (catalogAppsCache) return catalogAppsCache;
+  try {
+    const list = await window.multiheiz.catalogList();
+    catalogAppsCache = Array.isArray(list) ? list : [];
+  } catch {
+    catalogAppsCache = [];
+  }
+  return catalogAppsCache;
+}
+
+function catalogMatchesQuery(app, query) {
+  const q = String(query || '')
+    .trim()
+    .toLowerCase();
+  if (!q) return true;
+  const name = String(app.name || '').toLowerCase();
+  if (name.includes(q)) return true;
+  const kws = Array.isArray(app.keywords) ? app.keywords : [];
+  for (const k of kws) {
+    const kw = String(k || '').toLowerCase();
+    if (!kw) continue;
+    if (kw === q || kw.includes(q) || kw.startsWith(q)) return true;
+  }
+  return false;
+}
+
+function renderCatalogGrid(query) {
+  if (!el.catalogGrid) return;
+  el.catalogGrid.innerHTML = '';
+  const apps = (catalogAppsCache || []).filter((a) => catalogMatchesQuery(a, query));
+
+  const custom = document.createElement('button');
+  custom.type = 'button';
+  custom.className = 'catalog-card';
+  custom.dataset.catalogId = 'custom';
+  custom.setAttribute('role', 'option');
+  custom.setAttribute('aria-label', 'Site personalizado');
+  const customIcon = document.createElement('span');
+  customIcon.className = 'catalog-card-icon custom';
+  customIcon.textContent = '+';
+  customIcon.setAttribute('aria-hidden', 'true');
+  const customName = document.createElement('span');
+  customName.className = 'catalog-card-name';
+  customName.textContent = 'Site personalizado';
+  custom.append(customIcon, customName);
+  custom.addEventListener('click', () => {
+    closeCatalogPicker();
+    openAccountDialog(null);
+  });
+  // Sempre mostra "Site personalizado" (mesmo com busca ativa, se bater ou busca vazia)
+  const customVisible =
+    !String(query || '').trim() ||
+    catalogMatchesQuery({ name: 'Site personalizado', keywords: ['custom', 'site', 'url', 'personalizado'] }, query);
+  if (customVisible) el.catalogGrid.appendChild(custom);
+
+  for (const app of apps) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'catalog-card';
+    card.dataset.catalogId = app.id;
+    card.setAttribute('role', 'option');
+    card.setAttribute('aria-label', app.name);
+    const img = document.createElement('img');
+    img.className = 'catalog-card-icon';
+    img.alt = '';
+    img.src = app.iconUrl || '';
+    const name = document.createElement('span');
+    name.className = 'catalog-card-name';
+    name.textContent = app.name;
+    card.append(img, name);
+    card.addEventListener('click', () => void pickCatalogApp(app));
+    el.catalogGrid.appendChild(card);
+  }
+
+  if (!apps.length && !customVisible) {
+    const empty = document.createElement('div');
+    empty.className = 'catalog-empty';
+    empty.textContent = 'Nenhum app encontrado.';
+    el.catalogGrid.appendChild(empty);
+  }
+}
+
+async function openCatalogPicker() {
+  if (!el.dlgCatalog) {
+    openAccountDialog(null);
+    return;
+  }
+  await ensureCatalogApps();
+  if (el.catalogSearch) el.catalogSearch.value = '';
+  renderCatalogGrid('');
+  pushOverlay('dlg-catalog');
+  el.dlgCatalog.showModal();
+  if (el.catalogSearch) {
+    try {
+      el.catalogSearch.focus();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function closeCatalogPicker() {
+  if (el.dlgCatalog && el.dlgCatalog.open) el.dlgCatalog.close();
+}
+
+async function pickCatalogApp(app) {
+  if (!app || !app.id) return;
+  closeCatalogPicker();
+  try {
+    const res = await window.multiheiz.createAccount({
+      catalogId: app.id,
+      name: app.defaultName || app.name,
+      color: app.color || '#2bb8a6',
+      startUrl: app.url,
+      workspaceId: state.activeWorkspaceId,
+    });
+    if (res && res.state) applyState(res.state);
+    scheduleSync();
+  } catch (err) {
+    console.warn('catalog pick', err);
+    showToast('Não foi possível criar a janela.');
+  }
+}
+
 function openAccountDialog(account) {
   editingAccountId = account ? account.id : null;
   el.dlgAccountTitle.textContent = account ? 'Editar janela' : 'Nova janela';
@@ -2430,7 +2564,21 @@ function proposeTiles(tiles) {
 
 /* Events */
 
-el.btnAddAccount.addEventListener('click', () => openAccountDialog(null));
+el.btnAddAccount.addEventListener('click', () => void openCatalogPicker());
+if (el.catalogSearch) {
+  el.catalogSearch.addEventListener('input', () => {
+    renderCatalogGrid(el.catalogSearch.value);
+  });
+}
+if (el.btnCatalogClose) {
+  el.btnCatalogClose.addEventListener('click', () => closeCatalogPicker());
+}
+if (el.dlgCatalog) {
+  el.dlgCatalog.addEventListener('close', () => popOverlay('dlg-catalog'));
+  el.dlgCatalog.addEventListener('cancel', () => {
+    /* Esc fecha o dialog nativo; close handler faz popOverlay */
+  });
+}
 el.btnWsAdd.addEventListener('click', () => openWorkspaceDialog(null));
 el.btnSettings.addEventListener('click', openSettings);
 if (el.btnOverflow) {
@@ -3024,7 +3172,7 @@ window.multiheiz.onEvent((payload) => {
     return;
   }
   if (payload.type === 'ui:new-account') {
-    openAccountDialog(null);
+    void openCatalogPicker();
     return;
   }
   if (payload.type === 'ui:help-shortcuts') {
@@ -3305,9 +3453,38 @@ void statusBarShouldRun;
 /** Exposed for selftests */
 window.__multiheizUi = {
   workspaceDeleteConfirmMessage,
+  openCatalogPicker: () => openCatalogPicker(),
+  closeCatalogPicker: () => closeCatalogPicker(),
   openAccountDialog: () => openAccountDialog(null),
   closeAccountDialog: () => {
     if (el.dlgAccount.open) el.dlgAccount.close();
+  },
+  getCatalogVisibleIds: () => {
+    if (!el.catalogGrid) return [];
+    return [...el.catalogGrid.querySelectorAll('.catalog-card')].map((n) => n.dataset.catalogId || '');
+  },
+  getCatalogVisibleNames: () => {
+    if (!el.catalogGrid) return [];
+    return [...el.catalogGrid.querySelectorAll('.catalog-card .catalog-card-name')].map(
+      (n) => n.textContent || ''
+    );
+  },
+  isCatalogOpen: () => !!(el.dlgCatalog && el.dlgCatalog.open),
+  setCatalogSearch: (q) => {
+    if (el.catalogSearch) el.catalogSearch.value = String(q || '');
+    renderCatalogGrid(q);
+  },
+  pickCatalogById: async (id) => {
+    if (id === 'custom') {
+      closeCatalogPicker();
+      openAccountDialog(null);
+      return { ok: true, custom: true };
+    }
+    const apps = await ensureCatalogApps();
+    const app = (apps || []).find((a) => a.id === id);
+    if (!app) return { ok: false, reason: 'missing' };
+    await pickCatalogApp(app);
+    return { ok: true, id };
   },
   openSettings: () => openSettings(),
   setClockSkewBanner,

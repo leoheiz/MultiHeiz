@@ -1,0 +1,168 @@
+[
+  {
+    "id": "whatsapp",
+    "name": "WhatsApp",
+    "url": "https://web.whatsapp.com/",
+    "defaultName": "WhatsApp",
+    "icon": "icons/whatsapp.svg",
+    "color": "#25D366",
+    "keywords": ["zap", "wa", "whats", "mensagem"],
+    "tweaks": {
+      "userAgent": "chrome",
+      "_note": "UA Chrome já é global no MultiHeiz; tweak documentado para compatibilidade futura por janela."
+    }
+  },
+  {
+    "id": "telegram",
+    "name": "Telegram",
+    "url": "https://web.telegram.org/a/",
+    "defaultName": "Telegram",
+    "icon": "icons/telegram.svg",
+    "color": "#2AABEE",
+    "keywords": ["tg", "telegrama"]
+  },
+  {
+    "id": "discord",
+    "name": "Discord",
+    "url": "https://discord.com/app",
+    "defaultName": "Discord",
+    "icon": "icons/discord.svg",
+    "color": "#5865F2",
+    "keywords": ["dc", "discord"]
+  },
+  {
+    "id": "slack",
+    "name": "Slack",
+    "url": "https://app.slack.com/",
+    "defaultName": "Slack",
+    "icon": "icons/slack.svg",
+    "color": "#4A154B",
+    "keywords": ["trabalho", "equipe"]
+  },
+  {
+    "id": "instagram",
+    "name": "Instagram",
+    "url": "https://www.instagram.com/",
+    "defaultName": "Instagram",
+    "icon": "icons/instagram.svg",
+    "color": "#E4405F",
+    "keywords": ["ig", "insta", "foto"]
+  },
+  {
+    "id": "messenger",
+    "name": "Messenger",
+    "url": "https://www.messenger.com/",
+    "defaultName": "Messenger",
+    "icon": "icons/messenger.svg",
+    "color": "#0084FF",
+    "keywords": ["fb msg", "mensagem facebook"]
+  },
+  {
+    "id": "facebook",
+    "name": "Facebook",
+    "url": "https://www.facebook.com/",
+    "defaultName": "Facebook",
+    "icon": "icons/facebook.svg",
+    "color": "#1877F2",
+    "keywords": ["fb", "meta"]
+  },
+  {
+    "id": "x",
+    "name": "X",
+    "url": "https://x.com/",
+    "defaultName": "X",
+    "icon": "icons/x.svg",
+    "color": "#111111",
+    "keywords": ["twitter", "tweet", "x.com"]
+  },
+  {
+    "id": "gmail",
+    "name": "Gmail",
+    "url": "https://mail.google.com/",
+    "defaultName": "Gmail",
+    "icon": "icons/gmail.svg",
+    "color": "#EA4335",
+    "keywords": ["email", "google mail", "correio"]
+  },
+  {
+    "id": "outlook",
+    "name": "Outlook",
+    "url": "https://outlook.live.com/mail/",
+    "defaultName": "Outlook",
+    "icon": "icons/outlook.svg",
+    "color": "#0078D4",
+    "keywords": ["hotmail", "live mail", "microsoft mail"]
+  },
+  {
+    "id": "teams",
+    "name": "Microsoft Teams",
+    "url": "https://teams.microsoft.com/",
+    "defaultName": "Teams",
+    "icon": "icons/teams.svg",
+    "color": "#6264A7",
+    "keywords": ["teams", "microsoft", "reunião"]
+  },
+  {
+    "id": "spotify",
+    "name": "Spotify",
+    "url": "https://open.spotify.com/",
+    "defaultName": "Spotify",
+    "icon": "icons/spotify.svg",
+    "color": "#1DB954",
+    "keywords": ["musica", "música", "playlist"]
+  },
+  {
+    "id": "youtube-music",
+    "name": "YouTube Music",
+    "url": "https://music.youtube.com/",
+    "defaultName": "YouTube Music",
+    "icon": "icons/youtube-music.svg",
+    "color": "#FF0000",
+    "keywords": ["yt music", "youtube", "musica", "música"]
+  },
+  {
+    "id": "notion",
+    "name": "Notion",
+    "url": "https://www.notion.so/",
+    "defaultName": "Notion",
+    "icon": "icons/notion.svg",
+    "color": "#2F3437",
+    "keywords": ["notas", "wiki", "docs"]
+  },
+  {
+    "id": "chatgpt",
+    "name": "ChatGPT",
+    "url": "https://chatgpt.com/",
+    "defaultName": "ChatGPT",
+    "icon": "icons/chatgpt.svg",
+    "color": "#10A37F",
+    "keywords": ["openai", "gpt", "ia", "ai"]
+  },
+  {
+    "id": "gemini",
+    "name": "Google Gemini",
+    "url": "https://gemini.google.com/",
+    "defaultName": "Gemini",
+    "icon": "icons/gemini.svg",
+    "color": "#4285F4",
+    "keywords": ["bard", "google ai", "ia", "ai"]
+  },
+  {
+    "id": "linkedin",
+    "name": "LinkedIn",
+    "url": "https://www.linkedin.com/",
+    "defaultName": "LinkedIn",
+    "icon": "icons/linkedin.svg",
+    "color": "#0A66C2",
+    "keywords": ["emprego", "carreira", "profissional"]
+  },
+  {
+    "id": "tiktok",
+    "name": "TikTok",
+    "url": "https://www.tiktok.com/",
+    "defaultName": "TikTok",
+    "icon": "icons/tiktok.svg",
+    "color": "#121212",
+    "keywords": ["tt", "tik tok", "video", "vídeo"]
+  }
+]

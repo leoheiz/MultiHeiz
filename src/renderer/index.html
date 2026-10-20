@@ -148,6 +148,20 @@
 
     <div id="toast" class="toast hidden" role="status"></div>
 
+    <dialog id="dlg-catalog" class="dlg-catalog" aria-labelledby="dlg-catalog-title">
+      <div class="dlg-catalog-head">
+        <h2 id="dlg-catalog-title">Escolher app</h2>
+        <button type="button" id="btn-catalog-close" class="btn icon ghost" title="Fechar" aria-label="Fechar">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <label class="dlg-catalog-search">
+        <span class="sr-only">Buscar app</span>
+        <input type="search" id="catalog-search" placeholder="Buscar app..." maxlength="64" autocomplete="off" />
+      </label>
+      <div id="catalog-grid" class="catalog-grid" role="listbox" aria-label="Apps prontos"></div>
+    </dialog>
+
     <dialog id="dlg-account">
       <form method="dialog" id="form-account">
         <h2 id="dlg-account-title">Nova janela</h2>

@@ -133,6 +133,30 @@ function isNavigableUrl(url, opts = {}) {
 }
 
 /**
+ * Selftests catalog/badges: não acessar a internet real — só loopback / data / about:blank.
+ * @returns {boolean}
+ */
+function isSelftestOfflineMode() {
+  const m = String(process.env.MULTIHEIZ_SELFTEST || '');
+  return m === 'catalog' || m === 'badges';
+}
+
+/**
+ * URL permitida quando isSelftestOfflineMode().
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isSelftestAllowedUrl(url) {
+  if (isAboutBlank(url)) return true;
+  const u = parseUrl(url);
+  if (!u) return false;
+  if (u.protocol === 'data:') return allowInternalDataUrls();
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  const h = String(u.hostname || '').toLowerCase();
+  return h === '127.0.0.1' || h === 'localhost' || h === '[::1]' || h === '::1';
+}
+
+/**
  * Sanitize account startUrl / homepage from UI: http(s) or bare host; block file/data/javascript/…
  * Em selftest, data: continua permitido para probes.
  * @param {string} url
@@ -244,6 +268,8 @@ module.exports = {
   sanitizeUserStartUrl,
   isKnownIdentityProviderUrl,
   isAboutBlank,
+  isSelftestOfflineMode,
+  isSelftestAllowedUrl,
   EXTERNAL_SCHEMES,
   IDP_RULES,
 };

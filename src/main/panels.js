@@ -10,6 +10,8 @@ const {
   allowInternalDataUrls,
   isKnownIdentityProviderUrl,
   isAboutBlank,
+  isSelftestOfflineMode,
+  isSelftestAllowedUrl,
   sanitizeUserStartUrl,
 } = require('./url-policy');
 const history = require('./history');
@@ -1228,13 +1230,22 @@ function createPanel(accountId) {
   });
   // Block in-page navigations to non-http(s) schemes (defense in depth).
   // data: only while MULTIHEIZ_SELFTEST (internal probes), never for normal browsing.
+  // catalog/badges selftests: também bloqueia hosts não-locais (sem internet real).
   view.webContents.on('will-navigate', (e, url) => {
     if (!isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
+      e.preventDefault();
+      return;
+    }
+    if (isSelftestOfflineMode() && !isSelftestAllowedUrl(url)) {
       e.preventDefault();
     }
   });
   view.webContents.on('will-redirect', (e, url) => {
     if (!isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
+      e.preventDefault();
+      return;
+    }
+    if (isSelftestOfflineMode() && !isSelftestAllowedUrl(url)) {
       e.preventDefault();
     }
   });
@@ -1274,7 +1285,10 @@ function createPanel(accountId) {
       if (!isNavigableUrl(url, dataOpts)) {
         url = normalizeUrl(url) || 'https://www.google.com';
       }
-      if (isNavigableUrl(url, dataOpts)) {
+      // Selftest catalog/badges: guarda a URL alvo no estado, mas não carrega sites reais.
+      if (isSelftestOfflineMode() && !isSelftestAllowedUrl(url)) {
+        console.log('[selftest-offline] skip loadURL', accountId, url);
+      } else if (isNavigableUrl(url, dataOpts)) {
         view.webContents.loadURL(url).catch((err) => {
           console.error('loadURL failed', accountId, err);
         });
@@ -2043,6 +2057,10 @@ function getAccountSessions() {
 function panelNavigate(accountId, url) {
   const normalized = normalizeUrl(url);
   if (!normalized || !isNavigableUrl(normalized)) return;
+  if (isSelftestOfflineMode() && !isSelftestAllowedUrl(normalized)) {
+    console.log('[selftest-offline] skip panelNavigate', accountId, normalized);
+    return;
+  }
   forceSuspended.delete(accountId);
   touchAccount(accountId);
   setFocusedAccount(accountId);

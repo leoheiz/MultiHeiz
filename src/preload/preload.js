@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('multiheiz', {
   createAccount: (data) => ipcRenderer.invoke('account:create', data),
   updateAccount: (data) => ipcRenderer.invoke('account:update', data),
   removeAccount: (id) => ipcRenderer.invoke('account:remove', id),
+  catalogList: () => ipcRenderer.invoke('catalog:list'),
   syncLayout: (slots) => ipcRenderer.invoke('layout:sync', slots),
   setSidebarOverlay: (widthPx) => ipcRenderer.invoke('sidebar:set-overlay', widthPx),
   setSidebarAutoHideTracking: (opts) =>
