@@ -224,6 +224,10 @@ const SELFTEST_DOH = selftestMode === 'doh';
 const SELFTEST_SETTINGS_PERF = selftestMode === 'settings-perf';
 const SELFTEST_PERMISSIONS = selftestMode === 'permissions';
 const SELFTEST_CATALOG = selftestMode === 'catalog';
+const SELFTEST_SHOTS_TOOLS = selftestMode === 'shots-tools';
+const SELFTEST_NOTES = selftestMode === 'notes';
+const SELFTEST_REMINDERS = selftestMode === 'reminders';
+const SELFTEST_SHEET = selftestMode === 'sheet';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -260,7 +264,11 @@ const ANY_SELFTEST =
   SELFTEST_DOH ||
   SELFTEST_SETTINGS_PERF ||
   SELFTEST_PERMISSIONS ||
-  SELFTEST_CATALOG;
+  SELFTEST_CATALOG ||
+  SELFTEST_SHOTS_TOOLS ||
+  SELFTEST_NOTES ||
+  SELFTEST_REMINDERS ||
+  SELFTEST_SHEET;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -552,7 +560,11 @@ function createWindow() {
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_PERMISSIONS ||
-    SELFTEST_CATALOG
+    SELFTEST_CATALOG ||
+    SELFTEST_SHOTS_TOOLS ||
+    SELFTEST_NOTES ||
+    SELFTEST_REMINDERS ||
+    SELFTEST_SHEET
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -566,7 +578,11 @@ function createWindow() {
     SELFTEST_ADBLOCK_REAL ||
     SELFTEST_SIDEBAR ||
     SELFTEST_WORKSPACE_DELETE ||
-    SELFTEST_CATALOG;
+    SELFTEST_CATALOG ||
+    SELFTEST_SHOTS_TOOLS ||
+    SELFTEST_NOTES ||
+    SELFTEST_REMINDERS ||
+    SELFTEST_SHEET;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -1553,6 +1569,106 @@ function createWindow() {
             rendererEval,
             app,
             catalog,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_SHOTS_TOOLS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runShotsToolsSelftest } = require('./selftest-shots-tools');
+          runShotsToolsSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_NOTES) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runNotesSelftest } = require('./selftest-notes');
+          runNotesSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_REMINDERS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runRemindersSelftest } = require('./selftest-reminders');
+          runRemindersSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_SHEET) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runSheetSelftest } = require('./selftest-sheet');
+          runSheetSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);

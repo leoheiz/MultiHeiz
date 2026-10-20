@@ -1370,95 +1370,326 @@
     };
   }
 
-  /* ---- Notas UI ---- */
+  /* ---- Notas UI (estilo Keep) ---- */
   let notasCurrent = null;
   let notasPreview = false;
   let notasSaveTimer = null;
+  let notasSearchQ = '';
+  const NOTA_COLORS = [
+    { id: 'padrao', label: 'Padrão' },
+    { id: 'vermelho', label: 'Vermelho' },
+    { id: 'laranja', label: 'Laranja' },
+    { id: 'amarelo', label: 'Amarelo' },
+    { id: 'verde', label: 'Verde' },
+    { id: 'petroleo', label: 'Azul-petróleo' },
+    { id: 'azul', label: 'Azul' },
+    { id: 'roxo', label: 'Roxo' },
+    { id: 'rosa', label: 'Rosa' },
+  ];
 
   async function renderNotas(body) {
+    body.classList.add('notas-body-keep');
     const notes = await window.multiheiz.notasList();
-    const side = h('div', { className: 'notas-side' });
-    const main = h('div', { className: 'notas-main' });
-    body.append(side, main);
-    const search = h('input', { type: 'search', placeholder: 'Buscar notas…', className: 'mgr-search' });
-    side.appendChild(search);
-    side.appendChild(h('button', {
-      type: 'button', className: 'btn primary', text: 'Nova nota',
-      onClick: async () => {
-        notasCurrent = await window.multiheiz.notasCreate('Nova nota');
-        notasPreview = false;
-        renderModule();
-      },
-    }));
-    const list = h('div', { className: 'notas-list' });
-    side.appendChild(list);
+    const wrap = h('div', { className: 'notas-keep' });
+    const editorPane = h('div', { className: 'notas-editor-pane' });
+    body.append(wrap, editorPane);
 
-    function paintList(q) {
-      list.innerHTML = '';
-      for (const n of notes) {
-        if (q && !(n.title || '').toLowerCase().includes(q) && !(n.body || '').toLowerCase().includes(q)) continue;
-        list.appendChild(h('button', {
-          type: 'button',
-          className: 'notas-item' + (notasCurrent && notasCurrent.id === n.id ? ' active' : ''),
-          text: n.title || 'Sem título',
-          onClick: async () => {
-            notasCurrent = await window.multiheiz.notasGet(n.id);
-            renderModule();
-          },
-        }));
-      }
-    }
-    search.addEventListener('input', () => paintList(search.value.trim().toLowerCase()));
-    paintList('');
-
-    if (!notasCurrent && notes[0]) notasCurrent = notes[0];
-    if (!notasCurrent) {
-      main.appendChild(h('p', { className: 'muted-note', text: 'Nenhuma nota.' }));
-      return;
-    }
-
-    const title = h('input', { className: 'notas-title', value: notasCurrent.title || '' });
-    const toolbar = h('div', { className: 'notas-toolbar' },
+    const toolbar = h('div', { className: 'notas-keep-toolbar' });
+    const search = h('input', {
+      type: 'search',
+      placeholder: 'Buscar notas…',
+      className: 'mgr-search notas-keep-search',
+      value: notasSearchQ || '',
+    });
+    toolbar.appendChild(
       h('button', {
-        type: 'button', className: 'btn ghost', text: notasPreview ? 'Editar' : 'Pré-visualizar',
-        onClick: () => {
-          notasPreview = !notasPreview;
-          renderModule();
-        },
-      }),
-      h('button', {
-        type: 'button', className: 'btn ghost', text: 'Excluir',
+        type: 'button',
+        className: 'btn primary',
+        text: 'Nova nota',
         onClick: async () => {
-          const title = notasCurrent.title || 'Sem título';
-          if (!window.confirm(`Excluir a nota "${title}"? Esta ação não pode ser desfeita.`)) return;
-          await window.multiheiz.notasRemove(notasCurrent.id);
-          notasCurrent = null;
+          notasCurrent = await window.multiheiz.notasCreate('Nova nota');
+          notasPreview = false;
           renderModule();
         },
       })
     );
-    main.append(title, toolbar);
+    toolbar.appendChild(search);
+    wrap.appendChild(toolbar);
 
     async function autosave(fields) {
+      if (!notasCurrent) return;
       if (notasSaveTimer) clearTimeout(notasSaveTimer);
       notasSaveTimer = setTimeout(async () => {
         notasCurrent = await window.multiheiz.notasUpdate({ id: notasCurrent.id, ...fields });
+        // Refresh card titles without full remount when possible
+        const card = wrap.querySelector(`.nota-card[data-id="${notasCurrent.id}"]`);
+        if (card && fields.title != null) {
+          const t = card.querySelector('.nota-card-title');
+          if (t && document.activeElement !== t) t.value = notasCurrent.title || '';
+        }
       }, 350);
     }
 
-    title.addEventListener('input', () => autosave({ title: title.value }));
-
-    if (notasPreview) {
-      const html = await window.multiheiz.notasPreview(notasCurrent.body || '');
-      const preview = h('div', { className: 'notas-preview' });
-      preview.innerHTML = html;
-      main.appendChild(preview);
-    } else {
-      const ta = h('textarea', { className: 'notas-editor' });
-      ta.value = notasCurrent.body || '';
-      ta.addEventListener('input', () => autosave({ body: ta.value }));
-      main.appendChild(ta);
+    async function renameNoteUi(note) {
+      const next = window.prompt('Renomear nota:', note.title || '');
+      if (next == null) return;
+      const title = String(next).trim();
+      if (!title) return;
+      await window.multiheiz.notasUpdate({ id: note.id, title });
+      if (notasCurrent && notasCurrent.id === note.id) {
+        notasCurrent = await window.multiheiz.notasGet(note.id);
+      }
+      renderModule();
     }
+
+    async function setColorUi(note, colorId) {
+      await window.multiheiz.notasUpdate({ id: note.id, color: colorId });
+      if (notasCurrent && notasCurrent.id === note.id) {
+        notasCurrent = await window.multiheiz.notasGet(note.id);
+      }
+      renderModule();
+    }
+
+    async function togglePinUi(note) {
+      await window.multiheiz.notasUpdate({ id: note.id, pinned: !note.pinned });
+      if (notasCurrent && notasCurrent.id === note.id) {
+        notasCurrent = await window.multiheiz.notasGet(note.id);
+      }
+      renderModule();
+    }
+
+    function openNoteMenu(note, x, y) {
+      const items = [
+        { label: 'Renomear', onClick: () => renameNoteUi(note) },
+        {
+          label: note.pinned ? 'Desafixar' : 'Fixar',
+          onClick: () => togglePinUi(note),
+        },
+        ...NOTA_COLORS.map((c) => ({
+          label: (note.color === c.id ? '● ' : '○ ') + 'Cor: ' + c.label,
+          onClick: () => setColorUi(note, c.id),
+        })),
+        {
+          label: 'Excluir',
+          onClick: async () => {
+            const title = note.title || 'Sem título';
+            if (!window.confirm(`Excluir a nota "${title}"? Esta ação não pode ser desfeita.`)) return;
+            await window.multiheiz.notasRemove(note.id);
+            if (notasCurrent && notasCurrent.id === note.id) notasCurrent = null;
+            renderModule();
+          },
+        },
+      ];
+      showV16ContextMenu(x, y, items);
+    }
+
+    function makeCard(note) {
+      const color = note.color || 'padrao';
+      const card = h('div', {
+        className:
+          'nota-card nota-color-' +
+          color +
+          (notasCurrent && notasCurrent.id === note.id ? ' active' : '') +
+          (note.pinned ? ' pinned' : ''),
+        'data-id': note.id,
+        'data-color': color,
+        'data-pinned': note.pinned ? '1' : '0',
+      });
+      const head = h('div', { className: 'nota-card-head' });
+      const titleInput = h('input', {
+        className: 'nota-card-title',
+        value: note.title || 'Sem título',
+        title: 'Título',
+        'data-role': 'nota-title',
+      });
+      titleInput.addEventListener('click', (e) => e.stopPropagation());
+      titleInput.addEventListener('input', () => {
+        if (notasCurrent && notasCurrent.id === note.id) {
+          autosave({ title: titleInput.value });
+        } else {
+          window.multiheiz.notasUpdate({ id: note.id, title: titleInput.value });
+        }
+      });
+      titleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          titleInput.blur();
+        }
+      });
+      const menuBtn = h('button', {
+        type: 'button',
+        className: 'btn ghost tiny nota-card-menu',
+        text: '⋯',
+        title: 'Opções da nota',
+        onClick: (e) => {
+          e.stopPropagation();
+          const r = menuBtn.getBoundingClientRect();
+          openNoteMenu(note, r.left, r.bottom + 2);
+        },
+      });
+      if (note.pinned) {
+        head.appendChild(h('span', { className: 'nota-pin-badge', text: 'Fixada', title: 'Fixada' }));
+      }
+      head.append(titleInput, menuBtn);
+      const previewText = String(note.body || '')
+        .split(/\r?\n/)
+        .slice(0, 6)
+        .join('\n');
+      const bodyEl = h('div', { className: 'nota-card-body', text: previewText || ' ' });
+      card.append(head, bodyEl);
+      card.addEventListener('click', async () => {
+        notasCurrent = await window.multiheiz.notasGet(note.id);
+        notasPreview = false;
+        renderModule();
+      });
+      card.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openNoteMenu(note, e.clientX, e.clientY);
+      });
+      return card;
+    }
+
+    function filterNotes(list) {
+      const q = (notasSearchQ || '').trim().toLowerCase();
+      if (!q) return list;
+      return list.filter(
+        (n) =>
+          (n.title || '').toLowerCase().includes(q) || (n.body || '').toLowerCase().includes(q)
+      );
+    }
+
+    const filtered = filterNotes(notes);
+    const pinned = filtered.filter((n) => n.pinned);
+    const others = filtered.filter((n) => !n.pinned);
+
+    function appendSection(title, items) {
+      if (!items.length) return;
+      const sec = h('div', { className: 'notas-section' });
+      sec.appendChild(h('h3', { className: 'notas-section-title', text: title }));
+      const grid = h('div', { className: 'notas-grid' });
+      for (const n of items) grid.appendChild(makeCard(n));
+      sec.appendChild(grid);
+      wrap.appendChild(sec);
+    }
+
+    if (!filtered.length) {
+      wrap.appendChild(
+        h('p', {
+          className: 'muted-note notas-empty',
+          text: notes.length ? 'Nenhuma nota corresponde à busca.' : 'Nenhuma nota. Crie a primeira!',
+        })
+      );
+    } else {
+      if (pinned.length) appendSection('Fixadas', pinned);
+      appendSection(pinned.length ? 'Outras' : 'Notas', others.length ? others : []);
+      if (pinned.length && !others.length) {
+        /* only pinned — ok */
+      } else if (!pinned.length && others.length) {
+        /* already appended as Notas */
+      }
+    }
+
+    search.addEventListener('input', () => {
+      notasSearchQ = search.value;
+      renderModule();
+    });
+
+    // Editor pane
+    if (!notasCurrent && filtered[0]) notasCurrent = filtered[0];
+    if (!notasCurrent) {
+      editorPane.appendChild(h('p', { className: 'muted-note', text: 'Selecione ou crie uma nota.' }));
+    } else {
+      const color = notasCurrent.color || 'padrao';
+      editorPane.className = 'notas-editor-pane nota-color-' + color;
+      editorPane.dataset.color = color;
+      const title = h('input', {
+        className: 'notas-title',
+        value: notasCurrent.title || '',
+        'data-role': 'nota-editor-title',
+      });
+      const tools = h('div', { className: 'notas-toolbar' });
+      tools.appendChild(
+        h('button', {
+          type: 'button',
+          className: 'btn ghost',
+          text: notasCurrent.pinned ? 'Desafixar' : 'Fixar',
+          onClick: () => togglePinUi(notasCurrent),
+        })
+      );
+      const colorWrap = h('div', { className: 'notas-color-palette', 'data-role': 'nota-palette' });
+      for (const c of NOTA_COLORS) {
+        colorWrap.appendChild(
+          h('button', {
+            type: 'button',
+            className:
+              'nota-swatch nota-color-' + c.id + (notasCurrent.color === c.id ? ' active' : ''),
+            title: c.label,
+            'data-color': c.id,
+            'aria-label': c.label,
+            onClick: () => setColorUi(notasCurrent, c.id),
+          })
+        );
+      }
+      tools.appendChild(colorWrap);
+      tools.appendChild(
+        h('button', {
+          type: 'button',
+          className: 'btn ghost',
+          text: 'Renomear',
+          onClick: () => renameNoteUi(notasCurrent),
+        })
+      );
+      tools.appendChild(
+        h('button', {
+          type: 'button',
+          className: 'btn ghost',
+          text: notasPreview ? 'Editar' : 'Pré-visualizar',
+          onClick: () => {
+            notasPreview = !notasPreview;
+            renderModule();
+          },
+        })
+      );
+      tools.appendChild(
+        h('button', {
+          type: 'button',
+          className: 'btn ghost',
+          text: 'Excluir',
+          onClick: async () => {
+            const t = notasCurrent.title || 'Sem título';
+            if (!window.confirm(`Excluir a nota "${t}"? Esta ação não pode ser desfeita.`)) return;
+            await window.multiheiz.notasRemove(notasCurrent.id);
+            notasCurrent = null;
+            renderModule();
+          },
+        })
+      );
+      editorPane.append(title, tools);
+      title.addEventListener('input', () => autosave({ title: title.value }));
+
+      if (notasPreview) {
+        const html = await window.multiheiz.notasPreview(notasCurrent.body || '');
+        const preview = h('div', { className: 'notas-preview' });
+        preview.innerHTML = html;
+        editorPane.appendChild(preview);
+      } else {
+        const ta = h('textarea', { className: 'notas-editor', 'data-role': 'nota-editor-body' });
+        ta.value = notasCurrent.body || '';
+        ta.addEventListener('input', () => autosave({ body: ta.value }));
+        editorPane.appendChild(ta);
+      }
+    }
+
+    api._notasTest = {
+      getCurrent: () => (notasCurrent ? { ...notasCurrent } : null),
+      setSearch: (q) => {
+        notasSearchQ = String(q || '');
+      },
+      rename: renameNoteUi,
+      setColor: setColorUi,
+      togglePin: togglePinUi,
+      colors: NOTA_COLORS.slice(),
+    };
   }
 
   /* ---------- Novidades / changelog (v1.8 B9) ---------- */

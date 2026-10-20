@@ -2647,34 +2647,198 @@ dialog label.check-row input[type='checkbox'],
   font-weight: 600;
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
+  border-bottom: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  color: inherit;
   padding: 6px 0;
   margin-bottom: 8px;
   font-family: inherit;
 }
-.notas-toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+.notas-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
 .notas-editor {
   width: 100%;
-  min-height: 360px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  min-height: 280px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
   border-radius: 8px;
-  color: var(--text);
+  color: inherit;
   padding: 10px;
   font: inherit;
   resize: vertical;
 }
 .notas-preview {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
   border-radius: 8px;
   padding: 12px;
-  min-height: 360px;
+  min-height: 280px;
   overflow: auto;
   user-select: text;
+  color: inherit;
 }
 .notas-preview a { color: var(--accent); }
+
+/* ---- Notas Keep ---- */
+.module-body.notas-body-keep {
+  flex-direction: row;
+  align-items: stretch;
+  min-height: 0;
+  overflow: hidden;
+}
+.notas-keep {
+  flex: 1.2;
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 8px;
+}
+.notas-editor-pane {
+  flex: 1;
+  min-width: 240px;
+  max-width: 440px;
+  overflow: auto;
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+.notas-keep-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.notas-keep-search { flex: 1; min-width: 140px; }
+.notas-section-title {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.notas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.nota-card {
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  padding: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 110px;
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 12%, transparent);
+  transition: box-shadow 0.15s ease, outline-color 0.15s ease;
+  color: var(--text);
+  background: var(--surface);
+}
+.nota-card:hover {
+  box-shadow: 0 2px 8px color-mix(in srgb, #000 22%, transparent);
+}
+.nota-card.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.nota-card-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.nota-card-title {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 2px 0;
+}
+.nota-card-menu { flex-shrink: 0; padding: 2px 6px; }
+.nota-pin-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+.nota-card-body {
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  opacity: 0.92;
+  flex: 1;
+}
+.notas-color-palette {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.nota-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  padding: 0;
+  cursor: pointer;
+}
+.nota-swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Keep color tones — escuro / grafite (padrão) */
+.nota-color-padrao { background: #2d3139; color: #e8eaed; }
+.nota-color-vermelho { background: #5c2b29; color: #f8d7d4; }
+.nota-color-laranja { background: #614a19; color: #fde7a8; }
+.nota-color-amarelo { background: #635d19; color: #fff9c4; }
+.nota-color-verde { background: #345920; color: #d7f7b8; }
+.nota-color-petroleo { background: #16504b; color: #b2f5ea; }
+.nota-color-azul { background: #2a4365; color: #c3dafe; }
+.nota-color-roxo { background: #42275a; color: #e9d5ff; }
+.nota-color-rosa { background: #5b2c46; color: #fbcfe8; }
+
+/* Keep color tones — claro */
+html[data-theme='claro'] .nota-color-padrao { background: #ffffff; color: #202124; }
+html[data-theme='claro'] .nota-color-vermelho { background: #f28b82; color: #202124; }
+html[data-theme='claro'] .nota-color-laranja { background: #fbbc04; color: #202124; }
+html[data-theme='claro'] .nota-color-amarelo { background: #fff475; color: #202124; }
+html[data-theme='claro'] .nota-color-verde { background: #ccff90; color: #202124; }
+html[data-theme='claro'] .nota-color-petroleo { background: #a7ffeb; color: #202124; }
+html[data-theme='claro'] .nota-color-azul { background: #aecbfa; color: #202124; }
+html[data-theme='claro'] .nota-color-roxo { background: #d7aefb; color: #202124; }
+html[data-theme='claro'] .nota-color-rosa { background: #fdcfe8; color: #202124; }
+
+.nota-swatch.nota-color-padrao { background: #9aa0a6; }
+html[data-theme='claro'] .nota-swatch.nota-color-padrao { background: #e8eaed; }
+
+@media (max-width: 900px) {
+  .module-body.notas-body-keep {
+    flex-direction: column;
+  }
+  .notas-editor-pane {
+    max-width: none;
+  }
+}
 
 dialog label input,
 dialog label select,
