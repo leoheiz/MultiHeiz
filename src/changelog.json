@@ -88,6 +88,10 @@
         {
           "tag": "Novo",
           "text": "Permissões de site (microfone, câmera, notificações, localização, área de transferência, compartilhar tela): prompt no painel, ícone de informações do site na barra de endereço e indicador quando mic/câmera estão em uso."
+        },
+        {
+          "tag": "Novo",
+          "text": "Catálogo de apps prontos ao criar janela: WhatsApp, Telegram, Discord, Slack, Instagram, Messenger, Facebook, X, Gmail, Outlook, Teams, Spotify, YouTube Music, Notion, ChatGPT, Gemini, LinkedIn e TikTok, com busca, ícone e nome prontos, além de Site personalizado."
         }
       ]
     },
