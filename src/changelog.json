@@ -144,6 +144,10 @@
         {
           "tag": "Novo",
           "text": "Módulo de IA experimental (em testes), desligado por padrão: APIs com chave própria (Gemini, Groq, OpenRouter, compatível OpenAI) via safeStorage; Ollama/LM Studio locais; menu de contexto e Ctrl+Shift+Espaço abrem popover leve (Corrigir/Melhorar/Reformular/Mais formal/Mais curto). Senha, cartão, OTP e data-mh-no-ai nunca são enviados."
+        },
+        {
+          "tag": "Correção",
+          "text": "Popovers migrados para o overlay voltam a ter as ações antigas: no monitor de memória, Suspender/Reativar por janela, totais/metas, tooltip e foco ao clicar; no menu de extensões, Adicionar extensão e tooltips; setas/Enter no seletor de Layout; valores de memória atualizam com o popover aberto."
         }
       ]
     },

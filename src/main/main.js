@@ -239,6 +239,7 @@ const SELFTEST_VOLUME = selftestMode === 'volume';
 const SELFTEST_SHOTS_VOLUME = selftestMode === 'shots-volume';
 const SELFTEST_LAYOUT_WORKSPACE = selftestMode === 'layout-workspace';
 const SELFTEST_POPOVER_OVERLAY = selftestMode === 'popover-overlay';
+const SELFTEST_POPOVER_ACTIONS = selftestMode === 'popover-actions';
 const SELFTEST_REALHOVER_VOLUME = selftestMode === 'realhover-volume';
 const SELFTEST_LAG_AUDIT = selftestMode === 'lag-audit';
 const SELFTEST_PERF = selftestMode === 'perf';
@@ -292,6 +293,7 @@ const ANY_SELFTEST =
   SELFTEST_SHOTS_VOLUME ||
   SELFTEST_LAYOUT_WORKSPACE ||
   SELFTEST_POPOVER_OVERLAY ||
+  SELFTEST_POPOVER_ACTIONS ||
   SELFTEST_REALHOVER_VOLUME ||
   SELFTEST_LAG_AUDIT ||
   SELFTEST_PERF ||
@@ -305,7 +307,7 @@ if (SELFTEST_PERMISSIONS) {
 }
 
 // Volume selftest: permite tom/Oscillator sem gesto do usuário.
-if (SELFTEST_VOLUME || SELFTEST_LAG_AUDIT || SELFTEST_POPOVER_OVERLAY) {
+if (SELFTEST_VOLUME || SELFTEST_LAG_AUDIT || SELFTEST_POPOVER_OVERLAY || SELFTEST_POPOVER_ACTIONS) {
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 }
 
@@ -621,6 +623,7 @@ function createWindow() {
     SELFTEST_PERF ||
     SELFTEST_LAG_AUDIT ||
     SELFTEST_POPOVER_OVERLAY ||
+    SELFTEST_POPOVER_ACTIONS ||
     SELFTEST_BADGES ||
     SELFTEST_LANGUAGETOOL ||
     SELFTEST_AI
@@ -718,6 +721,7 @@ function createWindow() {
       SELFTEST_PERF ||
       SELFTEST_LAG_AUDIT ||
       SELFTEST_POPOVER_OVERLAY ||
+      SELFTEST_POPOVER_ACTIONS ||
       SELFTEST_REALHOVER_VOLUME ||
       SELFTEST_BADGES,
     paintWhenInitiallyHidden: true,
@@ -1972,6 +1976,32 @@ function createWindow() {
         try {
           const { runPopoverOverlaySelftest } = require('./selftest-popover-overlay');
           runPopoverOverlaySelftest({
+            mainWindow,
+            panels,
+            popoverOverlay,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_POPOVER_ACTIONS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runPopoverActionsSelftest } = require('./selftest-popover-actions');
+          runPopoverActionsSelftest({
             mainWindow,
             panels,
             popoverOverlay,

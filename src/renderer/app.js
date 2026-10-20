@@ -1201,8 +1201,10 @@ function cancelVolumeHide() {
  * @param {object} payload
  */
 async function handlePopoverAction(payload) {
-  if (!payload || !payload.type) return;
-  const type = payload.type;
+  if (!payload) return;
+  // Overlay forwards { type:'popover:action', actionType:'volume-set'|… }.
+  const type = payload.actionType || (payload.type !== 'popover:action' ? payload.type : '');
+  if (!type) return;
   if (type === 'volume-set' || type === 'volume-input') {
     const id = payload.accountId || (volumePopover && volumePopover.accountId);
     if (!id) return;
@@ -1279,10 +1281,60 @@ async function handlePopoverAction(payload) {
       !!payload.active
     );
     if (r && r.note) showToast(r.note);
+    // Refresh menu like the pre-overlay path (close + reopen).
+    if (payload.accountId && activePopoverId === 'panel-ext-menu') {
+      await openPanelExtensionsMenu(
+        payload.accountId,
+        Number(payload.anchorX) || 0,
+        Number(payload.anchorY) || 0
+      );
+    }
     return;
   }
   if (type === 'ext-manage') {
     openSettingsSection('extensoes');
+    return;
+  }
+  if (type === 'mem-suspend' && payload.accountId) {
+    await window.multiheiz.panelSuspend(payload.accountId);
+    if (latestMetrics && Array.isArray(latestMetrics.panels)) {
+      for (const p of latestMetrics.panels) {
+        if (p.accountId === payload.accountId) {
+          p.active = false;
+          p.suspended = true;
+          p.forced = true;
+          p.state = 'suspenso';
+        }
+      }
+    }
+    scheduleSync();
+    render();
+    // destroyPanel can blur the overlay and close it — keep the monitor open like the old DOM.
+    openMemPopover();
+    return;
+  }
+  if (type === 'mem-reactivate' && payload.accountId) {
+    await window.multiheiz.panelReactivate(payload.accountId);
+    if (latestMetrics && Array.isArray(latestMetrics.panels)) {
+      for (const p of latestMetrics.panels) {
+        if (p.accountId === payload.accountId) {
+          p.active = true;
+          p.suspended = false;
+          p.forced = false;
+          p.state = 'ativo';
+        }
+      }
+    }
+    scheduleSync();
+    render();
+    openMemPopover();
+    return;
+  }
+  if (type === 'mem-focus' && payload.accountId) {
+    focusedAccountId = payload.accountId;
+    await window.multiheiz.panelFocus(payload.accountId);
+    scheduleSync();
+    return;
   }
   if (type === 'ai-action') {
     if (window.multiheiz && typeof window.multiheiz.aiSessionAction === 'function') {
@@ -2397,50 +2449,60 @@ function updateStatusBar() {
   el.statVersion.textContent = `v${appVersion}`;
 }
 
-function renderMemPopover() {
+/**
+ * Payload for the memory monitor overlay (same fields as the legacy DOM popover).
+ * @returns {{ totalText: string, rows: Array<object> }}
+ */
+function buildMemPopoverData() {
   if (!latestMetrics) {
-    el.memPopoverTotal.textContent = 'Coletando métricas…';
-    el.memPopoverList.innerHTML = '';
-    return;
+    return { totalText: 'Coletando métricas…', rows: [] };
   }
   const metric = metricName(latestMetrics);
-  el.memPopoverTotal.textContent = `Total: ${latestMetrics.totalRamMb} MB (${metric}) · CPU ${latestMetrics.totalCpu}% · ${latestMetrics.processCount} processos\n${breakdownText(latestMetrics)}\n${latestMetrics.panels.length} janela(s)`;
-  el.memPopoverList.innerHTML = '';
+  const totalText = `Total: ${latestMetrics.totalRamMb} MB (${metric}) · CPU ${latestMetrics.totalCpu}% · ${latestMetrics.processCount} processos\n${breakdownText(latestMetrics)}\n${latestMetrics.panels.length} janela(s)`;
+  const rows = [];
+  for (const p of latestMetrics.panels || []) {
+    const sharedNote = p.shared ? ' · compartilhado' : '';
+    const active = !!p.active;
+    rows.push({
+      accountId: p.accountId,
+      name: p.name,
+      active,
+      focused: !!p.focused,
+      meta: `${p.workspaceName || '—'} · ${p.state} · ${p.ramMb} MB · ${p.cpu}%${sharedNote}`,
+      value: `${p.ramMb} MB · ${p.cpu}%`,
+      title: memTooltip(p),
+    });
+  }
+  return { totalText, rows };
+}
 
-  for (const p of latestMetrics.panels) {
+function refreshMemPopoverUi() {
+  if (activePopoverId !== 'mem-popover') return;
+  window.multiheiz.popoverUpdate(buildMemPopoverData());
+}
+
+function renderMemPopover() {
+  // Legacy DOM kept hidden; live UI is the overlay. Keep list in sync if ever shown.
+  if (!el.memPopoverTotal || !el.memPopoverList) return;
+  const data = buildMemPopoverData();
+  el.memPopoverTotal.textContent = data.totalText;
+  el.memPopoverList.innerHTML = '';
+  for (const p of data.rows) {
     const row = document.createElement('div');
     row.className = 'mem-row';
-
     const title = document.createElement('div');
     title.className = 'mem-row-title';
     title.textContent = p.name;
-
     const meta = document.createElement('div');
     meta.className = 'mem-row-meta';
-    const sharedNote = p.shared ? ' · compartilhado' : '';
-    meta.textContent = `${p.workspaceName || '—'} · ${p.state} · ${p.ramMb} MB · ${p.cpu}%${sharedNote}`;
+    meta.textContent = p.meta;
     const actions = document.createElement('div');
     actions.className = 'mem-row-actions';
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn ghost';
-    if (p.active) {
-      btn.textContent = 'Suspender';
-      btn.addEventListener('click', async () => {
-        await window.multiheiz.panelSuspend(p.accountId);
-        scheduleSync();
-        render();
-      });
-    } else {
-      btn.textContent = 'Reativar';
-      btn.addEventListener('click', async () => {
-        await window.multiheiz.panelReactivate(p.accountId);
-        scheduleSync();
-        render();
-      });
-    }
+    btn.textContent = p.active ? 'Suspender' : 'Reativar';
     actions.appendChild(btn);
-
     row.append(title, actions, meta);
     el.memPopoverList.appendChild(row);
   }
@@ -2779,19 +2841,9 @@ function confirmAction(message, onOk) {
 function openMemPopover() {
   // Prefer overlay WebContentsView so panels stay live (no snapshot/park).
   const btn = el.btnMemTotal || document.getElementById('btn-mem-total');
-  const r = btn ? btn.getBoundingClientRect() : { left: 8, top: window.innerHeight - 40, width: 80, height: 28 };
-  const rows = [];
-  let totalLabel = 'Coletando métricas…';
-  if (latestMetrics) {
-    const metric = metricName(latestMetrics);
-    totalLabel = `${latestMetrics.totalRamMb} MB (${metric})`;
-    for (const p of latestMetrics.panels || []) {
-      rows.push({
-        label: p.name,
-        value: `${p.ramMb} MB · ${p.cpu}%`,
-      });
-    }
-  }
+  const r = btn
+    ? btn.getBoundingClientRect()
+    : { left: 8, top: window.innerHeight - 40, width: 80, height: 28 };
   // Keep legacy DOM hidden — content lives in the overlay view
   if (el.memPopover) el.memPopover.classList.add('hidden');
   showLightPopover({
@@ -2804,7 +2856,7 @@ function openMemPopover() {
       width: Math.round(r.width),
       height: Math.round(r.height),
     },
-    data: { totalLabel, rows },
+    data: buildMemPopoverData(),
   });
 }
 
@@ -3704,6 +3756,8 @@ window.multiheiz.onEvent((payload) => {
     latestMetrics = payload.metrics;
     updateMemBadges();
     renderSidebar();
+    // Same event the chrome used for badges — keep overlay values live while open.
+    refreshMemPopoverUi();
     return;
   }
   if (payload.type === 'memory:suspended' && Array.isArray(payload.suspendedIds)) {
@@ -3721,6 +3775,18 @@ window.multiheiz.onEvent((payload) => {
     if (changed) {
       render();
       scheduleSync();
+    }
+    // Reflect Suspender/Reativar labels without waiting for the next metrics tick.
+    if (latestMetrics && Array.isArray(latestMetrics.panels)) {
+      for (const p of latestMetrics.panels) {
+        const susp = next.has(p.accountId);
+        p.active = !susp;
+        p.suspended = susp;
+        p.forced = susp;
+        if (susp) p.state = 'suspenso';
+        else if (p.visible) p.state = 'ativo';
+      }
+      refreshMemPopoverUi();
     }
     return;
   }
@@ -4033,6 +4099,17 @@ window.__multiheizUi = {
   },
   openMemPopover: () => openMemPopover(),
   closeMemPopover: () => closeMemPopover(),
+  getMemPopoverData: () => buildMemPopoverData(),
+  showWsContextMenu: (workspaceId, x, y) => {
+    const ws = (state.workspaces || []).find((w) => w.id === workspaceId);
+    if (!ws) return { ok: false, reason: 'missing' };
+    showWsMenu(Number(x) || 40, Number(y) || 40, ws);
+    return { ok: true, workspaceId: ws.id };
+  },
+  showTabsOverflowMenu: () => {
+    showTabsOverflowMenu();
+    return { ok: true };
+  },
   syncNow: () => {
     syncViews();
     return true;
@@ -4877,6 +4954,14 @@ Object.assign(window.__multiheizUi, {
   openLayoutSelectPopover: () => {
     openLayoutSelectPopover();
     return true;
+  },
+  openPanelExtMenu: async (accountId, x, y) => {
+    await openPanelExtensionsMenu(
+      String(accountId || ''),
+      Number(x) || 40,
+      Number(y) || 40
+    );
+    return { ok: true };
   },
   getAccountVolume: (accountId) => accountVolumePercent(String(accountId || '')),
   isKofiVisible: () => {

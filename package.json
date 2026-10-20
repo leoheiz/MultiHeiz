@@ -57,6 +57,7 @@
     "selftest:volume": "node tools/selftest-volume.js",
     "selftest:layout-workspace": "node tools/selftest-layout-workspace.js",
     "selftest:popover-overlay": "node tools/selftest-popover-overlay.js",
+    "selftest:popover-actions": "node tools/selftest-popover-actions.js",
     "selftest:languagetool": "node tools/selftest-languagetool.js",
     "selftest:ai": "node tools/selftest-ai.js",
     "selftest:badges": "node tools/selftest-badges.js",

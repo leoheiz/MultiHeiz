@@ -151,9 +151,11 @@ function ensureView() {
   });
 
   view.webContents.on('blur', () => {
-    // Click into a panel steals focus — close shortly if still open
+    // Click into a panel steals focus — close shortly if still open.
+    // Memory monitor stays open (Suspender destroys a panel and blurs; chrome Esc/X/click closes).
     setTimeout(() => {
       if (!current) return;
+      if (current.kind === 'mem') return;
       try {
         if (overlayView && !overlayView.webContents.isDestroyed() && overlayView.webContents.isFocused()) {
           return;
@@ -461,7 +463,13 @@ function getZOrderIndex() {
  * @param {object} action
  */
 function forwardAction(action) {
-  emitToRenderer({ type: 'popover:action', ...(action || {}) });
+  const a = action && typeof action === 'object' ? { ...action } : {};
+  // Keep envelope type = popover:action (must win over a.type like volume-set / mem-suspend).
+  emitToRenderer({
+    ...a,
+    type: 'popover:action',
+    actionType: a.type,
+  });
 }
 
 /**

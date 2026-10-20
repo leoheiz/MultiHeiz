@@ -297,23 +297,89 @@
   .empty { opacity: 0.7; padding: 6px 0; }
 
   .mem-popover-box {
-    min-width: 240px;
+    min-width: 280px;
+    max-width: 360px;
+    max-height: min(70vh, 520px);
+    overflow: auto;
     padding: 10px 12px;
   }
   .mem-popover-head {
     display: flex;
+    align-items: center;
     justify-content: space-between;
     font-weight: 600;
     margin-bottom: 6px;
+    gap: 8px;
+  }
+  .mem-popover-close {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .mem-popover-close:hover {
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+  }
+  .mem-popover-total {
+    color: var(--muted, #8a97a8);
+    font-size: 11px;
+    margin-bottom: 8px;
+    white-space: pre-line;
+  }
+  .mem-popover-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
   .mem-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 2px 0;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 8px;
+    padding: 8px;
+    border: 1px solid var(--border, #3a4654);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg, #121820) 70%, transparent);
     font-size: 11px;
+    cursor: pointer;
   }
-  .mem-row .muted { color: var(--muted, #8a97a8); }
+  .mem-row:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+  .mem-row-title { font-weight: 600; }
+  .mem-row-meta {
+    color: var(--muted, #8a97a8);
+    font-size: 11px;
+    grid-column: 1;
+  }
+  .mem-row-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+  }
+  .mem-row-actions button {
+    padding: 3px 8px;
+    font-size: 11px;
+    border-radius: 6px;
+    border: 1px solid var(--border, #3a4654);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .mem-row-actions button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+  }
+  .mem-row-actions button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
 </style>
 </head>
 <body>
@@ -547,20 +613,51 @@
     menu.className = 'layout-menu';
     menu.setAttribute('role', 'listbox');
     menu.setAttribute('aria-label', 'Layout');
+    menu.tabIndex = 0;
     const options = (data && data.options) || [];
     const value = (data && data.value) || '';
+    /** @type {HTMLButtonElement[]} */
+    const buttons = [];
+    let activeIdx = Math.max(0, options.findIndex((o) => o.value === value));
+    function focusIdx(i) {
+      if (!buttons.length) return;
+      activeIdx = Math.max(0, Math.min(buttons.length - 1, i));
+      buttons.forEach((b, n) => b.classList.toggle('is-active', n === activeIdx));
+      buttons[activeIdx].focus();
+    }
+    function choose(opt) {
+      window.mhPopover.action({ type: 'layout-select', value: opt.value });
+      window.mhPopover.close('action');
+    }
     for (const opt of options) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.setAttribute('role', 'option');
       btn.textContent = opt.label || opt.value;
       if (opt.value === value) btn.classList.add('is-active');
-      btn.addEventListener('click', () => {
-        window.mhPopover.action({ type: 'layout-select', value: opt.value });
-        window.mhPopover.close('action');
-      });
+      btn.addEventListener('click', () => choose(opt));
+      buttons.push(btn);
       menu.appendChild(btn);
     }
+    menu.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        focusIdx(activeIdx + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        focusIdx(activeIdx - 1);
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        focusIdx(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        focusIdx(buttons.length - 1);
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (options[activeIdx]) choose(options[activeIdx]);
+      }
+    });
+    requestAnimationFrame(() => focusIdx(activeIdx >= 0 ? activeIdx : 0));
     return menu;
   }
 
@@ -573,11 +670,23 @@
     menu.appendChild(badge);
     const list = (data && data.list) || [];
     const accountId = (data && data.accountId) || '';
+    const anchorX = (data && data.anchorX) || 0;
+    const anchorY = (data && data.anchorY) || 0;
     if (!list.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = 'Nenhuma extensão instalada';
       menu.appendChild(empty);
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'panel-ext-manage';
+      addBtn.dataset.role = 'ext-add';
+      addBtn.textContent = 'Adicionar extensão';
+      addBtn.addEventListener('click', () => {
+        window.mhPopover.action({ type: 'ext-manage' });
+        window.mhPopover.close('action');
+      });
+      menu.appendChild(addBtn);
     } else {
       for (const ext of list) {
         const row = document.createElement('div');
@@ -593,6 +702,9 @@
         nameBtn.className = 'panel-ext-name';
         nameBtn.textContent = ext.name || ext.id;
         nameBtn.disabled = !ext.activeOnPanel || !ext.hasAction;
+        nameBtn.title = ext.hasAction
+          ? 'Abrir popup da extensão'
+          : 'Esta extensão não tem popup';
         nameBtn.addEventListener('click', () => {
           window.mhPopover.action({
             type: 'ext-open-action',
@@ -604,6 +716,7 @@
         row.appendChild(nameBtn);
         const swLabel = document.createElement('label');
         swLabel.className = 'panel-ext-switch';
+        swLabel.title = 'Ativa nesta janela';
         const sw = document.createElement('input');
         sw.type = 'checkbox';
         sw.checked = !!ext.activeOnPanel;
@@ -613,6 +726,8 @@
             extId: ext.id,
             accountId,
             active: sw.checked,
+            anchorX,
+            anchorY,
           });
         });
         swLabel.append(sw, document.createTextNode(' Nesta janela'));
@@ -623,6 +738,7 @@
     const footer = document.createElement('button');
     footer.type = 'button';
     footer.className = 'panel-ext-manage';
+    footer.dataset.role = 'ext-manage';
     footer.textContent = 'Gerenciar extensões';
     footer.addEventListener('click', () => {
       window.mhPopover.action({ type: 'ext-manage' });
@@ -635,27 +751,83 @@
   function renderMem(data) {
     const box = document.createElement('div');
     box.className = 'mem-popover-box';
+    box.dataset.role = 'mem-popover';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Monitor de memória');
     const head = document.createElement('div');
     head.className = 'mem-popover-head';
-    const t = document.createElement('span');
-    t.textContent = 'Memória';
-    const total = document.createElement('span');
-    total.textContent = (data && data.totalLabel) || '—';
-    head.append(t, total);
+    const t = document.createElement('strong');
+    t.textContent = 'Monitor de memória';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'mem-popover-close';
+    closeBtn.dataset.role = 'mem-close';
+    closeBtn.title = 'Fechar';
+    closeBtn.setAttribute('aria-label', 'Fechar');
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.mhPopover.close('mem-close');
+    });
+    head.append(t, closeBtn);
     box.appendChild(head);
+
+    const total = document.createElement('div');
+    total.className = 'mem-popover-total';
+    total.dataset.role = 'mem-total';
+    const totalText = (data && data.totalText) || (data && data.totalLabel) || 'Coletando métricas…';
+    total.textContent = totalText;
+    box.appendChild(total);
+
+    const list = document.createElement('div');
+    list.className = 'mem-popover-list';
+    list.dataset.role = 'mem-list';
     const rows = (data && data.rows) || [];
     for (const row of rows) {
       const el = document.createElement('div');
       el.className = 'mem-row';
-      const a = document.createElement('span');
-      a.textContent = row.label || '';
-      const b = document.createElement('span');
-      b.className = 'muted';
-      b.textContent = row.value || '';
-      el.append(a, b);
-      box.appendChild(el);
+      el.dataset.accountId = row.accountId || '';
+      el.dataset.active = row.active ? '1' : '0';
+      if (row.title) el.title = row.title;
+      const title = document.createElement('div');
+      title.className = 'mem-row-title';
+      title.textContent = row.name || row.label || '';
+      const meta = document.createElement('div');
+      meta.className = 'mem-row-meta';
+      meta.textContent = row.meta || row.value || '';
+      const actions = document.createElement('div');
+      actions.className = 'mem-row-actions';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.role = row.active ? 'mem-suspend' : 'mem-reactivate';
+      btn.dataset.accountId = row.accountId || '';
+      btn.textContent = row.active ? 'Suspender' : 'Reativar';
+      btn.title = row.active ? 'Suspender esta janela' : 'Reativar esta janela';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.mhPopover.action({
+          type: row.active ? 'mem-suspend' : 'mem-reactivate',
+          accountId: row.accountId,
+        });
+      });
+      actions.appendChild(btn);
+      el.addEventListener('click', () => {
+        if (!row.accountId) return;
+        window.mhPopover.action({ type: 'mem-focus', accountId: row.accountId });
+      });
+      el.append(title, actions, meta);
+      list.appendChild(el);
     }
+    box.appendChild(list);
     return box;
+  }
+
+  function updateMem(data) {
+    if (!current || current.kind !== 'mem') return;
+    current.data = Object.assign({}, current.data || {}, data || {});
+    const node = renderMem(current.data);
+    root.replaceChildren(node);
+    scheduleMeasure();
   }
 
   function clear() {
@@ -781,7 +953,13 @@
       if (!current) return;
       if (current.kind === 'volume') updateVolume(data || {});
       else if (current.kind === 'ai-write') updateAiWrite(data || {});
-      else if (data) current.data = Object.assign({}, current.data || {}, data);
+      else if (current.kind === 'mem') updateMem(data || {});
+      else if (current.kind === 'ext-menu' && data) {
+        current.data = Object.assign({}, current.data || {}, data);
+        const node = renderExtMenu(current.data);
+        root.replaceChildren(node);
+        scheduleMeasure();
+      } else if (data) current.data = Object.assign({}, current.data || {}, data);
     });
     window.mhPopover.onClear(clear);
     window.mhPopover.ready();
