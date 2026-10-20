@@ -1284,6 +1284,32 @@ function publicState() {
   };
 }
 
+/**
+ * Same cleanup path as UI "remove window": destroy WebContentsView,
+ * clear partition/session data, drop account + freeTiles refs.
+ * Used by account:remove and workspace:delete.
+ * @param {string} id
+ */
+async function removeAccountById(id) {
+  panels.markAccountRemoving(id);
+  try {
+    await panels.clearAccountSession(id);
+    updateState((s) => {
+      s.accounts = s.accounts.filter((a) => a.id !== id);
+      if (s.maximizedAccountId === id) s.maximizedAccountId = null;
+      if (s.freeTiles && typeof s.freeTiles === 'object') {
+        for (const wsId of Object.keys(s.freeTiles)) {
+          if (s.freeTiles[wsId] && s.freeTiles[wsId][id]) {
+            delete s.freeTiles[wsId][id];
+          }
+        }
+      }
+    });
+  } finally {
+    panels.unmarkAccountRemoving(id);
+  }
+}
+
 function registerIpc() {
   ipcMain.handle('state:get', () => publicState());
 
@@ -1574,19 +1600,41 @@ function registerIpc() {
     return publicState();
   });
 
-  ipcMain.handle('workspace:delete', (_e, id) => {
+  ipcMain.handle('workspace:delete', async (_e, id) => {
+    const s0 = getState();
+    if (s0.workspaces.length <= 1) return publicState();
+    const fallback = s0.workspaces.find((w) => w.id !== id);
+    if (!fallback) return publicState();
+    if (!s0.workspaces.some((w) => w.id === id)) return publicState();
+
+    const toRemove = s0.accounts.filter((a) => a.workspaceId === id).map((a) => a.id);
+    for (const accId of toRemove) {
+      await removeAccountById(accId);
+    }
+
     updateState((s) => {
-      if (s.workspaces.length <= 1) return;
-      const fallback = s.workspaces.find((w) => w.id !== id);
-      if (!fallback) return;
       s.workspaces = s.workspaces.filter((w) => w.id !== id);
-      for (const a of s.accounts) {
-        if (a.workspaceId === id) a.workspaceId = fallback.id;
+      if (s.freeTiles && typeof s.freeTiles === 'object' && s.freeTiles[id]) {
+        delete s.freeTiles[id];
+      }
+      if (s.pageByWorkspace && typeof s.pageByWorkspace === 'object') {
+        delete s.pageByWorkspace[id];
+      }
+      if (s.maximizedByWorkspace && typeof s.maximizedByWorkspace === 'object') {
+        delete s.maximizedByWorkspace[id];
       }
       if (s.activeWorkspaceId === id) {
+        if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
+        if (!s.pageByWorkspace) s.pageByWorkspace = {};
         s.activeWorkspaceId = fallback.id;
-        s.page = 0;
-        s.maximizedAccountId = null;
+        s.maximizedAccountId =
+          s.maximizedByWorkspace[fallback.id] != null
+            ? s.maximizedByWorkspace[fallback.id]
+            : null;
+        s.page =
+          typeof s.pageByWorkspace[fallback.id] === 'number'
+            ? s.pageByWorkspace[fallback.id]
+            : 0;
       }
     });
     return publicState();
@@ -1675,23 +1723,7 @@ function registerIpc() {
   });
 
   ipcMain.handle('account:remove', async (_e, id) => {
-    panels.markAccountRemoving(id);
-    try {
-      await panels.clearAccountSession(id);
-      updateState((s) => {
-        s.accounts = s.accounts.filter((a) => a.id !== id);
-        if (s.maximizedAccountId === id) s.maximizedAccountId = null;
-        if (s.freeTiles && typeof s.freeTiles === 'object') {
-          for (const wsId of Object.keys(s.freeTiles)) {
-            if (s.freeTiles[wsId] && s.freeTiles[wsId][id]) {
-              delete s.freeTiles[wsId][id];
-            }
-          }
-        }
-      });
-    } finally {
-      panels.unmarkAccountRemoving(id);
-    }
+    await removeAccountById(id);
     return publicState();
   });
 

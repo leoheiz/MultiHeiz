@@ -776,12 +776,10 @@ function showWsMenu(x, y, ws) {
     del.textContent = 'Excluir categoria';
     del.addEventListener('click', () => {
       closeMenus();
-      confirmAction(
-        `Excluir a categoria "${ws.name}"? Janelas vão para outra categoria.`,
-        async () => {
-          applyState(await window.multiheiz.deleteWorkspace(ws.id));
-        }
-      );
+      const n = state.accounts.filter((a) => a.workspaceId === ws.id).length;
+      confirmAction(workspaceDeleteConfirmMessage(ws.name, n), async () => {
+        applyState(await window.multiheiz.deleteWorkspace(ws.id));
+      });
     });
     menu.appendChild(del);
   }
@@ -1775,6 +1773,21 @@ if (el.dlgNovidades) {
   el.dlgNovidades.addEventListener('close', () => popOverlay('dlg-novidades'));
 }
 
+/**
+ * pt-BR confirm copy for deleting a workspace/area.
+ * @param {string} name
+ * @param {number} windowCount
+ */
+function workspaceDeleteConfirmMessage(name, windowCount) {
+  const label = String(name || '');
+  const n = Math.max(0, Number(windowCount) || 0);
+  if (n <= 0) return `Excluir a área "${label}"?`;
+  if (n === 1) {
+    return `Excluir a área "${label}" e sua 1 janela? Isso não pode ser desfeito.`;
+  }
+  return `Excluir a área "${label}" e suas ${n} janelas? Isso não pode ser desfeito.`;
+}
+
 function confirmAction(message, onOk) {
   pendingConfirm = onOk;
   el.confirmMessage.textContent = message;
@@ -2605,6 +2618,7 @@ void statusBarShouldRun;
 
 /** Exposed for selftests */
 window.__multiheizUi = {
+  workspaceDeleteConfirmMessage,
   openAccountDialog: () => openAccountDialog(null),
   closeAccountDialog: () => {
     if (el.dlgAccount.open) el.dlgAccount.close();
