@@ -8,6 +8,26 @@ const { readJsonDurable, writeJsonDurable } = require('./json-store');
 const STATE_FILE = 'multiheiz-state.json';
 const SAVE_DEBOUNCE_MS = 400;
 
+/** Layout modes shown in the top-bar <select> (and app menu). */
+const VALID_LAYOUTS = Object.freeze(['1', '2', '4', '6', 'auto', 'livre']);
+const VALID_LAYOUT_SET = new Set(VALID_LAYOUTS);
+
+/**
+ * Normalize a layout value to a known select option.
+ * Invalid / legacy shapes (objects, unknown strings) fall back to "auto"
+ * so the Layout <select> never appears empty.
+ * @param {unknown} value
+ * @returns {string}
+ */
+function normalizeLayout(value) {
+  if (typeof value === 'string' && VALID_LAYOUT_SET.has(value)) return value;
+  if (typeof value === 'number') {
+    const asStr = String(value);
+    if (VALID_LAYOUT_SET.has(asStr)) return asStr;
+  }
+  return 'auto';
+}
+
 /** @type {ReturnType<typeof defaultState>} */
 let state = defaultState();
 let saveTimer = null;
@@ -32,7 +52,16 @@ function defaultState() {
     workspaces: [{ id: wsId, name: 'Principal' }],
     activeWorkspaceId: wsId,
     accounts: [],
+    /**
+     * Active workspace layout mode (mirror of layoutByWorkspace[activeWorkspaceId]).
+     * Kept for backwards-compatible reads; writers should update layoutByWorkspace too.
+     */
     layout: 'auto',
+    /**
+     * Per-workspace layout mode: { [wsId]: '1'|'2'|'4'|'6'|'auto'|'livre' }.
+     * New workspaces copy the current area's layout (see workspace:create).
+     */
+    layoutByWorkspace: {},
     page: 0,
     maximizedAccountId: null,
     /** Per-workspace maximized panel id */
@@ -192,6 +221,10 @@ function migrate(parsed) {
     appearance: { ...base.appearance, ...(parsed.appearance || {}) },
     freeTiles:
       parsed.freeTiles && typeof parsed.freeTiles === 'object' ? parsed.freeTiles : {},
+    layoutByWorkspace:
+      parsed.layoutByWorkspace && typeof parsed.layoutByWorkspace === 'object'
+        ? parsed.layoutByWorkspace
+        : {},
     maximizedByWorkspace:
       parsed.maximizedByWorkspace && typeof parsed.maximizedByWorkspace === 'object'
         ? parsed.maximizedByWorkspace
@@ -359,6 +392,41 @@ function migrate(parsed) {
   if (typeof next.ui.layoutLocked !== 'boolean') {
     next.ui.layoutLocked = true;
   }
+  // v1.3.0 one-shot: layout was global; copy current global layout to EVERY
+  // existing workspace so nothing changes visually after update. Afterwards
+  // each area keeps its own layout (layoutByWorkspace). Global `layout` stays
+  // as the active-workspace mirror (read/migration).
+  {
+    if (!next.settings.migrations || typeof next.settings.migrations !== 'object') {
+      next.settings.migrations = {};
+    }
+    if (!next.layoutByWorkspace || typeof next.layoutByWorkspace !== 'object') {
+      next.layoutByWorkspace = {};
+    }
+    const globalLayout = normalizeLayout(next.layout);
+    if (!next.settings.migrations.layoutPerWorkspace130) {
+      next.settings.migrations.layoutPerWorkspace130 = true;
+      for (const ws of next.workspaces) {
+        if (ws && ws.id) next.layoutByWorkspace[ws.id] = globalLayout;
+      }
+    } else {
+      for (const ws of next.workspaces) {
+        if (!ws || !ws.id) continue;
+        if (next.layoutByWorkspace[ws.id] == null) {
+          next.layoutByWorkspace[ws.id] = globalLayout;
+        } else {
+          next.layoutByWorkspace[ws.id] = normalizeLayout(next.layoutByWorkspace[ws.id]);
+        }
+      }
+    }
+    const activeId = next.activeWorkspaceId;
+    next.layout = normalizeLayout(
+      activeId && next.layoutByWorkspace[activeId] != null
+        ? next.layoutByWorkspace[activeId]
+        : globalLayout
+    );
+    if (activeId) next.layoutByWorkspace[activeId] = next.layout;
+  }
   // Ensure per-account lastBounds field exists when present
   for (const a of next.accounts) {
     if (a && a.lastBounds && typeof a.lastBounds === 'object') {
@@ -391,6 +459,19 @@ function setState(partial) {
   if (partial && partial.freeTiles) {
     state.freeTiles = partial.freeTiles;
   }
+  if (partial && partial.layoutByWorkspace) {
+    state.layoutByWorkspace = partial.layoutByWorkspace;
+  }
+  if (partial && Object.prototype.hasOwnProperty.call(partial, 'layout')) {
+    const normalized = normalizeLayout(partial.layout);
+    state.layout = normalized;
+    if (!state.layoutByWorkspace || typeof state.layoutByWorkspace !== 'object') {
+      state.layoutByWorkspace = {};
+    }
+    if (state.activeWorkspaceId) {
+      state.layoutByWorkspace[state.activeWorkspaceId] = normalized;
+    }
+  }
   scheduleSave();
   return state;
 }
@@ -399,6 +480,29 @@ function updateState(mutator) {
   mutator(state);
   scheduleSave();
   return state;
+}
+
+/**
+ * Keep active `layout` and layoutByWorkspace[active] in sync before persist.
+ * Prefer a valid string on `layout` (writers often set only the mirror via
+ * updateState); otherwise fall back to the per-workspace map / Auto.
+ * @param {ReturnType<typeof defaultState>} s
+ */
+function reconcileLayoutBeforeSave(s) {
+  if (!s || typeof s !== 'object') return;
+  if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+    s.layoutByWorkspace = {};
+  }
+  const wsId = s.activeWorkspaceId;
+  const fromMirror =
+    typeof s.layout === 'string' && VALID_LAYOUT_SET.has(s.layout) ? s.layout : null;
+  const fromMap =
+    wsId && s.layoutByWorkspace[wsId] != null
+      ? normalizeLayout(s.layoutByWorkspace[wsId])
+      : null;
+  const chosen = fromMirror || fromMap || 'auto';
+  s.layout = chosen;
+  if (wsId) s.layoutByWorkspace[wsId] = chosen;
 }
 
 function scheduleSave() {
@@ -413,6 +517,7 @@ function scheduleSave() {
 function saveNow() {
   const file = getStatePath();
   try {
+    reconcileLayoutBeforeSave(state);
     writeJsonDurable(file, state);
   } catch (err) {
     console.error('Falha ao salvar estado:', err);
@@ -421,6 +526,11 @@ function saveNow() {
 
 function saveNowAsync() {
   const file = getStatePath();
+  try {
+    reconcileLayoutBeforeSave(state);
+  } catch {
+    /* ignore */
+  }
   const snapshot = state;
   try {
     // writeJsonDurable is sync fs; run off the current turn via setImmediate caller.
@@ -447,5 +557,7 @@ module.exports = {
   defaultState,
   defaultAppearance,
   migrate,
+  normalizeLayout,
+  VALID_LAYOUTS,
   STATE_FILE,
 };

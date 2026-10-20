@@ -449,6 +449,7 @@ function applyState(next, opts = {}) {
   }
   if (!state.appearance) state.appearance = { ...THEME_PRESETS.escuro };
   if (!state.freeTiles) state.freeTiles = {};
+  state.layout = normalizeLayout(state.layout);
   if (opts.soft) {
     // Settings-only path: keep panels/layout as-is; modules may refresh lightly.
     if (window.MultiHeizV16 && window.MultiHeizV16.renderSidebarModules) {
@@ -772,9 +773,38 @@ function isLayoutLocked() {
   return state.ui?.layoutLocked !== false;
 }
 
+/** Known Layout <select> values; invalid → "auto" so the box never looks empty. */
+const VALID_LAYOUTS = ['1', '2', '4', '6', 'auto', 'livre'];
+
+function normalizeLayout(value) {
+  return typeof value === 'string' && VALID_LAYOUTS.includes(value) ? value : 'auto';
+}
+
+function syncLayoutSelect() {
+  if (!el.layoutSelect) return;
+  let layout = normalizeLayout(state.layout);
+  state.layout = layout;
+  el.layoutSelect.value = layout;
+  // selectedIndex keeps the closed native control painted (Windows/Electron
+  // can keep .value set while the visible label stays blank).
+  let idx = VALID_LAYOUTS.indexOf(layout);
+  if (idx >= 0) el.layoutSelect.selectedIndex = idx;
+  if (
+    el.layoutSelect.value !== layout ||
+    el.layoutSelect.selectedIndex < 0 ||
+    !el.layoutSelect.options[el.layoutSelect.selectedIndex]
+  ) {
+    layout = 'auto';
+    state.layout = layout;
+    el.layoutSelect.value = layout;
+    idx = VALID_LAYOUTS.indexOf(layout);
+    if (idx >= 0) el.layoutSelect.selectedIndex = idx;
+  }
+}
+
 function render() {
   updateSidebarCollapseClasses();
-  el.layoutSelect.value = state.layout || 'auto';
+  syncLayoutSelect();
   updateLockButton();
   renderTabs();
   renderPager();
@@ -3186,7 +3216,8 @@ el.btnFreeMem.addEventListener('click', async () => {
 
 el.layoutSelect.addEventListener('change', async () => {
   popOverlay('layout-select');
-  applyState(await window.multiheiz.setLayout(el.layoutSelect.value));
+  const chosen = normalizeLayout(el.layoutSelect.value);
+  applyState(await window.multiheiz.setLayout(chosen));
 });
 
 el.btnPrev.addEventListener('click', async () => {
@@ -4390,6 +4421,11 @@ window.__multiheizUi = {
   setLayoutLocked: async (locked) => {
     applyState(await window.multiheiz.updateUi({ layoutLocked: !!locked }));
     return !!state.ui.layoutLocked;
+  },
+  /** Selftest: current Layout <select> value (never empty; invalid → auto). */
+  getLayoutSelectValue: () => {
+    syncLayoutSelect();
+    return el.layoutSelect ? el.layoutSelect.value || 'auto' : normalizeLayout(state.layout);
   },
   getFreeTiles: () => workspaceTiles(),
   proposeTiles,

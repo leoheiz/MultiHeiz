@@ -70,11 +70,11 @@ async function runProxySelftest(ctx) {
         lastUrl: '',
       }
     );
-    s.layout = {
-      cols: 2,
-      rows: 1,
-      slots: [{ accountId: 'acc-px-a' }, { accountId: 'acc-px-b' }],
-    };
+    s.layout = '2';
+    if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+      s.layoutByWorkspace = {};
+    }
+    s.layoutByWorkspace[s.activeWorkspaceId] = '2';
   });
   flushSave();
 

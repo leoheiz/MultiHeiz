@@ -120,6 +120,10 @@
         {
           "tag": "Novo",
           "text": "Volume fino por janela: ao passar o mouse no ícone de áudio, um slider de 0–100% com faixa opcional de Reforço até 200%, mudo, roda do mouse e duplo clique para 100%; o valor persiste por janela."
+        },
+        {
+          "tag": "Correção",
+          "text": "Layout (grade, painel maximizado e modo Livre) passa a ser por área de trabalho: cada categoria guarda o seu; ao trocar de área o layout daquela área é aplicado. Nova área copia o layout da área atual. O seletor Layout na barra superior deixa de aparecer vazio."
         }
       ]
     },

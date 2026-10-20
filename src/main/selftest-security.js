@@ -72,7 +72,11 @@ async function runSecuritySelftest(ctx) {
       startUrl: 'data:text/html;charset=utf-8,' + encodeURIComponent('<html><body>sec</body></html>'),
       lastUrl: '',
     });
-    s.layout = { cols: 1, rows: 1, slots: [{ accountId: 'acc-sec-a' }] };
+    s.layout = '1';
+    if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+      s.layoutByWorkspace = {};
+    }
+    s.layoutByWorkspace[s.activeWorkspaceId] = '1';
   });
   flushSave();
   panels.createPanel('acc-sec-a');

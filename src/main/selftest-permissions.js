@@ -62,11 +62,11 @@ async function runPermissionsSelftest(ctx) {
         lastUrl: '',
       }
     );
-    s.layout = {
-      cols: 2,
-      rows: 1,
-      slots: [{ accountId: 'acc-perm-a' }, { accountId: 'acc-perm-b' }],
-    };
+    s.layout = '2';
+    if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+      s.layoutByWorkspace = {};
+    }
+    s.layoutByWorkspace[s.activeWorkspaceId] = '2';
   });
   flushSave();
 

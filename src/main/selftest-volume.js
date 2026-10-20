@@ -82,11 +82,11 @@ async function runVolumeSelftest(ctx) {
       startUrl: 'about:blank',
       lastUrl: '',
     });
-    s.layout = {
-      cols: 1,
-      rows: 1,
-      slots: [{ accountId: 'acc-vol' }],
-    };
+    s.layout = '1';
+    if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+      s.layoutByWorkspace = {};
+    }
+    s.layoutByWorkspace[s.activeWorkspaceId] = '1';
   });
   flushSave();
   if (typeof emitToRenderer === 'function') {

@@ -18,6 +18,7 @@ const {
   setState,
   updateState,
   flushSave,
+  normalizeLayout,
 } = require('./state');
 const panels = require('./panels');
 const memory = require('./memory');
@@ -232,6 +233,7 @@ const SELFTEST_REMINDERS = selftestMode === 'reminders';
 const SELFTEST_SHEET = selftestMode === 'sheet';
 const SELFTEST_VOLUME = selftestMode === 'volume';
 const SELFTEST_SHOTS_VOLUME = selftestMode === 'shots-volume';
+const SELFTEST_LAYOUT_WORKSPACE = selftestMode === 'layout-workspace';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -276,7 +278,8 @@ const ANY_SELFTEST =
   SELFTEST_REMINDERS ||
   SELFTEST_SHEET ||
   SELFTEST_VOLUME ||
-  SELFTEST_SHOTS_VOLUME;
+  SELFTEST_SHOTS_VOLUME ||
+  SELFTEST_LAYOUT_WORKSPACE;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -581,7 +584,8 @@ function createWindow() {
     SELFTEST_REMINDERS ||
     SELFTEST_SHEET ||
     SELFTEST_VOLUME ||
-    SELFTEST_SHOTS_VOLUME
+    SELFTEST_SHOTS_VOLUME ||
+    SELFTEST_LAYOUT_WORKSPACE
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -602,7 +606,8 @@ function createWindow() {
     SELFTEST_REMINDERS ||
     SELFTEST_SHEET ||
     SELFTEST_VOLUME ||
-    SELFTEST_SHOTS_VOLUME;
+    SELFTEST_SHOTS_VOLUME ||
+    SELFTEST_LAYOUT_WORKSPACE;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -663,6 +668,7 @@ function createWindow() {
       SELFTEST_CONTEXTMENU ||
       SELFTEST_SETTINGS_PERF ||
       SELFTEST_WORKSPACE_DELETE ||
+      SELFTEST_LAYOUT_WORKSPACE ||
       SELFTEST_CATALOG ||
       SELFTEST_SHOTS_SIDEBAR2 ||
       SELFTEST_ADBLOCK ||
@@ -1801,6 +1807,32 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_LAYOUT_WORKSPACE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runLayoutWorkspaceSelftest } = require('./selftest-layout-workspace');
+          runLayoutWorkspaceSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -1861,11 +1893,13 @@ function publicState() {
   const accounts = Array.isArray(s.accounts)
     ? s.accounts.map((a) => catalog.enrichAccountPublic(proxy.sanitizeAccountProxyForPublic(a)))
     : [];
+  // Always expose a valid select option (heal legacy object layouts etc.).
+  const layout = normalizeLayout(s.layout);
   return {
     workspaces: s.workspaces,
     activeWorkspaceId: s.activeWorkspaceId,
     accounts,
-    layout: s.layout,
+    layout,
     page: s.page,
     maximizedAccountId: s.maximizedAccountId,
     settings: s.settings,
@@ -1905,7 +1939,20 @@ function registerIpc() {
   ipcMain.handle('state:get', () => publicState());
 
   ipcMain.handle('state:set-layout', (_e, layout) => {
-    setState({ layout, page: 0, maximizedAccountId: null });
+    const normalized = normalizeLayout(layout);
+    updateState((s) => {
+      if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+        s.layoutByWorkspace = {};
+      }
+      s.layout = normalized;
+      s.layoutByWorkspace[s.activeWorkspaceId] = normalized;
+      s.page = 0;
+      if (!s.pageByWorkspace) s.pageByWorkspace = {};
+      s.pageByWorkspace[s.activeWorkspaceId] = 0;
+      s.maximizedAccountId = null;
+      if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
+      s.maximizedByWorkspace[s.activeWorkspaceId] = null;
+    });
     return publicState();
   });
 
@@ -1925,9 +1972,13 @@ function registerIpc() {
     updateState((st) => {
       if (!st.maximizedByWorkspace) st.maximizedByWorkspace = {};
       if (!st.pageByWorkspace) st.pageByWorkspace = {};
+      if (!st.layoutByWorkspace || typeof st.layoutByWorkspace !== 'object') {
+        st.layoutByWorkspace = {};
+      }
       const prev = st.activeWorkspaceId;
       st.maximizedByWorkspace[prev] = st.maximizedAccountId || null;
       st.pageByWorkspace[prev] = st.page || 0;
+      st.layoutByWorkspace[prev] = normalizeLayout(st.layout);
       st.activeWorkspaceId = workspaceId;
       st.maximizedAccountId =
         st.maximizedByWorkspace[workspaceId] != null
@@ -1937,6 +1988,12 @@ function registerIpc() {
         typeof st.pageByWorkspace[workspaceId] === 'number'
           ? st.pageByWorkspace[workspaceId]
           : 0;
+      st.layout = normalizeLayout(
+        st.layoutByWorkspace[workspaceId] != null
+          ? st.layoutByWorkspace[workspaceId]
+          : 'auto'
+      );
+      st.layoutByWorkspace[workspaceId] = st.layout;
     });
     return publicState();
   });
@@ -2288,6 +2345,11 @@ function registerIpc() {
     const id = makeId('ws');
     updateState((s) => {
       s.workspaces.push({ id, name: name || 'Nova categoria' });
+      // New area starts with a copy of the current area's layout (documented default).
+      if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+        s.layoutByWorkspace = {};
+      }
+      s.layoutByWorkspace[id] = normalizeLayout(s.layout);
     });
     return publicState();
   });
@@ -2323,9 +2385,15 @@ function registerIpc() {
       if (s.maximizedByWorkspace && typeof s.maximizedByWorkspace === 'object') {
         delete s.maximizedByWorkspace[id];
       }
+      if (s.layoutByWorkspace && typeof s.layoutByWorkspace === 'object') {
+        delete s.layoutByWorkspace[id];
+      }
       if (s.activeWorkspaceId === id) {
         if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
         if (!s.pageByWorkspace) s.pageByWorkspace = {};
+        if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+          s.layoutByWorkspace = {};
+        }
         s.activeWorkspaceId = fallback.id;
         s.maximizedAccountId =
           s.maximizedByWorkspace[fallback.id] != null
@@ -2335,6 +2403,12 @@ function registerIpc() {
           typeof s.pageByWorkspace[fallback.id] === 'number'
             ? s.pageByWorkspace[fallback.id]
             : 0;
+        s.layout = normalizeLayout(
+          s.layoutByWorkspace[fallback.id] != null
+            ? s.layoutByWorkspace[fallback.id]
+            : 'auto'
+        );
+        s.layoutByWorkspace[fallback.id] = s.layout;
       }
     });
     return publicState();
@@ -2667,6 +2741,10 @@ async function runSelftest() {
       s.workspaces = [{ id: 'ws-default', name: 'Principal' }];
       s.activeWorkspaceId = 'ws-default';
       s.layout = '2';
+      if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+        s.layoutByWorkspace = {};
+      }
+      s.layoutByWorkspace['ws-default'] = '2';
       s.page = 0;
       s.maximizedAccountId = null;
     });
@@ -3842,9 +3920,21 @@ function popupTopMenu(opts) {
       submenu: ['1', '2', '4', '6', 'auto', 'livre'].map((layout) => ({
         label: layout === 'livre' ? 'Livre' : layout === 'auto' ? 'Auto' : layout,
         type: 'radio',
-        checked: st.layout === layout,
+        checked: normalizeLayout(st.layout) === layout,
         click: () => {
-          setState({ layout, page: 0, maximizedAccountId: null });
+          updateState((s) => {
+            if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+              s.layoutByWorkspace = {};
+            }
+            s.layout = layout;
+            s.layoutByWorkspace[s.activeWorkspaceId] = layout;
+            s.page = 0;
+            if (!s.pageByWorkspace) s.pageByWorkspace = {};
+            s.pageByWorkspace[s.activeWorkspaceId] = 0;
+            s.maximizedAccountId = null;
+            if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
+            s.maximizedByWorkspace[s.activeWorkspaceId] = null;
+          });
           emitToRenderer({ type: 'state:changed', state: publicState() });
         },
       })),

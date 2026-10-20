@@ -59,11 +59,11 @@ async function runShotsVolumeSelftest(ctx) {
       startUrl: 'about:blank',
       lastUrl: '',
     });
-    s.layout = {
-      cols: 1,
-      rows: 1,
-      slots: [{ accountId: 'acc-shot-vol' }],
-    };
+    s.layout = '1';
+    if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+      s.layoutByWorkspace = {};
+    }
+    s.layoutByWorkspace[s.activeWorkspaceId] = '1';
     if (!s.ui) s.ui = {};
     s.ui.sidebarCollapsed = false;
     s.ui.sidebarAutoHide = false;
@@ -98,6 +98,56 @@ async function runShotsVolumeSelftest(ctx) {
     'typeof window.__multiheizUi.syncNow === "function" && window.__multiheizUi.syncNow()'
   );
   await sleep(300);
+
+  // Layout <select> must show a real option (never empty) in the top bar.
+  {
+    const layoutInfo = await rendererEval(`(() => {
+      const sel = document.getElementById('layout-select');
+      if (window.__multiheizUi && window.__multiheizUi.getLayoutSelectValue) {
+        window.__multiheizUi.getLayoutSelectValue();
+      }
+      const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+      const cs = sel ? getComputedStyle(sel) : null;
+      const r = sel ? sel.getBoundingClientRect() : null;
+      return {
+        value: sel && sel.value,
+        selectedIndex: sel && sel.selectedIndex,
+        text: opt ? String(opt.textContent || '').trim() : '',
+        color: cs ? cs.color : '',
+        bg: cs ? cs.backgroundColor : '',
+        width: r ? r.width : 0,
+        height: r ? r.height : 0,
+        x: r ? r.x : 0,
+        y: r ? r.y : 0,
+      };
+    })()`);
+    assert(
+      layoutInfo &&
+        layoutInfo.value &&
+        ['1', '2', '4', '6', 'auto', 'livre'].includes(layoutInfo.value) &&
+        layoutInfo.selectedIndex >= 0 &&
+        layoutInfo.text.length > 0 &&
+        layoutInfo.width >= 40 &&
+        layoutInfo.height >= 16,
+      'Layout select must show a value, got: ' + JSON.stringify(layoutInfo)
+    );
+    console.log('PASS: Layout select value', layoutInfo);
+    // Crop for visual check (Layout box alone)
+    try {
+      const pad = 4;
+      const img = await mainWindow.webContents.capturePage({
+        x: Math.max(0, Math.floor(layoutInfo.x) - pad),
+        y: Math.max(0, Math.floor(layoutInfo.y) - pad),
+        width: Math.ceil(layoutInfo.width) + pad * 2,
+        height: Math.ceil(layoutInfo.height) + pad * 2,
+      });
+      const cropPath = path.join(outDir, 'layout-select-crop.png');
+      fs.writeFileSync(cropPath, img.toPNG());
+      console.log('wrote', cropPath, 'bytes', fs.statSync(cropPath).size);
+    } catch (err) {
+      console.log('WARN: layout crop failed', err && err.message ? err.message : err);
+    }
+  }
 
   async function shot(name, percent) {
     panels.panelSetVolume('acc-shot-vol', percent);
