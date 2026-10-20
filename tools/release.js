@@ -89,10 +89,30 @@ function pruneOldReleases(keep) {
     .sort(compareSemverDesc);
 
   const toDelete = dirs.slice(keep);
+  const oldRoot = path.join(ROOT, '_local', 'old-releases');
   for (const ver of toDelete) {
     const dir = path.join(RELEASES, ver);
-    fs.rmSync(dir, { recursive: true, force: true });
-    console.log('[release] removida versão antiga:', path.relative(ROOT, dir));
+    const dest = path.join(oldRoot, ver);
+    try {
+      fs.mkdirSync(oldRoot, { recursive: true });
+      if (fs.existsSync(dest)) {
+        fs.rmSync(dest, { recursive: true, force: true });
+      }
+      fs.renameSync(dir, dest);
+      console.log(
+        '[release] versão antiga movida:',
+        path.relative(ROOT, dir),
+        '->',
+        path.relative(ROOT, dest)
+      );
+    } catch (err) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(
+        '[release] removida versão antiga (fallback):',
+        path.relative(ROOT, dir),
+        err && err.message ? err.message : ''
+      );
+    }
   }
 
   if (dirs.length) {
