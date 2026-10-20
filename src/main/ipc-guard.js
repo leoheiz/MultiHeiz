@@ -10,12 +10,14 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { ipcMain } = require('electron');
 
-/** Channels used by panel-preload / cosmetic-preload from http(s) pages. */
+/** Channels used by panel-preload / cosmetic-preload / early-replay from http(s) pages. */
 const PANEL_CHANNELS = new Set([
   '@ghostery/adblocker/early-scriptlets',
   '@ghostery/adblocker/early-timing',
   '@ghostery/adblocker/inject-cosmetic-filters',
   '@ghostery/adblocker/is-mutation-observer-enabled',
+  'multiheiz/ext-early',
+  'multiheiz/ext-early-done',
 ]);
 
 const INDEX_HTML = path.resolve(__dirname, '..', 'renderer', 'index.html');

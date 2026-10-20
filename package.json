@@ -67,7 +67,8 @@
     "asarUnpack": [
       "**/src/main/adblock/cosmetic-preload.js",
       "**/src/preload/panel-preload.js",
-      "**/src/main/extensions/sw-shim-preload.js"
+      "**/src/main/extensions/sw-shim-preload.js",
+      "**/src/main/extensions/early-preload.js"
     ],
     "publish": [
       {

@@ -567,6 +567,26 @@ const { contextBridge, ipcRenderer } = require('electron');
       wrapScripting(chrome.scripting);
       if (self.browser && self.browser.scripting) wrapScripting(self.browser.scripting);
 
+      // Allowlist / filter config changes → main wipes early-replay cache
+      try {
+        if (chrome.storage && chrome.storage.onChanged) {
+          chrome.storage.onChanged.addListener((changes, area) => {
+            try {
+              if (area && area !== 'local') return;
+              const keys = changes ? Object.keys(changes) : [];
+              // Ignore our DNR bookkeeping key
+              if (keys.length === 1 && keys[0] === DNR_KEY) return;
+              if (!keys.length) return;
+              B.send('config-changed', { keys });
+            } catch {
+              /* ignore */
+            }
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+
       B.onEvent((e) => {
         const t = events[e.ns + '.' + e.name];
         if (t) t.__fire(...e.args);

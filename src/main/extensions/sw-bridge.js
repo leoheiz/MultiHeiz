@@ -15,11 +15,15 @@ const path = require('node:path');
 const { app, webContents, webFrameMain } = require('electron');
 const dnr = require('./dnr-shim');
 const hub = require('../adblock/web-request-hub');
+const earlyReplay = require('./early-replay');
 const { resolvePreloadPath } = require('../preload-path');
 const { abuCompatApplies, extensionIdFromScope } = require('./abu-compat');
 
 const SW_SHIM_FILE = resolvePreloadPath(
   path.join(__dirname, 'sw-shim-preload.js')
+).path;
+const EARLY_PRELOAD_FILE = resolvePreloadPath(
+  path.join(__dirname, 'early-preload.js')
 ).path;
 
 const READY_FLUSH_DELAY_MS = 50;
@@ -74,6 +78,7 @@ function setUiEmit(fn) {
  * @property {string} accountId
  * @property {Electron.Session} ses
  * @property {boolean} preloadRegistered
+ * @property {boolean} earlyPreloadRegistered
  * @property {Map<string, ExtBinding>} byRuntimeId
  * @property {Map<string, ExtBinding>} byInstallId
  * @property {Set<number>} hookedVersionIds
@@ -130,6 +135,7 @@ function ensureSession(ses, accountId) {
     accountId: accountId || '',
     ses,
     preloadRegistered: false,
+    earlyPreloadRegistered: false,
     byRuntimeId: new Map(),
     byInstallId: new Map(),
     /** @type {Map<string, { worker: object, versionId: number }[]>} */
@@ -172,6 +178,29 @@ function registerSwPreload(ses, accountId) {
   ensureStatusHook(br);
   ensureContentsHook(br);
   ensureWebRequestObservers(br);
+  ensureEarlyFramePreload(br);
+}
+
+/**
+ * Frame preload for early-replay (independent of built-in adblock).
+ * @param {SessionBridge} br
+ */
+function ensureEarlyFramePreload(br) {
+  if (br.earlyPreloadRegistered) return;
+  try {
+    br.ses.registerPreloadScript({
+      type: 'frame',
+      id: 'mh-ext-early',
+      filePath: EARLY_PRELOAD_FILE,
+    });
+    br.earlyPreloadRegistered = true;
+    console.log('[sw-bridge] registered early frame preload', EARLY_PRELOAD_FILE);
+  } catch (err) {
+    console.warn(
+      '[sw-bridge] early preload register failed',
+      err && err.message ? err.message : err
+    );
+  }
 }
 
 /**
@@ -327,6 +356,8 @@ function hookWorker(br, worker, versionId, binding) {
     }
     // Re-announce live panels so ABU rebuilds tab state after SW restart.
     reannounceLivePanels(br, binding.runtimeId);
+    // Warm early-replay cache after engine handshake (hidden, no window).
+    scheduleWarmUp(br, binding, state);
   };
 
   ipc.on(
@@ -346,8 +377,18 @@ function hookWorker(br, worker, versionId, binding) {
   ipc.on(
     'mh-sw:scripting.observed',
     guard((_e, meta) => {
-      // Early-replay cache filled in step 5.
-      void meta;
+      try {
+        earlyReplay.observe(binding.installId, binding.accountId, meta || {});
+      } catch (err) {
+        console.warn('[sw-bridge] observe', err && err.message);
+      }
+    })
+  );
+
+  ipc.on(
+    'mh-sw:config-changed',
+    guard((_e, _payload) => {
+      earlyReplay.invalidate(binding.installId, binding.accountId);
     })
   );
 
@@ -365,16 +406,29 @@ function hookWorker(br, worker, versionId, binding) {
 
   ipc.handle(
     'mh-sw:scripting.shouldSkip',
-    guard(async () => ({ skip: false }))
+    guard(async (_e, meta) => {
+      try {
+        return earlyReplay.shouldSkip(
+          binding.installId,
+          binding.accountId,
+          meta || {}
+        );
+      } catch {
+        return { skip: false };
+      }
+    })
   );
 
   ipc.handle(
     'mh-sw:dnr.updateEnabledRulesets',
     guard(async (_e, o) => {
-      return dnr.updateEnabledRulesets(binding.installId, {
+      const r = dnr.updateEnabledRulesets(binding.installId, {
         enableRulesetIds: (o && o.enableRulesetIds) || [],
         disableRulesetIds: (o && o.disableRulesetIds) || [],
       });
+      const wiped = refreshEarlyVersion(br, binding, state);
+      if (wiped) scheduleWarmUp(br, binding, state);
+      return r;
     })
   );
 
@@ -382,10 +436,13 @@ function hookWorker(br, worker, versionId, binding) {
     'mh-sw:dnr.updateDynamicRules',
     guard(async (_e, o) => {
       applyRawRules(state, 'dynamic', o);
-      return dnr.updateRules(binding.installId, 'dynamic', {
+      const r = dnr.updateRules(binding.installId, 'dynamic', {
         removeRuleIds: (o && o.removeRuleIds) || [],
         addRules: (o && o.addRules) || [],
       });
+      const wiped = refreshEarlyVersion(br, binding, state);
+      if (wiped) scheduleWarmUp(br, binding, state);
+      return r;
     })
   );
 
@@ -393,10 +450,14 @@ function hookWorker(br, worker, versionId, binding) {
     'mh-sw:dnr.updateSessionRules',
     guard(async (_e, o) => {
       applyRawRules(state, 'session', o);
-      return dnr.updateRules(binding.installId, 'session', {
+      const r = dnr.updateRules(binding.installId, 'session', {
         removeRuleIds: (o && o.removeRuleIds) || [],
         addRules: (o && o.addRules) || [],
       });
+      // Session rules are not part of cache version; still wipe on change (stealth).
+      earlyReplay.invalidate(binding.installId, binding.accountId);
+      scheduleWarmUp(br, binding, state);
+      return r;
     })
   );
 
@@ -410,6 +471,8 @@ function hookWorker(br, worker, versionId, binding) {
         (o.enableRuleIds || []).forEach((n) => cur.delete(Number(n)));
         state.disabledStatic[id] = [...cur];
       }
+      earlyReplay.invalidate(binding.installId, binding.accountId);
+      scheduleWarmUp(br, binding, state);
       return { ok: true };
     })
   );
@@ -1033,6 +1096,11 @@ function attachWebContents(br, wc) {
       }
       if (sameDoc) return;
       if (!f) return;
+      try {
+        earlyReplay.clearReplayed(wc.id, frameIdOf(f));
+      } catch {
+        /* ignore */
+      }
       emitAll(br, 'webNavigation', 'onBeforeNavigate', navDetails(navUrl, f));
       if (!f.parent) {
         emitAll(
@@ -1057,6 +1125,13 @@ function attachWebContents(br, wc) {
         transitionType: 'link',
         transitionQualifiers: [],
       });
+      for (const binding of br.byRuntimeId.values()) {
+        try {
+          earlyReplay.noteCommitted(binding.installId, binding.accountId, url);
+        } catch {
+          /* ignore */
+        }
+      }
     } catch (err) {
       console.warn('[sw-bridge] did-frame-navigate', err && err.message);
     }
@@ -1249,6 +1324,70 @@ function ensureWebRequestObservers(br) {
 }
 
 /**
+ * @param {SessionBridge} br
+ * @param {ExtBinding} binding
+ * @param {WorkerState} state
+ * @returns {string}
+ */
+function earlyVersionStr(binding, state) {
+  const eng = dnr.getEngine(binding.installId);
+  /** @type {string[]} */
+  const enabledIds = [];
+  if (eng && eng.rulesets && typeof eng.rulesets.forEach === 'function') {
+    eng.rulesets.forEach((rs, id) => {
+      if (rs && rs.enabled) enabledIds.push(String(id));
+    });
+  }
+  return earlyReplay.makeVersionStr(
+    (binding.record && binding.record.version) || '0',
+    enabledIds,
+    state.dynamicRaw || []
+  );
+}
+
+/**
+ * @param {SessionBridge} br
+ * @param {ExtBinding} binding
+ * @param {WorkerState} state
+ * @returns {boolean} wiped
+ */
+function refreshEarlyVersion(br, binding, state) {
+  void br;
+  const versionStr = earlyVersionStr(binding, state);
+  return earlyReplay.ensureVersion(
+    binding.installId,
+    binding.accountId,
+    versionStr
+  );
+}
+
+/**
+ * After SW ready: ensure cache version, then warm YouTube robots.txt if needed.
+ * @param {SessionBridge} br
+ * @param {ExtBinding} binding
+ * @param {WorkerState} state
+ */
+function scheduleWarmUp(br, binding, state) {
+  setTimeout(() => {
+    try {
+      const versionStr = earlyVersionStr(binding, state);
+      earlyReplay.ensureVersion(
+        binding.installId,
+        binding.accountId,
+        versionStr
+      );
+      earlyReplay
+        .warmUp(br.ses, binding.accountId, binding.record, versionStr)
+        .catch((err) => {
+          console.warn('[sw-bridge] warm-up', err && err.message);
+        });
+    } catch (err) {
+      console.warn('[sw-bridge] scheduleWarmUp', err && err.message);
+    }
+  }, 400);
+}
+
+/**
  * Prepare session for an abuCompat extension load (preload + bookkeeping).
  * Call BEFORE ses.extensions.loadExtension.
  * @param {Electron.Session} ses
@@ -1295,6 +1434,7 @@ function getBridge(ses) {
 
 module.exports = {
   SW_SHIM_FILE,
+  EARLY_PRELOAD_FILE,
   prepareForLoad,
   afterLoad,
   ensureSession,

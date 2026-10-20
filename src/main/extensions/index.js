@@ -271,6 +271,11 @@ function init(options) {
   } catch {
     /* ignore */
   }
+  try {
+    require('./early-replay').registerIpc();
+  } catch (err) {
+    console.warn('[extensions] early-replay ipc', err && err.message);
+  }
   store.reloadFromDisk();
   // Re-derive manifests that were stripped under prepare v1 (restore DNR from snapshot)
   try {
@@ -534,4 +539,5 @@ module.exports = {
   store,
   dnr,
   swBridge: require('./sw-bridge'),
+  earlyReplay: require('./early-replay'),
 };
