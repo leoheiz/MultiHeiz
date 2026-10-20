@@ -85,8 +85,39 @@
     return (hooks().getState && hooks().getState()) || { accounts: [], settings: {} };
   }
 
-  function applyState(st) {
-    if (hooks().applyState) hooks().applyState(st);
+  function applyState(st, opts) {
+    if (hooks().applyState) hooks().applyState(st, opts);
+  }
+
+  /**
+   * @param {unknown} a
+   * @param {unknown} b
+   */
+  function settingsJsonEqual(a, b) {
+    try {
+      return JSON.stringify(a) === JSON.stringify(b);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Only keys that differ from current settings (avoids full adblock rebuild on every toggle).
+   * @param {object} prev
+   * @param {object} next
+   */
+  function diffSettingsPartial(prev, next) {
+    const p = prev && typeof prev === 'object' ? prev : {};
+    const n = next && typeof next === 'object' ? next : {};
+    const out = {};
+    for (const key of Object.keys(n)) {
+      if (key === 'adblock' || key === 'doh' || key === 'modules' || key === 'extensions') {
+        if (!settingsJsonEqual(p[key], n[key])) out[key] = n[key];
+        continue;
+      }
+      if (!settingsJsonEqual(p[key], n[key])) out[key] = n[key];
+    }
+    return out;
   }
 
   function toast(msg) {
@@ -1907,8 +1938,14 @@
             abuCompat: !(form.extAbuCompat && form.extAbuCompat.checked === false),
           },
         };
-        const prevSidebarAlways = !!(getState().settings && getState().settings.sidebarAlwaysActive);
-        const st = await window.multiheiz.updateSettings(partial);
+        const cur = getState();
+        const prevSettings = (cur && cur.settings) || {};
+        const prevSidebarAlways = !!prevSettings.sidebarAlwaysActive;
+        const changed = diffSettingsPartial(prevSettings, partial);
+        let st = cur;
+        if (Object.keys(changed).length > 0) {
+          st = await window.multiheiz.updateSettings(changed);
+        }
         if (st && st.dohError) {
           const errEl = document.getElementById('doh-error');
           if (errEl) {
@@ -1917,7 +1954,7 @@
           }
           toast(st.dohError);
           // Keep previous DoH in state; refresh form from returned state snapshot.
-          if (st.state) applyState(st.state);
+          if (st.state) applyState(st.state, { soft: true });
           fillSettingsForm().catch(() => {});
           return;
         }
@@ -1926,24 +1963,35 @@
           errClear.hidden = true;
           errClear.textContent = '';
         }
-        applyState(st);
-        if (prevSidebarAlways !== !!partial.sidebarAlwaysActive) {
+        if (st && st.settings) {
+          applyState(st, { soft: true });
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(changed, 'sidebarAlwaysActive') &&
+          prevSidebarAlways !== !!partial.sidebarAlwaysActive
+        ) {
           if (hooks().syncSidebarAfterLegacyChange) {
             await hooks().syncSidebarAfterLegacyChange();
           }
         }
         syncDohFormVisibility();
-        await window.multiheiz.downloadsSettings({
-          askWhereToSave: !!form.askWhereToSave.checked,
-        });
+        const ask = !!form.askWhereToSave.checked;
+        const prevAsk = !!(cur && cur.downloads && cur.downloads.askWhereToSave);
+        if (ask !== prevAsk || (cur && cur.downloads == null)) {
+          await window.multiheiz.downloadsSettings({ askWhereToSave: ask });
+        }
         if (hooks().readAppearanceFromForm && hooks().updateAppearanceLive) {
           const appearance = hooks().readAppearanceFromForm();
-          const st2 = await window.multiheiz.updateAppearance(appearance);
-          applyState(st2);
+          const prevAp = (cur && cur.appearance) || {};
+          if (!settingsJsonEqual(prevAp, appearance)) {
+            const st2 = await window.multiheiz.updateAppearance(appearance);
+            applyState(st2, { soft: true });
+            hooks().updateAppearanceLive(appearance);
+          }
         }
         showSaved();
-        renderSidebarModules();
-        refreshAdblockUi();
+        if (changed.modules) renderSidebarModules();
+        if (changed.adblock) refreshAdblockUi();
       } catch (err) {
         const msg = err && err.message ? err.message : String(err || '');
         showSaveError(msg);

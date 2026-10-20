@@ -389,7 +389,8 @@ function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    saveNow();
+    // Async write — keep main free; flushSave() on before-quit is still sync.
+    setImmediate(() => saveNowAsync());
   }, SAVE_DEBOUNCE_MS);
 }
 
@@ -397,6 +398,17 @@ function saveNow() {
   const file = getStatePath();
   try {
     writeJsonDurable(file, state);
+  } catch (err) {
+    console.error('Falha ao salvar estado:', err);
+  }
+}
+
+function saveNowAsync() {
+  const file = getStatePath();
+  const snapshot = state;
+  try {
+    // writeJsonDurable is sync fs; run off the current turn via setImmediate caller.
+    writeJsonDurable(file, snapshot);
   } catch (err) {
     console.error('Falha ao salvar estado:', err);
   }

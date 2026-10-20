@@ -386,7 +386,11 @@ function applyAppearance(appearance) {
   root.style.setProperty('--sidebar-bg', merged.sidebar || base.sidebar);
 }
 
-function applyState(next) {
+/**
+ * @param {object} next
+ * @param {{ soft?: boolean }} [opts] soft=true: update state without full re-render (settings apply)
+ */
+function applyState(next, opts = {}) {
   state = next;
   if (!state.ui) {
     state.ui = {
@@ -404,6 +408,13 @@ function applyState(next) {
   }
   if (!state.appearance) state.appearance = { ...THEME_PRESETS.escuro };
   if (!state.freeTiles) state.freeTiles = {};
+  if (opts.soft) {
+    // Settings-only path: keep panels/layout as-is; modules may refresh lightly.
+    if (window.MultiHeizV16 && window.MultiHeizV16.renderSidebarModules) {
+      window.MultiHeizV16.renderSidebarModules();
+    }
+    return;
+  }
   applyAppearance(state.appearance);
   applySidebarWidthCss();
   render();

@@ -21,6 +21,9 @@ const PROVIDER_IDS = new Set(['cloudflare', 'google', 'quad9', 'adguard', 'custo
 /** @type {Array<{ secureDnsMode: string, secureDnsServers: string[], at: number }>} */
 const selftestCalls = [];
 
+/** @type {{ secureDnsMode: string, secureDnsServers: string[] } | null} */
+let lastAppliedOptions = null;
+
 function defaultDohSettings() {
   return {
     mode: 'off',
@@ -107,27 +110,53 @@ function validateDohSettings(input) {
 }
 
 /**
- * @param {{ secureDnsMode: string, secureDnsServers: string[] }} options
+ * @param {{ secureDnsMode: string, secureDnsServers: string[] }} a
+ * @param {{ secureDnsMode: string, secureDnsServers: string[] } | null} b
  */
-function configure(options) {
-  const opts = {
+function sameResolverOptions(a, b) {
+  if (!b) return false;
+  if (a.secureDnsMode !== b.secureDnsMode) return false;
+  const as = a.secureDnsServers || [];
+  const bs = b.secureDnsServers || [];
+  if (as.length !== bs.length) return false;
+  for (let i = 0; i < as.length; i++) {
+    if (as[i] !== bs[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * @param {{ secureDnsMode: string, secureDnsServers: string[] }} options
+ * @param {{ force?: boolean }} [opts]
+ */
+function configure(options, opts = {}) {
+  const conf = {
     secureDnsMode: options.secureDnsMode,
     secureDnsServers: Array.isArray(options.secureDnsServers) ? options.secureDnsServers.slice() : [],
   };
+  if (!opts.force && sameResolverOptions(conf, lastAppliedOptions)) {
+    return { ...conf, skipped: true };
+  }
   if (envGet('MULTIHEIZ_SELFTEST')) {
-    selftestCalls.push({ ...opts, at: Date.now() });
+    selftestCalls.push({ ...conf, at: Date.now() });
   }
   if (typeof app.configureHostResolver === 'function') {
-    app.configureHostResolver(opts);
+    app.configureHostResolver(conf);
   }
-  return opts;
+  lastAppliedOptions = {
+    secureDnsMode: conf.secureDnsMode,
+    secureDnsServers: conf.secureDnsServers.slice(),
+  };
+  return conf;
 }
 
 /**
  * Apply DoH from current app settings (after ready / on change).
+ * Skips configureHostResolver when options are unchanged (no panel reload).
  * @param {{ mode?: string, provider?: string, customUrl?: string } | null | undefined} dohSettings
+ * @param {{ force?: boolean }} [opts]
  */
-function applyDohSettings(dohSettings) {
+function applyDohSettings(dohSettings, opts = {}) {
   const cfg = normalizeDoh(dohSettings || defaultDohSettings());
   const built = buildHostResolverOptions(cfg);
   if (!built.ok) {
@@ -135,13 +164,13 @@ function applyDohSettings(dohSettings) {
     return {
       ok: false,
       error: built.error,
-      applied: configure({ secureDnsMode: 'off', secureDnsServers: [] }),
+      applied: configure({ secureDnsMode: 'off', secureDnsServers: [] }, { force: !!opts.force }),
       doh: cfg,
     };
   }
   return {
     ok: true,
-    applied: configure(built.options),
+    applied: configure(built.options, { force: !!opts.force }),
     doh: cfg,
   };
 }

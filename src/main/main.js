@@ -40,6 +40,7 @@ const permissions = require('./permissions');
 const { sanitizeUserStartUrl } = require('./url-policy');
 const proxy = require('./proxy');
 const doh = require('./doh');
+const settingsApply = require('./settings-apply');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -216,6 +217,7 @@ const SELFTEST_WORKSPACE_DELETE = selftestMode === 'workspace-delete';
 const SELFTEST_CONTEXTMENU = selftestMode === 'contextmenu';
 const SELFTEST_PROXY = selftestMode === 'proxy';
 const SELFTEST_DOH = selftestMode === 'doh';
+const SELFTEST_SETTINGS_PERF = selftestMode === 'settings-perf';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -246,7 +248,8 @@ const ANY_SELFTEST =
   SELFTEST_WORKSPACE_DELETE ||
   SELFTEST_CONTEXTMENU ||
   SELFTEST_PROXY ||
-  SELFTEST_DOH;
+  SELFTEST_DOH ||
+  SELFTEST_SETTINGS_PERF;
 
 // YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
 if (SELFTEST_ABU_YT || SELFTEST_BUILTIN_YT) {
@@ -527,6 +530,7 @@ function createWindow() {
     SELFTEST_SIDEBAR ||
     SELFTEST_REALCLICK_SIDEBAR ||
     SELFTEST_CONTEXTMENU ||
+    SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
@@ -593,6 +597,7 @@ function createWindow() {
       SELFTEST_SIDEBAR ||
       SELFTEST_REALCLICK_SIDEBAR ||
       SELFTEST_CONTEXTMENU ||
+      SELFTEST_SETTINGS_PERF ||
       SELFTEST_WORKSPACE_DELETE ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
@@ -1365,6 +1370,33 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_SETTINGS_PERF) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runSettingsPerfSelftest } = require('./selftest-settings-perf');
+          runSettingsPerfSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            doh,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -1515,24 +1547,48 @@ function registerIpc() {
   });
 
   ipcMain.handle('settings:update', async (_e, partial) => {
-    const adblockPartial = partial && partial.adblock ? partial.adblock : null;
-    const extensionsPartial =
-      partial && partial.extensions && typeof partial.extensions === 'object'
-        ? partial.extensions
+    const prof = settingsApply.shouldProfileSettings()
+      ? settingsApply.createSettingsProfile()
+      : null;
+    if (prof) prof.mark('enter');
+
+    const prevSettings = { ...(getState().settings || {}) };
+    // UI may send the whole form; keep only keys that actually changed.
+    const changed = settingsApply.diffSettingsPartial(prevSettings, partial || {});
+    const effects = settingsApply.classifySettingsSideEffects(changed);
+
+    const adblockPartial =
+      effects.needAdblock && changed.adblock && typeof changed.adblock === 'object'
+        ? changed.adblock
         : null;
-    const dohPartial =
-      partial && partial.doh && typeof partial.doh === 'object' ? partial.doh : null;
+    const extensionsPartial =
+      changed.extensions && typeof changed.extensions === 'object' ? changed.extensions : null;
+    const dohPartial = effects.needDoh && changed.doh && typeof changed.doh === 'object'
+      ? changed.doh
+      : null;
+
     let dohError = null;
     if (dohPartial) {
-      const prevDoh = doh.normalizeDoh(getState().settings && getState().settings.doh);
+      const prevDoh = doh.normalizeDoh(prevSettings.doh);
       const mergedDoh = doh.normalizeDoh({ ...prevDoh, ...dohPartial });
       const check = doh.validateDohSettings(mergedDoh);
       if (!check.ok) {
         dohError = check.error || 'Configuração de DNS criptografado inválida.';
       }
     }
+
+    if (Object.keys(changed).length === 0 && !dohError) {
+      if (prof) prof.mark('empty');
+      const st = publicState();
+      if (prof) {
+        st._settingsProfile = prof.finish();
+        st._settingsProfile.changedKeys = [];
+      }
+      return st;
+    }
+
     updateState((s) => {
-      const next = { ...partial };
+      const next = { ...changed };
       delete next.adblock;
       delete next.extensions;
       delete next.doh;
@@ -1543,7 +1599,7 @@ function registerIpc() {
         );
       }
       s.settings = { ...s.settings, ...next };
-      if (adblockPartial && typeof adblockPartial === 'object') {
+      if (adblockPartial) {
         const prevAb = s.settings.adblock || adblock.defaultAdblockSettings();
         s.settings.adblock = {
           ...prevAb,
@@ -1576,29 +1632,71 @@ function registerIpc() {
         s.settings.doh = doh.normalizeDoh({ ...prevDoh, ...dohPartial });
       }
     });
+    if (prof) prof.mark('state');
+
+    // Adblock rebuild is heavy — never block the IPC return path.
     if (adblockPartial) {
-      await adblock.applySettings(adblockPartial);
+      const abPartial = adblockPartial;
+      setImmediate(() => {
+        adblock.applySettings(abPartial).catch((err) => {
+          console.warn('[settings] adblock apply', err && err.message ? err.message : err);
+        });
+      });
     }
+    if (prof) prof.mark('adblockQueued');
+
     if (dohPartial && !dohError) {
-      doh.applyDohSettings(getState().settings.doh);
-    }
-    if (partial && (partial.uaIdentity || partial.preferHighPerfGpu !== undefined)) {
-      userAgent.applyAppUserAgentFallback();
-      for (const ses of panels.getAccountSessions()) {
-        userAgent.applySessionUserAgent(ses);
+      const nextDoh = doh.normalizeDoh(getState().settings.doh);
+      const prevDoh = doh.normalizeDoh(prevSettings.doh);
+      if (!settingsApply.stableEqual(prevDoh, nextDoh)) {
+        doh.applyDohSettings(nextDoh);
       }
     }
-    // Re-sync so park/throttle reflects keepBackgroundRunning / suspendHidden
-    const info = panels.getPanelDebugInfo();
-    if (info.lastSlots && info.lastSlots.length) {
-      panels.syncVisiblePanels(info.lastSlots);
-    } else {
-      panels.applyThrottling();
+    if (prof) prof.mark('doh');
+
+    if (effects.needUa) {
+      setImmediate(() => {
+        try {
+          userAgent.applyAppUserAgentFallback();
+          for (const ses of panels.getAccountSessions()) {
+            userAgent.applySessionUserAgent(ses);
+          }
+        } catch (err) {
+          console.warn('[settings] ua apply', err && err.message ? err.message : err);
+        }
+      });
     }
+    if (prof) prof.mark('uaQueued');
+
+    // Park/throttle only when related keys changed — never on DoH/appearance-only.
+    if (effects.needPanelSync) {
+      setImmediate(() => {
+        try {
+          const info = panels.getPanelDebugInfo();
+          if (info.lastSlots && info.lastSlots.length) {
+            panels.syncVisiblePanels(info.lastSlots);
+          } else {
+            panels.applyThrottling();
+          }
+        } catch (err) {
+          console.warn('[settings] panel sync', err && err.message ? err.message : err);
+        }
+      });
+    }
+    if (prof) prof.mark('done');
+
     if (dohError) {
-      return { dohError, state: publicState() };
+      const out = { dohError, state: publicState() };
+      if (prof) out._settingsProfile = prof.finish();
+      return out;
     }
-    return publicState();
+    const st = publicState();
+    if (prof) {
+      st._settingsProfile = prof.finish();
+      st._settingsProfile.changedKeys = Object.keys(changed);
+      st._settingsProfile.effects = effects;
+    }
+    return st;
   });
 
   ipcMain.handle('doh:set', (_e, partial) => {

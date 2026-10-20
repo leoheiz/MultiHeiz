@@ -68,6 +68,18 @@
         {
           "tag": "Novo",
           "text": "DNS criptografado (DNS sobre HTTPS) em Configurações → Rede: Desligado / Automático / Sempre criptografado, com Cloudflare, Google, Quad9, AdGuard ou URL personalizada."
+        },
+        {
+          "tag": "Correção",
+          "text": "Pino/seta da barra lateral responde a clique real do mouse no Windows (região de arraste só no espaçador da topbar; sem drag sob o overlay da sidebar)."
+        },
+        {
+          "tag": "Correção",
+          "text": "Menu de contexto do botão direito aparece na posição e no painel corretos; campos editáveis mostram Desfazer/Recortar/Copiar/Colar/Selecionar tudo."
+        },
+        {
+          "tag": "Correção",
+          "text": "Aplicar configurações não trava mais a interface: só aplica o que mudou, DoH sem recarregar painéis, trabalho pesado (adblock) em segundo plano."
         }
       ]
     },
