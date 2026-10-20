@@ -40,6 +40,10 @@
         {
           "tag": "Correção",
           "text": "Lojas Chrome/Edge: botões nativos escondidos; CRX do Edge por HTTPS; barra Instalar sem mensagem antiga."
+        },
+        {
+          "tag": "Novo",
+          "text": "Barra lateral: a seta agora ativa o modo esconder automaticamente (zona quente na borda, overlay sobre os painéis) ou fixa de novo; o modo antigo \"recolhido\" é migrado."
         }
       ]
     },
