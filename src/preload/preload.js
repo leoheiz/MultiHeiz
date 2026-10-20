@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('multiheiz', {
   setWorkspace: (id) => ipcRenderer.invoke('state:set-workspace', id),
   setMaximized: (accountId) => ipcRenderer.invoke('state:set-maximized', accountId),
   updateSettings: (partial) => ipcRenderer.invoke('settings:update', partial),
+  languagetoolFocusedOrigin: () => ipcRenderer.invoke('languagetool:focused-origin'),
   updateUi: (partial) => ipcRenderer.invoke('ui:update', partial),
   updateAppearance: (partial) => ipcRenderer.invoke('appearance:update', partial),
   resetAppearance: () => ipcRenderer.invoke('appearance:reset'),

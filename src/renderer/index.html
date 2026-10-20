@@ -246,6 +246,7 @@
           <button type="button" class="settings-nav-btn active" data-section="geral">Geral</button>
           <button type="button" class="settings-nav-btn" data-section="navegacao">Navegação</button>
           <button type="button" class="settings-nav-btn" data-section="rede">Rede</button>
+          <button type="button" class="settings-nav-btn" data-section="escrita">Escrita</button>
           <button type="button" class="settings-nav-btn" data-section="downloads">Downloads</button>
           <button type="button" class="settings-nav-btn" data-section="adblock">Bloqueador de anúncios</button>
           <button type="button" class="settings-nav-btn" data-section="extensoes">Extensões <span class="badge-experimental">em testes</span></button>
@@ -371,6 +372,50 @@
               Vale para o MultiHeiz inteiro. Janelas com proxy resolvem o DNS pelo proxy.
             </p>
             <p class="muted-note" id="doh-error" hidden role="alert"></p>
+          </section>
+
+          <section class="settings-pane" data-pane="escrita">
+            <label class="check">
+              <input type="checkbox" name="ltEnabled" id="lt-enabled" />
+              Corretor LanguageTool
+            </label>
+            <p class="muted-note">
+              O texto dos campos é enviado ao servidor do LanguageTool para correção.
+              Campos de senha, cartão e códigos OTP nunca são enviados. O corretor nativo
+              do Chromium continua ativo por padrão (os dois podem coexistir).
+            </p>
+            <label
+              >Idiomas (separados por vírgula)
+              <input
+                name="ltLanguages"
+                id="lt-languages"
+                spellcheck="false"
+                placeholder="pt-BR, en, es, fr, de, it, nl, ca"
+              />
+            </label>
+            <label
+              >Servidor próprio (URL https, opcional)
+              <input
+                name="ltServerUrl"
+                id="lt-server-url"
+                type="url"
+                spellcheck="false"
+                placeholder="https://languagetool.exemplo/v2/check"
+              />
+            </label>
+            <label class="check">
+              <input type="checkbox" name="ltDisableNative" id="lt-disable-native" />
+              Desligar corretor nativo do Chromium quando o LanguageTool estiver ligado
+            </label>
+            <label class="check">
+              <input type="checkbox" name="ltDisableThisSite" id="lt-disable-this-site" />
+              Desativar neste site
+            </label>
+            <p class="muted-note" id="lt-site-hint">
+              Usa a origem da janela em foco. Sites desativados:
+              <span id="lt-disabled-origins">nenhum</span>
+            </p>
+            <p class="muted-note" id="lt-error" hidden role="alert"></p>
           </section>
 
           <section class="settings-pane" data-pane="downloads">

@@ -22,6 +22,10 @@ const PANEL_CHANNELS = new Set([
   'panel:media-use',
   // Volume fino: bootstrap sync (fonte + ganho) do panel-preload
   'panel:volume-sync',
+  // Corretor LanguageTool (panel-preload → main)
+  'panel:languagetool-sync',
+  'panel:languagetool-check',
+  'panel:languagetool-matches',
 ]);
 
 const INDEX_HTML = path.resolve(__dirname, '..', 'renderer', 'index.html');

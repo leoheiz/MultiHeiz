@@ -136,6 +136,10 @@
         {
           "tag": "Novo",
           "text": "Contador de mensagens não lidas por janela: badge na barra lateral (número ou ponto) a partir do título da página; total no ícone do app (Windows) ou badge do SO (Linux/macOS); opção por janela no menu (ligada por padrão)."
+        },
+        {
+          "tag": "Novo",
+          "text": "Corretor LanguageTool por padrão (pt-BR/pt-PT, en, es, fr, de, it, nl, ca): sublinhado e sugestões em campos editáveis; senha, cartão e OTP nunca são enviados; Configurações → Escrita (ligar/desligar, idiomas, desativar neste site, servidor próprio). O corretor nativo do Chromium continua ativo por padrão."
         }
       ]
     },

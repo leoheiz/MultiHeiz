@@ -42,6 +42,7 @@ const { sanitizeUserStartUrl } = require('./url-policy');
 const catalog = require('./catalog');
 const proxy = require('./proxy');
 const doh = require('./doh');
+const languagetool = require('./languagetool');
 const settingsApply = require('./settings-apply');
 const popoverOverlay = require('./popover-overlay');
 const unread = require('./unread');
@@ -241,6 +242,7 @@ const SELFTEST_REALHOVER_VOLUME = selftestMode === 'realhover-volume';
 const SELFTEST_LAG_AUDIT = selftestMode === 'lag-audit';
 const SELFTEST_PERF = selftestMode === 'perf';
 const SELFTEST_BADGES = selftestMode === 'badges';
+const SELFTEST_LANGUAGETOOL = selftestMode === 'languagetool';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -291,7 +293,8 @@ const ANY_SELFTEST =
   SELFTEST_REALHOVER_VOLUME ||
   SELFTEST_LAG_AUDIT ||
   SELFTEST_PERF ||
-  SELFTEST_BADGES;
+  SELFTEST_BADGES ||
+  SELFTEST_LANGUAGETOOL;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -601,7 +604,8 @@ function createWindow() {
     SELFTEST_PERF ||
     SELFTEST_LAG_AUDIT ||
     SELFTEST_POPOVER_OVERLAY ||
-    SELFTEST_BADGES
+    SELFTEST_BADGES ||
+    SELFTEST_LANGUAGETOOL
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -624,7 +628,8 @@ function createWindow() {
     SELFTEST_VOLUME ||
     SELFTEST_SHOTS_VOLUME ||
     SELFTEST_LAYOUT_WORKSPACE ||
-    SELFTEST_BADGES;
+    SELFTEST_BADGES ||
+    SELFTEST_LANGUAGETOOL;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -1841,6 +1846,31 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_LANGUAGETOOL) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runLanguageToolSelftest } = require('./selftest-languagetool');
+          runLanguageToolSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_SHOTS_VOLUME) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -2195,6 +2225,10 @@ function registerIpc() {
     const dohPartial = effects.needDoh && changed.doh && typeof changed.doh === 'object'
       ? changed.doh
       : null;
+    const languageToolPartial =
+      effects.needLanguageTool && changed.languageTool && typeof changed.languageTool === 'object'
+        ? changed.languageTool
+        : null;
 
     let dohError = null;
     if (dohPartial) {
@@ -2206,7 +2240,21 @@ function registerIpc() {
       }
     }
 
-    if (Object.keys(changed).length === 0 && !dohError) {
+    let languageToolError = null;
+    if (languageToolPartial) {
+      const prevLt = languagetool.normalizeLanguageTool(prevSettings.languageTool);
+      const mergedLt = languagetool.normalizeLanguageTool({ ...prevLt, ...languageToolPartial });
+      if (mergedLt.serverUrl) {
+        const allowLoopback =
+          SELFTEST_LANGUAGETOOL || /127\.0\.0\.1|localhost/i.test(mergedLt.serverUrl);
+        const v = languagetool.validateServerUrl(mergedLt.serverUrl, {
+          allowLoopbackHttp: allowLoopback,
+        });
+        if (!v.ok) languageToolError = v.error;
+      }
+    }
+
+    if (Object.keys(changed).length === 0 && !dohError && !languageToolError) {
       if (prof) prof.mark('empty');
       const st = publicState();
       if (prof) {
@@ -2221,6 +2269,7 @@ function registerIpc() {
       delete next.adblock;
       delete next.extensions;
       delete next.doh;
+      delete next.languageTool;
       if (next.homepage != null) {
         next.homepage = sanitizeUserStartUrl(
           next.homepage,
@@ -2260,6 +2309,13 @@ function registerIpc() {
         const prevDoh = doh.normalizeDoh(s.settings.doh);
         s.settings.doh = doh.normalizeDoh({ ...prevDoh, ...dohPartial });
       }
+      if (languageToolPartial && !languageToolError) {
+        const prevLt = languagetool.normalizeLanguageTool(s.settings.languageTool);
+        s.settings.languageTool = languagetool.normalizeLanguageTool({
+          ...prevLt,
+          ...languageToolPartial,
+        });
+      }
     });
     if (prof) prof.mark('state');
 
@@ -2282,6 +2338,17 @@ function registerIpc() {
       }
     }
     if (prof) prof.mark('doh');
+
+    if (languageToolPartial && !languageToolError) {
+      setImmediate(() => {
+        try {
+          languagetool.onSettingsChanged(getState().settings, panels.getAccountSessions());
+        } catch (err) {
+          console.warn('[settings] languagetool', err && err.message ? err.message : err);
+        }
+      });
+    }
+    if (prof) prof.mark('languagetool');
 
     if (effects.needUa) {
       setImmediate(() => {
@@ -2316,6 +2383,11 @@ function registerIpc() {
 
     if (dohError) {
       const out = { dohError, state: publicState() };
+      if (prof) out._settingsProfile = prof.finish();
+      return out;
+    }
+    if (languageToolError) {
+      const out = { languageToolError, state: publicState() };
       if (prof) out._settingsProfile = prof.finish();
       return out;
     }
@@ -5239,6 +5311,33 @@ app.whenReady().then(async () => {
     doh.applyDohSettings(getState().settings && getState().settings.doh);
   } catch (err) {
     console.warn('[doh] apply', err && err.message ? err.message : err);
+  }
+  try {
+    languagetool.installLanguageTool({
+      getSettings: () => getState().settings || {},
+      updateState,
+      forEachPanelWebContents: (cb) => {
+        try {
+          for (const ses of panels.getAccountSessions()) {
+            void ses;
+          }
+          const info = panels.getPanelDebugInfo && panels.getPanelDebugInfo();
+          const ids = (getState().accounts || []).map((a) => a.id);
+          for (const id of ids) {
+            const wc = panels.getPanelCapture(id);
+            if (wc) cb(wc);
+          }
+          void info;
+        } catch {
+          /* ignore */
+        }
+      },
+      getPanelWebContents: (id) => panels.getPanelCapture(id),
+      getFocusedAccountId: () => panels.getFocusedAccountId && panels.getFocusedAccountId(),
+    });
+    languagetool.onSettingsChanged(getState().settings, panels.getAccountSessions());
+  } catch (err) {
+    console.warn('[languagetool] install', err && err.message ? err.message : err);
   }
   v16 = initV16({
     getMainWindow: () => mainWindow,

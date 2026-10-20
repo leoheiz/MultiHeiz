@@ -111,7 +111,13 @@
     const n = next && typeof next === 'object' ? next : {};
     const out = {};
     for (const key of Object.keys(n)) {
-      if (key === 'adblock' || key === 'doh' || key === 'modules' || key === 'extensions') {
+      if (
+        key === 'adblock' ||
+        key === 'doh' ||
+        key === 'modules' ||
+        key === 'extensions' ||
+        key === 'languageTool'
+      ) {
         if (!settingsJsonEqual(p[key], n[key])) out[key] = n[key];
         continue;
       }
@@ -2823,6 +2829,50 @@
     if (customWrap) customWrap.hidden = mode === 'off' || provider !== 'custom';
   }
 
+  function parseLtLanguages(raw) {
+    return String(raw || '')
+      .split(/[,;\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  function formatLtOrigins(list) {
+    if (!Array.isArray(list) || !list.length) return 'nenhum';
+    return list.join(', ');
+  }
+
+  /**
+   * @param {HTMLFormElement} form
+   * @param {object} prevLt
+   * @param {string} [focusedOrigin]
+   */
+  function collectLanguageToolPartial(form, prevLt, focusedOrigin) {
+    const prev = prevLt && typeof prevLt === 'object' ? prevLt : {};
+    let disabledOrigins = Array.isArray(prev.disabledOrigins) ? [...prev.disabledOrigins] : [];
+    const wantDisable = !!(form.ltDisableThisSite && form.ltDisableThisSite.checked);
+    const origin = String(focusedOrigin || '').trim();
+    if (origin) {
+      const idx = disabledOrigins.indexOf(origin);
+      if (wantDisable && idx < 0) disabledOrigins.push(origin);
+      if (!wantDisable && idx >= 0) disabledOrigins.splice(idx, 1);
+    }
+    const langs = parseLtLanguages(form.ltLanguages && form.ltLanguages.value);
+    return {
+      enabled: !(form.ltEnabled && form.ltEnabled.checked === false),
+      languages: langs.length
+        ? langs
+        : prev.languages || ['pt-BR', 'pt-PT', 'en', 'es', 'fr', 'de', 'it', 'nl', 'ca'],
+      serverUrl: (form.ltServerUrl && form.ltServerUrl.value) || '',
+      disabledOrigins,
+      disableNativeSpellcheck: !!(form.ltDisableNative && form.ltDisableNative.checked),
+    };
+  }
+
+  function syncLtDisabledOriginsLabel(lt) {
+    const el = document.getElementById('lt-disabled-origins');
+    if (el) el.textContent = formatLtOrigins((lt && lt.disabledOrigins) || []);
+  }
+
   let settingsSaveTimer = null;
   function autosaveSettings() {
     if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
@@ -2830,6 +2880,16 @@
       const form = document.getElementById('form-settings');
       if (!form) return;
       try {
+        const cur = getState();
+        const prevSettings = (cur && cur.settings) || {};
+        let focusedOrigin = '';
+        try {
+          if (window.multiheiz && typeof window.multiheiz.languagetoolFocusedOrigin === 'function') {
+            focusedOrigin = (await window.multiheiz.languagetoolFocusedOrigin()) || '';
+          }
+        } catch {
+          focusedOrigin = '';
+        }
         const partial = {
           openLastPage: !!form.openLastPage.checked,
           persistSessions: !!(form.persistSessions && form.persistSessions.checked),
@@ -2856,6 +2916,11 @@
             provider: (form.dohProvider && form.dohProvider.value) || 'cloudflare',
             customUrl: (form.dohCustomUrl && form.dohCustomUrl.value) || '',
           },
+          languageTool: collectLanguageToolPartial(
+            form,
+            prevSettings.languageTool || {},
+            focusedOrigin
+          ),
           frameCapHidden: Number(form.frameCapHidden && form.frameCapHidden.value) || 30,
           frameCapAll: Number(form.frameCapAll && form.frameCapAll.value) || 0,
           preferHighPerfGpu: !!(form.preferHighPerfGpu && form.preferHighPerfGpu.checked),
@@ -2876,8 +2941,6 @@
             abuCompat: !(form.extAbuCompat && form.extAbuCompat.checked === false),
           },
         };
-        const cur = getState();
-        const prevSettings = (cur && cur.settings) || {};
         const prevSidebarAlways = !!prevSettings.sidebarAlwaysActive;
         const changed = diffSettingsPartial(prevSettings, partial);
         let st = cur;
@@ -2896,10 +2959,26 @@
           fillSettingsForm().catch(() => {});
           return;
         }
+        if (st && st.languageToolError) {
+          const errEl = document.getElementById('lt-error');
+          if (errEl) {
+            errEl.hidden = false;
+            errEl.textContent = st.languageToolError;
+          }
+          toast(st.languageToolError);
+          if (st.state) applyState(st.state, { soft: true });
+          fillSettingsForm().catch(() => {});
+          return;
+        }
         const errClear = document.getElementById('doh-error');
         if (errClear) {
           errClear.hidden = true;
           errClear.textContent = '';
+        }
+        const ltErrClear = document.getElementById('lt-error');
+        if (ltErrClear) {
+          ltErrClear.hidden = true;
+          ltErrClear.textContent = '';
         }
         if (st && st.settings) {
           applyState(st, { soft: true });
@@ -3118,6 +3197,31 @@
     if (form.dohProvider) form.dohProvider.value = doh.provider || 'cloudflare';
     if (form.dohCustomUrl) form.dohCustomUrl.value = doh.customUrl || '';
     syncDohFormVisibility();
+    const lt = s.languageTool || {};
+    if (form.ltEnabled) form.ltEnabled.checked = lt.enabled !== false;
+    if (form.ltLanguages) {
+      form.ltLanguages.value = Array.isArray(lt.languages)
+        ? lt.languages.join(', ')
+        : 'pt-BR, pt-PT, en, es, fr, de, it, nl, ca';
+    }
+    if (form.ltServerUrl) form.ltServerUrl.value = lt.serverUrl || '';
+    if (form.ltDisableNative) form.ltDisableNative.checked = !!lt.disableNativeSpellcheck;
+    syncLtDisabledOriginsLabel(lt);
+    let focusedOrigin = '';
+    try {
+      if (window.multiheiz && typeof window.multiheiz.languagetoolFocusedOrigin === 'function') {
+        focusedOrigin = (await window.multiheiz.languagetoolFocusedOrigin()) || '';
+      }
+    } catch {
+      focusedOrigin = '';
+    }
+    if (form.ltDisableThisSite) {
+      form.ltDisableThisSite.checked = !!(
+        focusedOrigin &&
+        Array.isArray(lt.disabledOrigins) &&
+        lt.disabledOrigins.indexOf(focusedOrigin) >= 0
+      );
+    }
     if (form.frameCapHidden) form.frameCapHidden.value = String(Number(s.frameCapHidden) || 30);
     if (form.frameCapAll) form.frameCapAll.value = String(Number(s.frameCapAll) || 0);
     if (form.preferHighPerfGpu) form.preferHighPerfGpu.checked = !!s.preferHighPerfGpu;

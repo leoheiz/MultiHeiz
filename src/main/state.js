@@ -136,6 +136,18 @@ function defaultState() {
         provider: 'cloudflare',
         customUrl: '',
       },
+      /**
+       * Corretor LanguageTool (ligado por padrão).
+       * O texto dos campos é enviado ao servidor LT para correção.
+       * Corretor nativo do Chromium permanece ativo salvo disableNativeSpellcheck.
+       */
+      languageTool: {
+        enabled: true,
+        languages: ['pt-BR', 'pt-PT', 'en', 'es', 'fr', 'de', 'it', 'nl', 'ca'],
+        serverUrl: '',
+        disabledOrigins: [],
+        disableNativeSpellcheck: false,
+      },
       backgroundPreset: 'balanced', // balanced | always | max-save
       preferHighPerfGpu: false,
       frameCapHidden: 30,
@@ -350,6 +362,16 @@ function migrate(parsed) {
     const rawDoh =
       next.settings.doh && typeof next.settings.doh === 'object' ? next.settings.doh : null;
     next.settings.doh = rawDoh ? normalizeDoh(rawDoh) : defaultDohSettings();
+  }
+  {
+    const { normalizeLanguageTool, defaultLanguageToolSettings } = require('./languagetool');
+    const rawLt =
+      next.settings.languageTool && typeof next.settings.languageTool === 'object'
+        ? next.settings.languageTool
+        : null;
+    next.settings.languageTool = rawLt
+      ? normalizeLanguageTool(rawLt)
+      : defaultLanguageToolSettings();
   }
   if (!next.settings.backgroundPreset) next.settings.backgroundPreset = 'balanced';
   if (typeof next.settings.preferHighPerfGpu !== 'boolean') {

@@ -152,7 +152,7 @@ function computeContextMenuPopupPoint(viewBounds, params, zoomFactor = 1) {
  *   suggestion?: string,
  * }>}
  */
-function buildContextMenuTemplate(params, nav = {}) {
+function buildContextMenuTemplate(params, nav = {}, extra = {}) {
   const p = params || {};
   const editFlags = p.editFlags || {};
   const editable = isEditableContext(p);
@@ -176,6 +176,30 @@ function buildContextMenuTemplate(params, nav = {}) {
       label: 'Adicionar ao dicionário',
       enabled: true,
     });
+    items.push({ type: 'separator' });
+  }
+
+  // Sugestões do LanguageTool (coexiste com o corretor nativo do Chromium)
+  const ltSuggestions = Array.isArray(extra.ltSuggestions) ? extra.ltSuggestions : [];
+  if (editable && ltSuggestions.length) {
+    items.push({
+      id: 'lt-header',
+      label: 'Sugestões do LanguageTool',
+      enabled: false,
+    });
+    for (const s of ltSuggestions) {
+      const label = String((s && (s.label || s.replacement)) || '');
+      if (!label) continue;
+      items.push({
+        id: 'lt-replace',
+        label,
+        enabled: true,
+        suggestion: label,
+        ltOffset: Number(s.offset) || 0,
+        ltLength: Number(s.length) || 0,
+        ltReplacement: String(s.replacement || label),
+      });
+    }
     items.push({ type: 'separator' });
   }
 
@@ -470,6 +494,19 @@ function runContextAction(d, wc, params, openInNewWindow) {
       }
       break;
     }
+    case 'lt-replace': {
+      try {
+        const languagetool = require('./languagetool');
+        void languagetool.applyReplacement(wc, {
+          offset: d.ltOffset,
+          length: d.ltLength,
+          replacement: d.ltReplacement || d.suggestion,
+        });
+      } catch {
+        /* ignore */
+      }
+      break;
+    }
     case 'inspect':
       wc.inspectElement(x, y);
       break;
@@ -510,7 +547,14 @@ function attachContextMenu(webContents, options = {}) {
 
   const onContextMenu = (_event, params) => {
     const nav = readNavState(webContents);
-    const descriptors = buildContextMenuTemplate(params || {}, nav);
+    let ltSuggestions = [];
+    try {
+      const languagetool = require('./languagetool');
+      ltSuggestions = languagetool.suggestionsForContextMenu(webContents, params || {}) || [];
+    } catch {
+      ltSuggestions = [];
+    }
+    const descriptors = buildContextMenuTemplate(params || {}, nav, { ltSuggestions });
     if (typeof options.onTemplate === 'function') {
       try {
         options.onTemplate(descriptors, params || {});

@@ -476,6 +476,575 @@ injectEarlySync();
   }
 })();
 
+/**
+ * Corretor LanguageTool — overlay leve no campo (sem alterar DOM do site
+ * de forma que quebre envio). Pedidos via IPC → main (net.fetch).
+ * Campos sensíveis (password, cc-*, one-time-code, OTP, data-mh-no-spell) nunca.
+ */
+(function installLanguageToolClient() {
+  /** @type {object} */
+  let cfg = {
+    enabled: true,
+    languages: [],
+    disabledOrigins: [],
+    appLanguage: 'pt-BR',
+    debounceMs: 1500,
+  };
+  /** @type {WeakMap<Element, object>} */
+  const fieldState = new WeakMap();
+  /** @type {Element|null} */
+  let activeEl = null;
+  let reqSeq = 0;
+  let debounceTimer = null;
+  /** @type {HTMLElement|null} */
+  let overlayRoot = null;
+  /** @type {HTMLElement|null} */
+  let suggestBox = null;
+  /** @type {{ matches: object[], text: string, requestId: number }|null} */
+  let lastResult = null;
+  let lastCheckAt = 0;
+  let checksSent = 0;
+  let sensitiveBlocked = 0;
+
+  function originNow() {
+    try {
+      return location.origin || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function isOriginDisabled() {
+    const o = originNow();
+    const list = (cfg && cfg.disabledOrigins) || [];
+    return !!(o && Array.isArray(list) && list.indexOf(o) >= 0);
+  }
+
+  function fieldAttrs(el) {
+    if (!el || !el.tagName) return { tagName: '' };
+    const tagName = String(el.tagName || '');
+    const type = el.getAttribute ? el.getAttribute('type') || el.type || '' : el.type || '';
+    const autocomplete =
+      (el.getAttribute && el.getAttribute('autocomplete')) || el.autocomplete || '';
+    const inputMode =
+      (el.getAttribute && (el.getAttribute('inputmode') || el.getAttribute('inputMode'))) ||
+      el.inputMode ||
+      '';
+    const maxLength =
+      el.maxLength != null && el.maxLength >= 0
+        ? el.maxLength
+        : Number(el.getAttribute && el.getAttribute('maxlength')) || -1;
+    const noSpell =
+      !!(el.getAttribute && el.getAttribute('data-mh-no-spell') != null) ||
+      !!(el.dataset && el.dataset.mhNoSpell != null);
+    return { tagName, type, autocomplete, inputMode, maxLength, noSpell };
+  }
+
+  /** Espelha isSensitiveField do main (password / cc-* / OTP / email). */
+  function isSensitive(el) {
+    const a = fieldAttrs(el);
+    if (a.noSpell) return true;
+    const type = String(a.type || '').toLowerCase();
+    const ac = String(a.autocomplete || '')
+      .toLowerCase()
+      .trim();
+    const im = String(a.inputMode || '').toLowerCase();
+    const ml = Number(a.maxLength);
+    if (type === 'password' || type === 'email' || type === 'hidden' || type === 'file') return true;
+    if (type === 'number' || type === 'tel') return true;
+    if (
+      ac === 'one-time-code' ||
+      ac === 'current-password' ||
+      ac === 'new-password' ||
+      ac.indexOf('cc-') === 0
+    ) {
+      return true;
+    }
+    if ((im === 'numeric' || im === 'decimal') && Number.isFinite(ml) && ml > 0 && ml <= 8) {
+      return true;
+    }
+    const tag = String(a.tagName || '').toUpperCase();
+    if (tag === 'INPUT') {
+      const allowed = !type || type === 'text' || type === 'search' || type === 'url';
+      if (!allowed) return true;
+    }
+    return false;
+  }
+
+  function isEditableTarget(el) {
+    if (!el || !el.tagName) return false;
+    if (isSensitive(el)) return false;
+    const tag = String(el.tagName).toUpperCase();
+    if (tag === 'TEXTAREA') return !(el.readOnly || el.disabled);
+    if (tag === 'INPUT') {
+      const type = String(el.type || el.getAttribute('type') || '').toLowerCase();
+      return (!type || type === 'text' || type === 'search' || type === 'url') && !el.readOnly && !el.disabled;
+    }
+    if (el.isContentEditable) return true;
+    return false;
+  }
+
+  function readText(el) {
+    if (!el) return '';
+    if (el.isContentEditable) return String(el.innerText || el.textContent || '');
+    return String(el.value || '');
+  }
+
+  function detectLang(el) {
+    try {
+      if (el && el.getAttribute) {
+        const fl = el.getAttribute('lang') || (el.closest && el.closest('[lang]') && el.closest('[lang]').getAttribute('lang'));
+        if (fl) return fl;
+      }
+      if (document.documentElement && document.documentElement.lang) {
+        return document.documentElement.lang;
+      }
+    } catch {
+      /* ignore */
+    }
+    return (cfg && cfg.appLanguage) || 'pt-BR';
+  }
+
+  function ensureOverlay() {
+    if (overlayRoot && overlayRoot.isConnected) return overlayRoot;
+    const root = document.createElement('div');
+    root.setAttribute('data-mh-lt-overlay-root', '1');
+    root.style.cssText =
+      'position:absolute;left:0;top:0;pointer-events:none;z-index:2147483646;margin:0;padding:0;border:0;';
+    (document.documentElement || document.body).appendChild(root);
+    overlayRoot = root;
+    return root;
+  }
+
+  function hideSuggest() {
+    if (suggestBox && suggestBox.parentNode) suggestBox.parentNode.removeChild(suggestBox);
+    suggestBox = null;
+  }
+
+  function clearOverlayMarks() {
+    if (!overlayRoot) return;
+    while (overlayRoot.firstChild) overlayRoot.removeChild(overlayRoot.firstChild);
+    hideSuggest();
+    try {
+      if (typeof CSS !== 'undefined' && CSS.highlights && typeof CSS.highlights.delete === 'function') {
+        CSS.highlights.delete('mh-lt-errors');
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function applyTextReplacement(el, offset, length, replacement) {
+    if (!el) return false;
+    const off = Number(offset);
+    const len = Number(length);
+    const rep = String(replacement || '');
+    if (!Number.isFinite(off) || !Number.isFinite(len) || len < 0) return false;
+    if (el.isContentEditable) {
+      try {
+        const text = readText(el);
+        const next = text.slice(0, off) + rep + text.slice(off + len);
+        el.textContent = next;
+        clearOverlayMarks();
+        scheduleCheck(el);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    try {
+      const val = String(el.value || '');
+      el.value = val.slice(0, off) + rep + val.slice(off + len);
+      try {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      } catch {
+        /* ignore */
+      }
+      clearOverlayMarks();
+      scheduleCheck(el);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function showSuggestionsAt(match, clientX, clientY) {
+    hideSuggest();
+    if (!match || !Array.isArray(match.replacements) || !match.replacements.length) return;
+    const box = document.createElement('div');
+    box.setAttribute('data-mh-lt-suggest', '1');
+    box.style.cssText =
+      'position:fixed;z-index:2147483647;pointer-events:auto;background:#1e222a;color:#e8eaed;' +
+      'border:1px solid #3a404c;border-radius:6px;padding:4px 0;min-width:120px;max-width:260px;' +
+      'font:13px/1.35 Segoe UI,system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.35);';
+    const title = document.createElement('div');
+    title.textContent = 'Sugestões do LanguageTool';
+    title.style.cssText = 'padding:4px 10px;opacity:.7;font-size:11px;';
+    box.appendChild(title);
+    match.replacements.forEach((r) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = r;
+      btn.style.cssText =
+        'display:block;width:100%;text-align:left;background:transparent;border:0;color:inherit;' +
+        'padding:6px 10px;cursor:pointer;font:inherit;';
+      btn.addEventListener('mouseenter', () => {
+        btn.style.background = '#2a3140';
+      });
+      btn.addEventListener('mouseleave', () => {
+        btn.style.background = 'transparent';
+      });
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        applyTextReplacement(activeEl, match.offset, match.length, r);
+        hideSuggest();
+      });
+      box.appendChild(btn);
+    });
+    const x = Math.max(4, Number(clientX) || 0);
+    const y = Math.max(4, Number(clientY) || 0);
+    box.style.left = x + 'px';
+    box.style.top = y + 'px';
+    document.documentElement.appendChild(box);
+    suggestBox = box;
+  }
+
+  function paintMatches(el, text, matches) {
+    clearOverlayMarks();
+    if (!el || !matches || !matches.length) return;
+    lastResult = { matches, text, requestId: reqSeq };
+
+    // contenteditable: CSS Custom Highlight se disponível
+    if (el.isContentEditable) {
+      try {
+        if (typeof Highlight !== 'undefined' && CSS && CSS.highlights) {
+          const ranges = [];
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          /** @type {Text[]} */
+          const nodes = [];
+          let n;
+          while ((n = walker.nextNode())) nodes.push(/** @type {Text} */ (n));
+          let pos = 0;
+          const nodeRanges = [];
+          for (const tn of nodes) {
+            const len = tn.data.length;
+            nodeRanges.push({ node: tn, start: pos, end: pos + len });
+            pos += len;
+          }
+          for (const m of matches) {
+            const a = m.offset;
+            const b = m.offset + m.length;
+            for (const nr of nodeRanges) {
+              if (nr.end <= a || nr.start >= b) continue;
+              const r = new Range();
+              r.setStart(nr.node, Math.max(0, a - nr.start));
+              r.setEnd(nr.node, Math.min(nr.node.data.length, b - nr.start));
+              ranges.push(r);
+            }
+          }
+          if (ranges.length) {
+            // eslint-disable-next-line no-undef
+            CSS.highlights.set('mh-lt-errors', new Highlight(...ranges));
+            if (!document.getElementById('mh-lt-highlight-style')) {
+              const st = document.createElement('style');
+              st.id = 'mh-lt-highlight-style';
+              st.textContent =
+                '::highlight(mh-lt-errors){text-decoration:underline wavy #e07070;background:transparent;}';
+              document.documentElement.appendChild(st);
+            }
+          }
+          return;
+        }
+      } catch {
+        /* fallback abaixo */
+      }
+    }
+
+    // input/textarea (e fallback contenteditable): overlay de sublinhado
+    try {
+      const rect = el.getBoundingClientRect();
+      const root = ensureOverlay();
+      const layer = document.createElement('div');
+      layer.setAttribute('data-mh-lt-layer', '1');
+      const cs = window.getComputedStyle(el);
+      layer.style.cssText =
+        'position:fixed;left:' +
+        rect.left +
+        'px;top:' +
+        rect.top +
+        'px;width:' +
+        rect.width +
+        'px;height:' +
+        rect.height +
+        'px;overflow:hidden;pointer-events:none;' +
+        'font:' +
+        cs.font +
+        ';letter-spacing:' +
+        cs.letterSpacing +
+        ';white-space:pre-wrap;word-wrap:break-word;' +
+        'padding:' +
+        cs.padding +
+        ';border:' +
+        cs.borderWidth +
+        ' solid transparent;box-sizing:border-box;color:transparent;';
+      let html = '';
+      let cursor = 0;
+      const esc = (s) =>
+        String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+      const sorted = matches.slice().sort((a, b) => a.offset - b.offset);
+      for (let i = 0; i < sorted.length; i++) {
+        const m = sorted[i];
+        if (m.offset < cursor) continue;
+        html += esc(text.slice(cursor, m.offset));
+        const bad = text.slice(m.offset, m.offset + m.length);
+        html +=
+          '<span data-mh-lt-err="' +
+          i +
+          '" style="border-bottom:2px wavy #e07070;pointer-events:auto;cursor:pointer;">' +
+          esc(bad) +
+          '</span>';
+        cursor = m.offset + m.length;
+      }
+      html += esc(text.slice(cursor));
+      layer.innerHTML = html.replace(/\n/g, '<br/>');
+      layer.addEventListener(
+        'click',
+        (ev) => {
+          const t = ev.target;
+          if (!t || !t.getAttribute) return;
+          const idx = t.getAttribute('data-mh-lt-err');
+          if (idx == null) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          const m = sorted[Number(idx)];
+          if (m) showSuggestionsAt(m, ev.clientX, ev.clientY);
+        },
+        true
+      );
+      root.appendChild(layer);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function runCheck(el) {
+    if (!cfg.enabled || isOriginDisabled()) {
+      clearOverlayMarks();
+      return;
+    }
+    if (!el || !isEditableTarget(el)) {
+      if (el && isSensitive(el)) {
+        sensitiveBlocked += 1;
+        try {
+          await ipcRenderer.invoke('panel:languagetool-check', {
+            sensitive: true,
+            field: fieldAttrs(el),
+            text: '',
+            origin: originNow(),
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+    const text = readText(el);
+    const st = fieldState.get(el) || {};
+    if (st.lastText === text && st.checked) return;
+    const requestId = ++reqSeq;
+    st.pendingId = requestId;
+    fieldState.set(el, st);
+    checksSent += 1;
+    lastCheckAt = Date.now();
+    let result;
+    try {
+      result = await ipcRenderer.invoke('panel:languagetool-check', {
+        text,
+        requestId,
+        origin: originNow(),
+        fieldLang: detectLang(el),
+        pageLang: (document.documentElement && document.documentElement.lang) || '',
+        field: fieldAttrs(el),
+      });
+    } catch {
+      return;
+    }
+    if (!result || result.requestId !== requestId) return;
+    if (st.pendingId !== requestId) return;
+    if (result.skipped === 'sensitive') {
+      sensitiveBlocked += 1;
+      clearOverlayMarks();
+      return;
+    }
+    if (result.error === '429') {
+      // backoff no main — não trava a UI
+      return;
+    }
+    st.lastText = text;
+    st.checked = true;
+    fieldState.set(el, st);
+    const matches = Array.isArray(result.matches) ? result.matches : [];
+    paintMatches(el, text, matches);
+    try {
+      ipcRenderer.send('panel:languagetool-matches', { matches, text, language: result.language });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function scheduleCheck(el) {
+    activeEl = el;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    const ms = Number(cfg.debounceMs) > 0 ? Number(cfg.debounceMs) : 1500;
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      runCheck(el);
+    }, ms);
+  }
+
+  function onFocusIn(ev) {
+    const el = ev.target;
+    if (!isEditableTarget(el)) {
+      if (el && isSensitive(el)) {
+        sensitiveBlocked += 1;
+        // Conta no main sem enviar texto
+        try {
+          ipcRenderer.invoke('panel:languagetool-check', {
+            sensitive: true,
+            field: fieldAttrs(el),
+            text: '',
+            origin: originNow(),
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+    activeEl = el;
+    scheduleCheck(el);
+  }
+
+  function onInput(ev) {
+    const el = ev.target;
+    if (!isEditableTarget(el)) return;
+    const st = fieldState.get(el) || {};
+    st.checked = false;
+    fieldState.set(el, st);
+    scheduleCheck(el);
+  }
+
+  function applyConfig(next) {
+    if (!next || typeof next !== 'object') return;
+    cfg = {
+      enabled: next.enabled !== false,
+      languages: Array.isArray(next.languages) ? next.languages : cfg.languages,
+      disabledOrigins: Array.isArray(next.disabledOrigins) ? next.disabledOrigins : [],
+      appLanguage: next.appLanguage || cfg.appLanguage || 'pt-BR',
+      debounceMs: Number(next.debounceMs) > 0 ? Number(next.debounceMs) : 1500,
+    };
+    if (!cfg.enabled || isOriginDisabled()) {
+      clearOverlayMarks();
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+    }
+  }
+
+  try {
+    const boot = ipcRenderer.sendSync('panel:languagetool-sync');
+    if (boot) applyConfig(boot);
+  } catch {
+    /* ignore */
+  }
+  try {
+    ipcRenderer.on('mh-languagetool-config', (_e, payload) => applyConfig(payload));
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    document.addEventListener('focusin', onFocusIn, true);
+    document.addEventListener('input', onInput, true);
+    document.addEventListener(
+      'click',
+      (ev) => {
+        if (suggestBox && !suggestBox.contains(ev.target)) hideSuggest();
+      },
+      true
+    );
+    document.addEventListener(
+      'scroll',
+      () => {
+        if (activeEl && lastResult) paintMatches(activeEl, lastResult.text, lastResult.matches);
+      },
+      true
+    );
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    contextBridge.exposeInMainWorld('__mhLt', {
+      applyReplacement: (offset, length, replacement) =>
+        applyTextReplacement(activeEl, offset, length, replacement),
+      getDiag: () => ({
+        enabled: !!(cfg && cfg.enabled),
+        originDisabled: isOriginDisabled(),
+        checksSent,
+        sensitiveBlocked,
+        lastCheckAt,
+        matchCount: lastResult && lastResult.matches ? lastResult.matches.length : 0,
+        lastText: lastResult ? lastResult.text : '',
+        hasOverlay: !!(overlayRoot && overlayRoot.childNodes && overlayRoot.childNodes.length),
+        suggestOpen: !!suggestBox,
+      }),
+      /** Selftest: força verificação imediata (sem debounce). */
+      forceCheck: async (sel) => {
+        const el = sel ? document.querySelector(sel) : activeEl || document.activeElement;
+        if (!el) return { ok: false };
+        activeEl = el;
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+        const st = fieldState.get(el) || {};
+        st.checked = false;
+        st.lastText = '';
+        fieldState.set(el, st);
+        await runCheck(el);
+        return {
+          ok: true,
+          diag: {
+            enabled: !!(cfg && cfg.enabled),
+            originDisabled: isOriginDisabled(),
+            checksSent,
+            sensitiveBlocked,
+            lastCheckAt,
+            matchCount: lastResult && lastResult.matches ? lastResult.matches.length : 0,
+            lastText: lastResult ? lastResult.text : '',
+            hasOverlay: !!(overlayRoot && overlayRoot.childNodes && overlayRoot.childNodes.length),
+          },
+        };
+      },
+      applyFirstSuggestion: () => {
+        if (!lastResult || !lastResult.matches || !lastResult.matches.length) return false;
+        const m = lastResult.matches[0];
+        const r = m.replacements && m.replacements[0];
+        if (!r) return false;
+        return applyTextReplacement(activeEl, m.offset, m.length, r);
+      },
+    });
+  } catch {
+    /* ignore */
+  }
+})();
+
 /** Ctrl+wheel zoom — preventDefault so page pinch-zoom does not double-apply. */
 try {
   window.addEventListener(

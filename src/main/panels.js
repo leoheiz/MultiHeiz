@@ -1198,6 +1198,12 @@ function createPanel(accountId) {
     } catch {
       /* ignore */
     }
+    try {
+      const languagetool = require('./languagetool');
+      languagetool.pushConfigToWc(view.webContents, languagetool.publicConfig());
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('dom-ready', () => {
     signalLoadCommitted(accountId);
@@ -1209,6 +1215,12 @@ function createPanel(accountId) {
     try {
       const pct = volumeControl.volumeOfAccount(getAccount(accountId));
       volumeControl.pushVolumeToWebContents(view.webContents, pct);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const languagetool = require('./languagetool');
+      languagetool.pushConfigToWc(view.webContents, languagetool.publicConfig());
     } catch {
       /* ignore */
     }
