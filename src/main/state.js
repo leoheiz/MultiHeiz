@@ -45,6 +45,12 @@ function defaultState() {
     freeTiles: {},
     ui: {
       sidebarCollapsed: false,
+      /**
+       * Auto-hide sidebar (overlay on hover). Replaces the old "collapsed" toggle.
+       * When true, panels use nearly full width; a thin hot-zone reveals the sidebar
+       * as an overlay without reflowing panel HTML layout.
+       */
+      sidebarAutoHide: false,
       layoutLocked: true,
       /** Expanded sidebar width in CSS px (user-resizable) */
       sidebarWidth: 240,
@@ -295,6 +301,20 @@ function migrate(parsed) {
   if (typeof next.ui.sidebarCollapsed !== 'boolean') {
     next.ui.sidebarCollapsed = false;
   }
+  // Migrate legacy "recolhido" toggle → auto-hide (icon-rail collapse is no longer the toggle).
+  // Check *parsed* ui: defaultState already has sidebarAutoHide:false, so merging first
+  // would hide a missing key and skip migration.
+  {
+    const rawUi = parsed.ui && typeof parsed.ui === 'object' ? parsed.ui : {};
+    if (typeof rawUi.sidebarAutoHide !== 'boolean') {
+      if (rawUi.sidebarCollapsed === true) {
+        next.ui.sidebarAutoHide = true;
+        next.ui.sidebarCollapsed = false;
+      } else {
+        next.ui.sidebarAutoHide = false;
+      }
+    }
+  }
   if (typeof next.ui.sidebarWidth !== 'number' || !Number.isFinite(next.ui.sidebarWidth)) {
     next.ui.sidebarWidth = 240;
   } else {
@@ -378,5 +398,6 @@ module.exports = {
   flushSave,
   defaultState,
   defaultAppearance,
+  migrate,
   STATE_FILE,
 };
