@@ -208,6 +208,7 @@ const SELFTEST_UA = selftestMode === 'ua';
 const SELFTEST_GIS = selftestMode === 'gis';
 const SELFTEST_STORE = selftestMode === 'store';
 const SELFTEST_SIDEBAR = selftestMode === 'sidebar';
+const SELFTEST_WORKSPACE_DELETE = selftestMode === 'workspace-delete';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -233,7 +234,8 @@ const ANY_SELFTEST =
   SELFTEST_UA ||
   SELFTEST_GIS ||
   SELFTEST_STORE ||
-  SELFTEST_SIDEBAR;
+  SELFTEST_SIDEBAR ||
+  SELFTEST_WORKSPACE_DELETE;
 
 // YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
 if (SELFTEST_ABU_YT || SELFTEST_BUILTIN_YT) {
@@ -511,16 +513,18 @@ function createWindow() {
     SELFTEST_V120 ||
     SELFTEST_TITLEBAR ||
     SELFTEST_FULLSCREEN ||
-    SELFTEST_SIDEBAR
+    SELFTEST_SIDEBAR ||
+    SELFTEST_WORKSPACE_DELETE
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
         }
       : null;
 
-  // adblock-real / sidebar: keep window off-screen so nothing pops on the desktop,
-  // but still paint (layout / WebContentsView bounds).
-  const offscreenSelftest = SELFTEST_ADBLOCK_REAL || SELFTEST_SIDEBAR;
+  // adblock-real / sidebar / workspace-delete: keep window off-screen so nothing
+  // pops on the desktop, but still paint (layout / WebContentsView bounds).
+  const offscreenSelftest =
+    SELFTEST_ADBLOCK_REAL || SELFTEST_SIDEBAR || SELFTEST_WORKSPACE_DELETE;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -573,6 +577,7 @@ function createWindow() {
       SELFTEST_TITLEBAR ||
       SELFTEST_FULLSCREEN ||
       SELFTEST_SIDEBAR ||
+      SELFTEST_WORKSPACE_DELETE ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
       SELFTEST_UA,
@@ -1057,6 +1062,31 @@ function createWindow() {
             waitForLayoutSettle,
             waitForPanels,
             chromeFullscreen,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_WORKSPACE_DELETE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runWorkspaceDeleteSelftest } = require('./selftest-workspace-delete');
+          runWorkspaceDeleteSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);

@@ -34,6 +34,7 @@
     "selftest:v120": "node tools/selftest-v120.js",
     "selftest:security": "node tools/selftest-security.js",
     "selftest:sidebar": "node tools/selftest-sidebar.js",
+    "selftest:workspace-delete": "node tools/selftest-workspace-delete.js",
     "selftest:ua": "node tools/selftest-ua.js",
     "selftest:gis": "node tools/selftest-gis.js",
     "selftest:abu-yt": "node tools/selftest-abu-yt.js",
