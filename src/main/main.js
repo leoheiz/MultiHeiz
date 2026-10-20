@@ -43,6 +43,7 @@ const catalog = require('./catalog');
 const proxy = require('./proxy');
 const doh = require('./doh');
 const languagetool = require('./languagetool');
+const aiWrite = require('./ai-write');
 const settingsApply = require('./settings-apply');
 const popoverOverlay = require('./popover-overlay');
 const unread = require('./unread');
@@ -243,6 +244,7 @@ const SELFTEST_LAG_AUDIT = selftestMode === 'lag-audit';
 const SELFTEST_PERF = selftestMode === 'perf';
 const SELFTEST_BADGES = selftestMode === 'badges';
 const SELFTEST_LANGUAGETOOL = selftestMode === 'languagetool';
+const SELFTEST_AI = selftestMode === 'ai';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -294,7 +296,8 @@ const ANY_SELFTEST =
   SELFTEST_LAG_AUDIT ||
   SELFTEST_PERF ||
   SELFTEST_BADGES ||
-  SELFTEST_LANGUAGETOOL;
+  SELFTEST_LANGUAGETOOL ||
+  SELFTEST_AI;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -388,6 +391,20 @@ function setupApplicationMenu() {
         { role: 'copy', label: 'Copiar', accelerator: 'CmdOrCtrl+C' },
         { role: 'paste', label: 'Colar', accelerator: 'CmdOrCtrl+V' },
         { role: 'selectAll', label: 'Selecionar tudo', accelerator: 'CmdOrCtrl+A' },
+        { type: 'separator' },
+        {
+          label: 'IA: melhorar texto…',
+          accelerator: 'CmdOrCtrl+Shift+Space',
+          click: () => {
+            try {
+              const cfg = aiWrite.currentConfig();
+              if (!cfg.enabled) return;
+              void aiWrite.openFromFocused({});
+            } catch {
+              /* ignore */
+            }
+          },
+        },
       ],
     },
     {
@@ -605,7 +622,8 @@ function createWindow() {
     SELFTEST_LAG_AUDIT ||
     SELFTEST_POPOVER_OVERLAY ||
     SELFTEST_BADGES ||
-    SELFTEST_LANGUAGETOOL
+    SELFTEST_LANGUAGETOOL ||
+    SELFTEST_AI
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -629,7 +647,8 @@ function createWindow() {
     SELFTEST_SHOTS_VOLUME ||
     SELFTEST_LAYOUT_WORKSPACE ||
     SELFTEST_BADGES ||
-    SELFTEST_LANGUAGETOOL;
+    SELFTEST_LANGUAGETOOL ||
+    SELFTEST_AI;
   let winX = uiSize
     ? undefined
     : typeof bounds.x === 'number'
@@ -1871,6 +1890,31 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_AI) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runAiSelftest } = require('./selftest-ai');
+          runAiSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_SHOTS_VOLUME) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -2095,7 +2139,7 @@ function publicState() {
     layout,
     page: s.page,
     maximizedAccountId: s.maximizedAccountId,
-    settings: s.settings,
+    settings: aiWrite.sanitizeSettingsObject(s.settings),
     ui: s.ui || { sidebarCollapsed: false, sidebarAutoHide: false, layoutLocked: true },
     appearance: s.appearance,
     freeTiles: s.freeTiles || {},
@@ -2229,6 +2273,10 @@ function registerIpc() {
       effects.needLanguageTool && changed.languageTool && typeof changed.languageTool === 'object'
         ? changed.languageTool
         : null;
+    const aiWritePartial =
+      effects.needAiWrite && changed.aiWrite && typeof changed.aiWrite === 'object'
+        ? changed.aiWrite
+        : null;
 
     let dohError = null;
     if (dohPartial) {
@@ -2254,7 +2302,30 @@ function registerIpc() {
       }
     }
 
-    if (Object.keys(changed).length === 0 && !dohError && !languageToolError) {
+    let aiWriteError = null;
+    if (aiWritePartial) {
+      const prevAi = aiWrite.normalizeAiWrite(prevSettings.aiWrite);
+      const mergedAi = aiWrite.normalizeAiWrite({
+        ...prevAi,
+        ...aiWritePartial,
+        // Nunca aceitar chave em texto puro via settings:update
+        apiKeyEnc: prevAi.apiKeyEnc,
+      });
+      if (mergedAi.provider === 'openai-compat' || mergedAi.baseUrl) {
+        const allowLoopback =
+          SELFTEST_AI ||
+          mergedAi.provider === 'ollama' ||
+          mergedAi.provider === 'lmstudio' ||
+          /127\.0\.0\.1|localhost/i.test(mergedAi.baseUrl || '');
+        const v = aiWrite.validateBaseUrl(mergedAi.baseUrl, {
+          allowLoopbackHttp: allowLoopback,
+          provider: mergedAi.provider,
+        });
+        if (!v.ok) aiWriteError = v.error;
+      }
+    }
+
+    if (Object.keys(changed).length === 0 && !dohError && !languageToolError && !aiWriteError) {
       if (prof) prof.mark('empty');
       const st = publicState();
       if (prof) {
@@ -2270,6 +2341,7 @@ function registerIpc() {
       delete next.extensions;
       delete next.doh;
       delete next.languageTool;
+      delete next.aiWrite;
       if (next.homepage != null) {
         next.homepage = sanitizeUserStartUrl(
           next.homepage,
@@ -2316,6 +2388,19 @@ function registerIpc() {
           ...languageToolPartial,
         });
       }
+      if (aiWritePartial && !aiWriteError) {
+        const prevAi = aiWrite.normalizeAiWrite(s.settings.aiWrite);
+        const { apiKeyEnc: _dropKey, apiKey: _dropPlain, apiKeySaved: _dropSaved, ...safePartial } =
+          aiWritePartial;
+        void _dropKey;
+        void _dropPlain;
+        void _dropSaved;
+        s.settings.aiWrite = aiWrite.normalizeAiWrite({
+          ...prevAi,
+          ...safePartial,
+          apiKeyEnc: prevAi.apiKeyEnc,
+        });
+      }
     });
     if (prof) prof.mark('state');
 
@@ -2349,6 +2434,17 @@ function registerIpc() {
       });
     }
     if (prof) prof.mark('languagetool');
+
+    if (aiWritePartial && !aiWriteError) {
+      setImmediate(() => {
+        try {
+          aiWrite.onSettingsChanged(getState().settings);
+        } catch (err) {
+          console.warn('[settings] aiWrite', err && err.message ? err.message : err);
+        }
+      });
+    }
+    if (prof) prof.mark('aiWrite');
 
     if (effects.needUa) {
       setImmediate(() => {
@@ -2388,6 +2484,11 @@ function registerIpc() {
     }
     if (languageToolError) {
       const out = { languageToolError, state: publicState() };
+      if (prof) out._settingsProfile = prof.finish();
+      return out;
+    }
+    if (aiWriteError) {
+      const out = { aiWriteError, state: publicState() };
       if (prof) out._settingsProfile = prof.finish();
       return out;
     }
@@ -5338,6 +5439,44 @@ app.whenReady().then(async () => {
     languagetool.onSettingsChanged(getState().settings, panels.getAccountSessions());
   } catch (err) {
     console.warn('[languagetool] install', err && err.message ? err.message : err);
+  }
+  try {
+    const popoverOverlay = require('./popover-overlay');
+    aiWrite.installAiWrite({
+      getSettings: () => getState().settings || {},
+      updateState,
+      forEachPanelWebContents: (cb) => {
+        try {
+          const ids = (getState().accounts || []).map((a) => a.id);
+          for (const id of ids) {
+            const wc = panels.getPanelCapture(id);
+            if (wc) cb(wc);
+          }
+        } catch {
+          /* ignore */
+        }
+      },
+      getPanelWebContents: (id) => panels.getPanelCapture(id),
+      getFocusedAccountId: () => panels.getFocusedAccountId && panels.getFocusedAccountId(),
+      getPanelViewBounds: (id) => {
+        try {
+          const info = panels.getPanelDebugInfo && panels.getPanelDebugInfo();
+          const list = (info && (info.panels || info.entries || info)) || [];
+          const arr = Array.isArray(list) ? list : [];
+          const entry = arr.find((p) => p && (p.accountId === id || p.id === id));
+          if (entry && entry.bounds) return entry.bounds;
+        } catch {
+          /* ignore */
+        }
+        return null;
+      },
+      showPopover: (opts) => popoverOverlay.show(opts),
+      hidePopover: (reason) => popoverOverlay.hide(reason),
+      updatePopover: (data) => popoverOverlay.updateData(data),
+    });
+    aiWrite.onSettingsChanged(getState().settings);
+  } catch (err) {
+    console.warn('[ai-write] install', err && err.message ? err.message : err);
   }
   v16 = initV16({
     getMainWindow: () => mainWindow,

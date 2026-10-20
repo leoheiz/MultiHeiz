@@ -148,6 +148,17 @@ function defaultState() {
         disabledOrigins: [],
         disableNativeSpellcheck: false,
       },
+      /**
+       * IA experimental (escrita) — desligada por padrão.
+       * Chave só em apiKeyEnc (safeStorage); nunca texto puro.
+       */
+      aiWrite: {
+        enabled: false,
+        provider: 'gemini',
+        model: 'gemini-2.0-flash',
+        baseUrl: '',
+        apiKeyEnc: null,
+      },
       backgroundPreset: 'balanced', // balanced | always | max-save
       preferHighPerfGpu: false,
       frameCapHidden: 30,
@@ -372,6 +383,14 @@ function migrate(parsed) {
     next.settings.languageTool = rawLt
       ? normalizeLanguageTool(rawLt)
       : defaultLanguageToolSettings();
+  }
+  {
+    const { normalizeAiWrite, defaultAiWriteSettings } = require('./ai-write');
+    const rawAi =
+      next.settings.aiWrite && typeof next.settings.aiWrite === 'object'
+        ? next.settings.aiWrite
+        : null;
+    next.settings.aiWrite = rawAi ? normalizeAiWrite(rawAi) : defaultAiWriteSettings();
   }
   if (!next.settings.backgroundPreset) next.settings.backgroundPreset = 'balanced';
   if (typeof next.settings.preferHighPerfGpu !== 'boolean') {

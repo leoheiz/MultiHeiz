@@ -1284,6 +1284,34 @@ async function handlePopoverAction(payload) {
   if (type === 'ext-manage') {
     openSettingsSection('extensoes');
   }
+  if (type === 'ai-action') {
+    if (window.multiheiz && typeof window.multiheiz.aiSessionAction === 'function') {
+      const r = await window.multiheiz.aiSessionAction(payload.action);
+      if (r && !r.ok && r.error) showToast(r.error);
+    }
+    return;
+  }
+  if (type === 'ai-replace') {
+    if (window.multiheiz && typeof window.multiheiz.aiSessionReplace === 'function') {
+      const r = await window.multiheiz.aiSessionReplace();
+      if (r && !r.ok) showToast((r && r.error) || 'Não foi possível substituir.');
+    }
+    activePopoverId = null;
+    return;
+  }
+  if (type === 'ai-copy') {
+    if (window.multiheiz && typeof window.multiheiz.aiSessionCopy === 'function') {
+      const r = await window.multiheiz.aiSessionCopy();
+      if (r && r.ok) showToast('Copiado.');
+    }
+    return;
+  }
+  if (type === 'ai-cancel') {
+    if (window.multiheiz && typeof window.multiheiz.aiCancel === 'function') {
+      await window.multiheiz.aiCancel();
+    }
+    activePopoverId = null;
+  }
 }
 
 function scheduleVolumeHide() {

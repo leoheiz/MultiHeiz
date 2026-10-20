@@ -22,6 +22,7 @@ const LIGHT_OVERLAY_IDS = new Set([
   'layout-select',
   'mem-popover',
   'store-bar-menu',
+  'ai-write-popover',
 ]);
 
 /** @type {import('electron').BrowserWindow | null} */
@@ -378,6 +379,7 @@ function estimateSize(kind, data) {
   }
   if (kind === 'ext-menu') return { width: 280, height: 220 };
   if (kind === 'mem') return { width: 280, height: 200 };
+  if (kind === 'ai-write') return { width: 320, height: 280 };
   return { width: 220, height: 120 };
 }
 

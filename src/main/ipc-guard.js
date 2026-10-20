@@ -26,6 +26,9 @@ const PANEL_CHANNELS = new Set([
   'panel:languagetool-sync',
   'panel:languagetool-check',
   'panel:languagetool-matches',
+  // IA experimental (panel-preload → main)
+  'panel:ai-sync',
+  'panel:ai-open',
 ]);
 
 const INDEX_HTML = path.resolve(__dirname, '..', 'renderer', 'index.html');

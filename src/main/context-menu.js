@@ -222,6 +222,15 @@ function buildContextMenuTemplate(params, nav = {}, extra = {}) {
     }
   );
 
+  if (editable && extra.aiEnabled) {
+    items.push({ type: 'separator' });
+    items.push({
+      id: 'ai-write',
+      label: 'IA: melhorar texto…',
+      enabled: true,
+    });
+  }
+
   if (editable) {
     items.push({ type: 'separator' });
     items.push(
@@ -507,6 +516,18 @@ function runContextAction(d, wc, params, openInNewWindow) {
       }
       break;
     }
+    case 'ai-write': {
+      try {
+        const aiWrite = require('./ai-write');
+        void aiWrite.openFromFocused({
+          webContents: wc,
+          anchor: { x: Number(params && params.x) || 0, y: Number(params && params.y) || 0, width: 40, height: 24 },
+        });
+      } catch {
+        /* ignore */
+      }
+      break;
+    }
     case 'inspect':
       wc.inspectElement(x, y);
       break;
@@ -554,7 +575,14 @@ function attachContextMenu(webContents, options = {}) {
     } catch {
       ltSuggestions = [];
     }
-    const descriptors = buildContextMenuTemplate(params || {}, nav, { ltSuggestions });
+    let aiEnabled = false;
+    try {
+      const aiWrite = require('./ai-write');
+      aiEnabled = !!(aiWrite.currentConfig && aiWrite.currentConfig().enabled);
+    } catch {
+      aiEnabled = false;
+    }
+    const descriptors = buildContextMenuTemplate(params || {}, nav, { ltSuggestions, aiEnabled });
     if (typeof options.onTemplate === 'function') {
       try {
         options.onTemplate(descriptors, params || {});

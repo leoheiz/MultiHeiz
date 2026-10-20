@@ -34,6 +34,11 @@ function sanitizeState(state) {
       }
     }
   }
+  if (s.settings && s.settings.aiWrite && typeof s.settings.aiWrite === 'object') {
+    delete s.settings.aiWrite.apiKeyEnc;
+    delete s.settings.aiWrite.apiKey;
+    s.settings.aiWrite.apiKeySaved = false;
+  }
   return s;
 }
 

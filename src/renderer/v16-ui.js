@@ -116,7 +116,8 @@
         key === 'doh' ||
         key === 'modules' ||
         key === 'extensions' ||
-        key === 'languageTool'
+        key === 'languageTool' ||
+        key === 'aiWrite'
       ) {
         if (!settingsJsonEqual(p[key], n[key])) out[key] = n[key];
         continue;
@@ -2678,6 +2679,11 @@
       if (t && (t.name === 'dohMode' || t.name === 'dohProvider')) {
         syncDohFormVisibility();
       }
+      if (t && t.name === 'aiProvider') {
+        syncAiFormVisibility(form);
+      }
+      // Campo de chave: não autosave (só botão Salvar chave)
+      if (t && t.name === 'aiApiKey') return;
       autosaveSettings();
     });
     form.addEventListener('input', (e) => {
@@ -2689,7 +2695,9 @@
           t.name === 'suspendDelayMs' ||
           t.name === 'memoryLimitMb' ||
           t.name === 'panelMemoryLimitMb' ||
-          t.name === 'dohCustomUrl')
+          t.name === 'dohCustomUrl' ||
+          t.name === 'aiModel' ||
+          t.name === 'aiBaseUrl')
       ) {
         autosaveSettings();
       }
@@ -2702,6 +2710,102 @@
         const inp = document.getElementById('download-folder');
         if (inp) inp.value = s.defaultFolder || '';
         showSaved();
+      });
+    }
+
+    const btnAiSaveKey = document.getElementById('btn-ai-save-key');
+    if (btnAiSaveKey) {
+      btnAiSaveKey.addEventListener('click', async () => {
+        const inp = document.getElementById('ai-api-key');
+        const key = inp && inp.value ? inp.value : '';
+        if (!key) {
+          toast('Cole a chave antes de salvar.');
+          return;
+        }
+        if (!window.multiheiz || typeof window.multiheiz.aiSetApiKey !== 'function') return;
+        const r = await window.multiheiz.aiSetApiKey(key);
+        if (!r || !r.ok) {
+          toast((r && r.error) || 'Falha ao salvar chave');
+          return;
+        }
+        if (inp) inp.value = '';
+        syncAiKeyStatus({ apiKeySaved: true });
+        if (inp) inp.placeholder = '•••••••• (chave salva — cole outra para substituir)';
+        showSaved();
+        toast('Chave salva com segurança.');
+      });
+    }
+    const btnAiClearKey = document.getElementById('btn-ai-clear-key');
+    if (btnAiClearKey) {
+      btnAiClearKey.addEventListener('click', async () => {
+        if (!window.multiheiz || typeof window.multiheiz.aiClearApiKey !== 'function') return;
+        await window.multiheiz.aiClearApiKey();
+        const inp = document.getElementById('ai-api-key');
+        if (inp) {
+          inp.value = '';
+          inp.placeholder = 'Cole a chave (fica mascarada)';
+        }
+        syncAiKeyStatus({ apiKeySaved: false });
+        showSaved();
+      });
+    }
+    const btnAiTest = document.getElementById('btn-ai-test');
+    if (btnAiTest) {
+      btnAiTest.addEventListener('click', async () => {
+        const st = document.getElementById('ai-test-status');
+        if (st) {
+          st.hidden = false;
+          st.textContent = 'Testando…';
+        }
+        btnAiTest.disabled = true;
+        try {
+          autosaveSettings();
+          await new Promise((r) => setTimeout(r, 200));
+          const r = await window.multiheiz.aiTestConnection();
+          if (st) {
+            st.textContent = r && r.ok ? 'Conexão ok.' : (r && r.error) || 'Falha no teste.';
+          }
+          if (r && r.ok) toast('Conexão ok.');
+          else toast((r && r.error) || 'Falha no teste.');
+        } finally {
+          btnAiTest.disabled = false;
+        }
+      });
+    }
+    const btnAiProbe = document.getElementById('btn-ai-probe');
+    if (btnAiProbe) {
+      btnAiProbe.addEventListener('click', async () => {
+        const st = document.getElementById('ai-probe-status');
+        if (st) {
+          st.hidden = false;
+          st.textContent = 'Procurando…';
+        }
+        btnAiProbe.disabled = true;
+        try {
+          const r = await window.multiheiz.aiProbeLocal();
+          const parts = [];
+          if (r && r.ollama && r.ollama.ok) {
+            parts.push(
+              'Ollama: ' +
+                ((r.ollama.models && r.ollama.models.length && r.ollama.models.join(', ')) ||
+                  'online (sem modelos)')
+            );
+          } else {
+            parts.push('Ollama: não encontrado em 127.0.0.1:11434');
+          }
+          if (r && r.lmstudio && r.lmstudio.ok) {
+            parts.push(
+              'LM Studio: ' +
+                ((r.lmstudio.models && r.lmstudio.models.length && r.lmstudio.models.join(', ')) ||
+                  'online')
+            );
+          } else {
+            parts.push('LM Studio: não encontrado em 127.0.0.1:1234');
+          }
+          if (st) st.textContent = parts.join(' · ');
+        } finally {
+          btnAiProbe.disabled = false;
+        }
       });
     }
 
@@ -2868,6 +2972,34 @@
     };
   }
 
+  /**
+   * Parcial de IA (sem chave — chave vai por IPC dedicado).
+   * @param {HTMLFormElement} form
+   */
+  function collectAiWritePartial(form) {
+    return {
+      enabled: !!(form.aiEnabled && form.aiEnabled.checked),
+      provider: (form.aiProvider && form.aiProvider.value) || 'gemini',
+      model: (form.aiModel && form.aiModel.value) || '',
+      baseUrl: (form.aiBaseUrl && form.aiBaseUrl.value) || '',
+    };
+  }
+
+  function syncAiFormVisibility(form) {
+    const provider = (form && form.aiProvider && form.aiProvider.value) || 'gemini';
+    const baseWrap = document.getElementById('ai-base-url-wrap');
+    const keyWrap = document.getElementById('ai-key-wrap');
+    const local = provider === 'ollama' || provider === 'lmstudio';
+    if (baseWrap) baseWrap.hidden = provider !== 'openai-compat';
+    if (keyWrap) keyWrap.hidden = local;
+  }
+
+  function syncAiKeyStatus(ai) {
+    const el = document.getElementById('ai-key-status');
+    if (!el) return;
+    el.textContent = ai && ai.apiKeySaved ? 'Chave salva (criptografada).' : 'Nenhuma chave salva.';
+  }
+
   function syncLtDisabledOriginsLabel(lt) {
     const el = document.getElementById('lt-disabled-origins');
     if (el) el.textContent = formatLtOrigins((lt && lt.disabledOrigins) || []);
@@ -2889,6 +3021,12 @@
           }
         } catch {
           focusedOrigin = '';
+        }
+        const prevForDiff = { ...prevSettings };
+        if (prevForDiff.aiWrite && typeof prevForDiff.aiWrite === 'object') {
+          const { apiKeySaved: _aks, ...aiRest } = prevForDiff.aiWrite;
+          void _aks;
+          prevForDiff.aiWrite = aiRest;
         }
         const partial = {
           openLastPage: !!form.openLastPage.checked,
@@ -2921,6 +3059,7 @@
             prevSettings.languageTool || {},
             focusedOrigin
           ),
+          aiWrite: collectAiWritePartial(form),
           frameCapHidden: Number(form.frameCapHidden && form.frameCapHidden.value) || 30,
           frameCapAll: Number(form.frameCapAll && form.frameCapAll.value) || 0,
           preferHighPerfGpu: !!(form.preferHighPerfGpu && form.preferHighPerfGpu.checked),
@@ -2942,7 +3081,7 @@
           },
         };
         const prevSidebarAlways = !!prevSettings.sidebarAlwaysActive;
-        const changed = diffSettingsPartial(prevSettings, partial);
+        const changed = diffSettingsPartial(prevForDiff, partial);
         let st = cur;
         if (Object.keys(changed).length > 0) {
           st = await window.multiheiz.updateSettings(changed);
@@ -2970,6 +3109,17 @@
           fillSettingsForm().catch(() => {});
           return;
         }
+        if (st && st.aiWriteError) {
+          const errEl = document.getElementById('ai-error');
+          if (errEl) {
+            errEl.hidden = false;
+            errEl.textContent = st.aiWriteError;
+          }
+          toast(st.aiWriteError);
+          if (st.state) applyState(st.state, { soft: true });
+          fillSettingsForm().catch(() => {});
+          return;
+        }
         const errClear = document.getElementById('doh-error');
         if (errClear) {
           errClear.hidden = true;
@@ -2979,6 +3129,11 @@
         if (ltErrClear) {
           ltErrClear.hidden = true;
           ltErrClear.textContent = '';
+        }
+        const aiErrClear = document.getElementById('ai-error');
+        if (aiErrClear) {
+          aiErrClear.hidden = true;
+          aiErrClear.textContent = '';
         }
         if (st && st.settings) {
           applyState(st, { soft: true });
@@ -3222,6 +3377,19 @@
         lt.disabledOrigins.indexOf(focusedOrigin) >= 0
       );
     }
+    const ai = s.aiWrite || {};
+    if (form.aiEnabled) form.aiEnabled.checked = !!ai.enabled;
+    if (form.aiProvider) form.aiProvider.value = ai.provider || 'gemini';
+    if (form.aiModel) form.aiModel.value = ai.model || '';
+    if (form.aiBaseUrl) form.aiBaseUrl.value = ai.baseUrl || '';
+    if (form.aiApiKey) form.aiApiKey.value = '';
+    if (form.aiApiKey && ai.apiKeySaved) {
+      form.aiApiKey.placeholder = '•••••••• (chave salva — cole outra para substituir)';
+    } else if (form.aiApiKey) {
+      form.aiApiKey.placeholder = 'Cole a chave (fica mascarada)';
+    }
+    syncAiKeyStatus(ai);
+    syncAiFormVisibility(form);
     if (form.frameCapHidden) form.frameCapHidden.value = String(Number(s.frameCapHidden) || 30);
     if (form.frameCapAll) form.frameCapAll.value = String(Number(s.frameCapAll) || 0);
     if (form.preferHighPerfGpu) form.preferHighPerfGpu.checked = !!s.preferHighPerfGpu;

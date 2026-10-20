@@ -20,7 +20,7 @@ function stableEqual(a, b) {
 
 /**
  * Strip unchanged keys from a settings partial vs previous settings.
- * Nested objects (doh, adblock, modules, extensions, languageTool) compared as wholes.
+ * Nested objects (doh, adblock, modules, extensions, languageTool, aiWrite) compared as wholes.
  * @param {object} prev
  * @param {object} nextPartial  candidate full-or-partial from UI
  * @returns {object} only changed keys
@@ -36,7 +36,8 @@ function diffSettingsPartial(prev, nextPartial) {
       key === 'doh' ||
       key === 'modules' ||
       key === 'extensions' ||
-      key === 'languageTool'
+      key === 'languageTool' ||
+      key === 'aiWrite'
     ) {
       if (!stableEqual(p[key], n[key])) out[key] = n[key];
       continue;
@@ -61,7 +62,7 @@ const UA_KEYS = new Set(['uaIdentity', 'preferHighPerfGpu']);
 
 /**
  * @param {object} changedPartial  already-diffed keys being applied
- * @returns {{ needPanelSync: boolean, needUa: boolean, needAdblock: boolean, needDoh: boolean, needLanguageTool: boolean }}
+ * @returns {{ needPanelSync: boolean, needUa: boolean, needAdblock: boolean, needDoh: boolean, needLanguageTool: boolean, needAiWrite: boolean }}
  */
 function classifySettingsSideEffects(changedPartial) {
   const c = changedPartial && typeof changedPartial === 'object' ? changedPartial : {};
@@ -77,6 +78,7 @@ function classifySettingsSideEffects(changedPartial) {
     needAdblock: !!(c.adblock && typeof c.adblock === 'object'),
     needDoh: !!(c.doh && typeof c.doh === 'object'),
     needLanguageTool: !!(c.languageTool && typeof c.languageTool === 'object'),
+    needAiWrite: !!(c.aiWrite && typeof c.aiWrite === 'object'),
   };
 }
 

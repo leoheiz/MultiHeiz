@@ -1204,6 +1204,12 @@ function createPanel(accountId) {
     } catch {
       /* ignore */
     }
+    try {
+      const aiWrite = require('./ai-write');
+      aiWrite.pushConfigToWc(view.webContents, aiWrite.publicConfig());
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('dom-ready', () => {
     signalLoadCommitted(accountId);
@@ -1221,6 +1227,12 @@ function createPanel(accountId) {
     try {
       const languagetool = require('./languagetool');
       languagetool.pushConfigToWc(view.webContents, languagetool.publicConfig());
+    } catch {
+      /* ignore */
+    }
+    try {
+      const aiWrite = require('./ai-write');
+      aiWrite.pushConfigToWc(view.webContents, aiWrite.publicConfig());
     } catch {
       /* ignore */
     }

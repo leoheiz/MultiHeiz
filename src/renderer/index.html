@@ -416,6 +416,99 @@
               <span id="lt-disabled-origins">nenhum</span>
             </p>
             <p class="muted-note" id="lt-error" hidden role="alert"></p>
+
+            <hr class="settings-sep" />
+            <h3 class="settings-subhead">
+              IA para escrever
+              <span class="badge-experimental">Experimental (em testes)</span>
+            </h3>
+            <label class="check">
+              <input type="checkbox" name="aiEnabled" id="ai-enabled" />
+              Ativar módulo de IA (desligado por padrão)
+            </label>
+            <p class="muted-note" id="ai-training-warning">
+              Nos planos gratuitos, o texto enviado pode ser usado para treinar o modelo. Evite
+              dados sensíveis. Nenhuma chave embutida no app.
+            </p>
+            <label
+              >Provedor
+              <select name="aiProvider" id="ai-provider">
+                <option value="gemini">Google Gemini</option>
+                <option value="groq">Groq</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="openai-compat">Compatível com OpenAI</option>
+                <option value="ollama">Ollama (local)</option>
+                <option value="lmstudio">LM Studio (local)</option>
+              </select>
+            </label>
+            <label
+              >Modelo
+              <input name="aiModel" id="ai-model" spellcheck="false" placeholder="ex.: gemini-2.0-flash" />
+            </label>
+            <label id="ai-base-url-wrap" hidden
+              >URL base (https)
+              <input
+                name="aiBaseUrl"
+                id="ai-base-url"
+                type="url"
+                spellcheck="false"
+                placeholder="https://api.exemplo.com/v1"
+              />
+            </label>
+            <label id="ai-key-wrap"
+              >Chave da API
+              <div class="row-inline">
+                <input
+                  name="aiApiKey"
+                  id="ai-api-key"
+                  type="password"
+                  autocomplete="new-password"
+                  data-mh-no-ai
+                  spellcheck="false"
+                  placeholder="Cole a chave (fica mascarada)"
+                />
+                <button type="button" class="btn ghost" id="btn-ai-save-key">Salvar chave</button>
+                <button type="button" class="btn ghost" id="btn-ai-clear-key">Limpar</button>
+              </div>
+            </label>
+            <p class="muted-note" id="ai-key-status">Nenhuma chave salva.</p>
+            <div class="row-inline">
+              <button type="button" class="btn ghost" id="btn-ai-test">Testar conexão</button>
+              <button type="button" class="btn ghost" id="btn-ai-probe">Procurar modelo local</button>
+            </div>
+            <p class="muted-note" id="ai-test-status" hidden role="status"></p>
+            <p class="muted-note" id="ai-probe-status" hidden></p>
+            <div id="ai-local-docs" class="ai-local-docs">
+              <p class="muted-note">
+                Modelo local: conecte ao Ollama (<code>http://127.0.0.1:11434</code>) ou LM Studio
+                (<code>http://127.0.0.1:1234/v1</code>) se já tiver instalado. Baixar pelo MultiHeiz
+                ainda está <strong>em breve</strong> — por enquanto use o Ollama:
+              </p>
+              <ul class="muted-note ai-model-list">
+                <li>
+                  <strong>Qwen2.5 1.5B Instruct</strong> (~1 GB, recomendado) —
+                  <code>ollama pull qwen2.5:1.5b-instruct</code>
+                </li>
+                <li>
+                  <strong>Gemma 3 1B</strong> (~800 MB, leve) —
+                  <code>ollama pull gemma3:1b</code>
+                </li>
+                <li>
+                  <strong>Gemma 3 4B</strong> (~2,5 GB; pede 6–8 GB de RAM livres) —
+                  <code>ollama pull gemma3:4b</code>
+                </li>
+              </ul>
+              <p class="muted-note">
+                Aviso: o download consome espaço em disco e banda. O MultiHeiz não embute runtime
+                nesta etapa.
+              </p>
+            </div>
+            <p class="muted-note">
+              Uso: menu de contexto em campos editáveis ou atalho
+              <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Espaço</kbd>. Não age em senha, cartão, OTP nem
+              campos com <code>data-mh-no-ai</code>.
+            </p>
+            <p class="muted-note" id="ai-error" hidden role="alert"></p>
           </section>
 
           <section class="settings-pane" data-pane="downloads">

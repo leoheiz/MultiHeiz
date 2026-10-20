@@ -1045,6 +1045,237 @@ injectEarlySync();
   }
 })();
 
+/**
+ * IA experimental — atalho / leitura de campo / substituição.
+ * Pedidos só pelo main; campos sensíveis e data-mh-no-ai bloqueados.
+ */
+(function installAiWriteClient() {
+  /** @type {{ enabled: boolean, provider?: string }} */
+  let cfg = { enabled: false };
+  let openCount = 0;
+  let blockedCount = 0;
+  /** @type {Element|null} */
+  let lastAiEl = null;
+
+  function applyConfig(next) {
+    if (!next || typeof next !== 'object') return;
+    cfg = {
+      enabled: !!next.enabled,
+      provider: next.provider || '',
+    };
+  }
+
+  function fieldAttrs(el) {
+    if (!el || !el.tagName) return { tagName: '' };
+    const tagName = String(el.tagName || '');
+    const type = el.getAttribute ? el.getAttribute('type') || el.type || '' : el.type || '';
+    const autocomplete =
+      (el.getAttribute && el.getAttribute('autocomplete')) || el.autocomplete || '';
+    const inputMode =
+      (el.getAttribute && (el.getAttribute('inputmode') || el.getAttribute('inputMode'))) ||
+      el.inputMode ||
+      '';
+    const maxLength =
+      el.maxLength != null && el.maxLength >= 0
+        ? el.maxLength
+        : Number(el.getAttribute && el.getAttribute('maxlength')) || -1;
+    const noAi =
+      !!(el.getAttribute && el.getAttribute('data-mh-no-ai') != null) ||
+      !!(el.dataset && el.dataset.mhNoAi != null);
+    return { tagName, type, autocomplete, inputMode, maxLength, noAi, 'data-mh-no-ai': noAi };
+  }
+
+  function isBlocked(el) {
+    const a = fieldAttrs(el);
+    if (a.noAi) return true;
+    const type = String(a.type || '').toLowerCase();
+    if (type === 'password') return true;
+    const ac = String(a.autocomplete || '')
+      .toLowerCase()
+      .trim();
+    if (
+      ac === 'one-time-code' ||
+      ac === 'current-password' ||
+      ac === 'new-password' ||
+      ac.endsWith('-password') ||
+      ac.indexOf('cc-') === 0
+    ) {
+      return true;
+    }
+    const im = String(a.inputMode || '').toLowerCase();
+    const ml = Number(a.maxLength);
+    if ((im === 'numeric' || im === 'decimal' || type === 'tel') && Number.isFinite(ml) && ml > 0 && ml <= 8) {
+      return true;
+    }
+    return false;
+  }
+
+  function isEditable(el) {
+    if (!el || !el.tagName) return false;
+    const tag = String(el.tagName).toUpperCase();
+    if (tag === 'TEXTAREA') return !(el.readOnly || el.disabled);
+    if (tag === 'INPUT') {
+      const type = String(el.type || el.getAttribute('type') || 'text').toLowerCase();
+      const ok = !type || type === 'text' || type === 'search' || type === 'url' || type === 'email';
+      return ok && !(el.readOnly || el.disabled);
+    }
+    if (el.isContentEditable) return true;
+    return false;
+  }
+
+  function readText(el) {
+    if (!el) return '';
+    const tag = String(el.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return String(el.value || '');
+    if (el.isContentEditable) return String(el.innerText || el.textContent || '');
+    return '';
+  }
+
+  function writeText(el, text) {
+    if (!el) return false;
+    const tag = String(el.tagName || '').toUpperCase();
+    const value = String(text || '');
+    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      el.focus();
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }
+    if (el.isContentEditable) {
+      el.focus();
+      el.innerText = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+    return false;
+  }
+
+  function anchorOf(el) {
+    try {
+      const r = el.getBoundingClientRect();
+      return {
+        anchorX: Math.round(r.left),
+        anchorY: Math.round(r.top),
+        anchorW: Math.round(r.width) || 40,
+        anchorH: Math.round(r.height) || 24,
+      };
+    } catch {
+      return { anchorX: 40, anchorY: 40, anchorW: 40, anchorH: 24 };
+    }
+  }
+
+  function readActive() {
+    if (!cfg.enabled) {
+      return { ok: false, error: 'disabled' };
+    }
+    const el = document.activeElement;
+    if (!el || !el.tagName) {
+      return { ok: false, error: 'no-field' };
+    }
+    const tag = String(el.tagName).toUpperCase();
+    const isField = tag === 'TEXTAREA' || tag === 'INPUT' || !!el.isContentEditable;
+    if (!isField) {
+      return { ok: false, error: 'no-field' };
+    }
+    // Senha/OTP/etc.: detectar bloqueio antes do filtro de tipos "editáveis"
+    if (isBlocked(el)) {
+      blockedCount += 1;
+      lastAiEl = null;
+      return { ok: false, error: 'sensitive', sensitive: true, field: fieldAttrs(el) };
+    }
+    if (!isEditable(el)) {
+      return { ok: false, error: 'no-field' };
+    }
+    lastAiEl = el;
+    const text = readText(el);
+    const a = anchorOf(el);
+    return {
+      ok: true,
+      text,
+      field: fieldAttrs(el),
+      sensitive: false,
+      ...a,
+    };
+  }
+
+  function applyText(text) {
+    let el = lastAiEl;
+    if (!el || !el.isConnected) el = document.activeElement;
+    if (!isEditable(el) || isBlocked(el)) return false;
+    const ok = writeText(el, text);
+    if (ok) lastAiEl = el;
+    return ok;
+  }
+
+  async function openAi() {
+    if (!cfg.enabled) {
+      blockedCount += 1;
+      return { ok: false, error: 'disabled' };
+    }
+    openCount += 1;
+    try {
+      return await ipcRenderer.invoke('panel:ai-open');
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  }
+
+  try {
+    const boot = ipcRenderer.sendSync('panel:ai-sync');
+    if (boot) applyConfig(boot);
+  } catch {
+    /* ignore */
+  }
+  try {
+    ipcRenderer.on('mh-ai-config', (_e, payload) => applyConfig(payload));
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (!cfg.enabled) return;
+        const space = e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
+        if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || !space) return;
+        e.preventDefault();
+        e.stopPropagation();
+        void openAi();
+      },
+      true
+    );
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    contextBridge.exposeInMainWorld('__mhAi', {
+      readActive,
+      applyText,
+      open: openAi,
+      getDiag: () => ({
+        enabled: !!cfg.enabled,
+        openCount,
+        blockedCount,
+      }),
+      /** Selftest: foca seletor e abre. */
+      openOn: async (sel) => {
+        const el = sel ? document.querySelector(sel) : document.activeElement;
+        if (el && typeof el.focus === 'function') el.focus();
+        return openAi();
+      },
+      isBlocked: (sel) => {
+        const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+        return isBlocked(el);
+      },
+    });
+  } catch {
+    /* ignore */
+  }
+})();
+
 /** Ctrl+wheel zoom — preventDefault so page pinch-zoom does not double-apply. */
 try {
   window.addEventListener(

@@ -140,6 +140,10 @@
         {
           "tag": "Novo",
           "text": "Corretor LanguageTool por padrão (pt-BR/pt-PT, en, es, fr, de, it, nl, ca): sublinhado e sugestões em campos editáveis; senha, cartão e OTP nunca são enviados; Configurações → Escrita (ligar/desligar, idiomas, desativar neste site, servidor próprio). O corretor nativo do Chromium continua ativo por padrão."
+        },
+        {
+          "tag": "Novo",
+          "text": "Módulo de IA experimental (em testes), desligado por padrão: APIs com chave própria (Gemini, Groq, OpenRouter, compatível OpenAI) via safeStorage; Ollama/LM Studio locais; menu de contexto e Ctrl+Shift+Espaço abrem popover leve (Corrigir/Melhorar/Reformular/Mais formal/Mais curto). Senha, cartão, OTP e data-mh-no-ai nunca são enviados."
         }
       ]
     },

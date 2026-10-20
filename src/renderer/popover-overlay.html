@@ -32,13 +32,71 @@
   .context-menu,
   .panel-ext-menu,
   .layout-menu,
-  .mem-popover-box {
+  .mem-popover-box,
+  .ai-write-popover {
     box-sizing: border-box;
     border-radius: 8px;
     border: 1px solid var(--border, #3a4654);
     background: var(--panel-header-bg, var(--bg, #1a222c));
     box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
     color: var(--text, #e8eef4);
+  }
+  .ai-write-popover {
+    width: 300px;
+    padding: 10px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ai-write-title { font-weight: 600; font-size: 13px; }
+  .ai-write-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .ai-write-actions button,
+  .ai-write-footer button {
+    cursor: pointer;
+    border: 1px solid var(--border, #3a4654);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: inherit;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+  .ai-write-actions button:hover:not(:disabled),
+  .ai-write-footer button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text) 14%, transparent);
+  }
+  .ai-write-actions button:disabled,
+  .ai-write-footer button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .ai-write-status {
+    min-height: 1.2em;
+    color: color-mix(in srgb, var(--text) 72%, transparent);
+    font-size: 11px;
+  }
+  .ai-write-status.is-error { color: #e07a7a; }
+  .ai-write-result {
+    width: 100%;
+    min-height: 72px;
+    max-height: 140px;
+    resize: vertical;
+    box-sizing: border-box;
+    border-radius: 6px;
+    border: 1px solid var(--border, #3a4654);
+    background: color-mix(in srgb, var(--bg, #121820) 80%, #000);
+    color: inherit;
+    font: inherit;
+    padding: 6px 8px;
+  }
+  .ai-write-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
   }
 
   .volume-popover {
@@ -605,6 +663,80 @@
     root.replaceChildren();
   }
 
+  function renderAiWrite(data) {
+    const pop = document.createElement('div');
+    pop.className = 'ai-write-popover';
+    pop.dataset.role = 'ai-write-popover';
+    const title = document.createElement('div');
+    title.className = 'ai-write-title';
+    title.textContent = 'IA para escrever';
+    const actions = document.createElement('div');
+    actions.className = 'ai-write-actions';
+    const list = (data && data.actions) || [
+      { id: 'corrigir', label: 'Corrigir' },
+      { id: 'melhorar', label: 'Melhorar' },
+      { id: 'reformular', label: 'Reformular' },
+      { id: 'mais-formal', label: 'Mais formal' },
+      { id: 'mais-curto', label: 'Mais curto' },
+    ];
+    const busy = (data && data.status) === 'loading';
+    for (const a of list) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = a.label || a.id;
+      btn.disabled = busy;
+      btn.addEventListener('click', () => {
+        window.mhPopover.action({ type: 'ai-action', action: a.id });
+      });
+      actions.appendChild(btn);
+    }
+    const status = document.createElement('div');
+    status.className = 'ai-write-status' + ((data && data.status) === 'error' ? ' is-error' : '');
+    if ((data && data.status) === 'loading') status.textContent = 'Gerando…';
+    else if (data && data.error) status.textContent = data.error;
+    else if ((data && data.status) === 'done') status.textContent = 'Pronto.';
+    else status.textContent = 'Escolha uma ação.';
+    const result = document.createElement('textarea');
+    result.className = 'ai-write-result';
+    result.readOnly = true;
+    result.value = (data && data.resultText) || '';
+    result.placeholder = 'O resultado aparece aqui.';
+    const footer = document.createElement('div');
+    footer.className = 'ai-write-footer';
+    const btnReplace = document.createElement('button');
+    btnReplace.type = 'button';
+    btnReplace.textContent = 'Substituir';
+    btnReplace.disabled = busy || !((data && data.resultText) || '').trim();
+    btnReplace.addEventListener('click', () => {
+      window.mhPopover.action({ type: 'ai-replace' });
+    });
+    const btnCopy = document.createElement('button');
+    btnCopy.type = 'button';
+    btnCopy.textContent = 'Copiar';
+    btnCopy.disabled = busy || !((data && data.resultText) || '').trim();
+    btnCopy.addEventListener('click', () => {
+      window.mhPopover.action({ type: 'ai-copy' });
+    });
+    const btnCancel = document.createElement('button');
+    btnCancel.type = 'button';
+    btnCancel.textContent = 'Cancelar';
+    btnCancel.addEventListener('click', () => {
+      window.mhPopover.action({ type: 'ai-cancel' });
+      window.mhPopover.close('ai-cancel');
+    });
+    footer.append(btnReplace, btnCopy, btnCancel);
+    pop.append(title, actions, status, result, footer);
+    return pop;
+  }
+
+  function updateAiWrite(data) {
+    if (!current) return;
+    current.data = Object.assign({}, current.data || {}, data || {});
+    const node = renderAiWrite(current.data);
+    root.replaceChildren(node);
+    scheduleMeasure();
+  }
+
   function render(payload) {
     clear();
     if (!payload || !payload.kind) return;
@@ -617,6 +749,7 @@
     else if (payload.kind === 'layout') node = renderLayout(payload.data || {});
     else if (payload.kind === 'ext-menu') node = renderExtMenu(payload.data || {});
     else if (payload.kind === 'mem') node = renderMem(payload.data || {});
+    else if (payload.kind === 'ai-write') node = renderAiWrite(payload.data || {});
     if (node) root.appendChild(node);
     scheduleMeasure();
   }
@@ -647,6 +780,7 @@
     window.mhPopover.onUpdate((data) => {
       if (!current) return;
       if (current.kind === 'volume') updateVolume(data || {});
+      else if (current.kind === 'ai-write') updateAiWrite(data || {});
       else if (data) current.data = Object.assign({}, current.data || {}, data);
     });
     window.mhPopover.onClear(clear);

@@ -58,6 +58,7 @@
     "selftest:layout-workspace": "node tools/selftest-layout-workspace.js",
     "selftest:popover-overlay": "node tools/selftest-popover-overlay.js",
     "selftest:languagetool": "node tools/selftest-languagetool.js",
+    "selftest:ai": "node tools/selftest-ai.js",
     "selftest:badges": "node tools/selftest-badges.js",
     "check:realhover-volume": "node tools/realhover-volume.js",
     "shots:tools": "node tools/shots-tools.js",
