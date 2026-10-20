@@ -1172,12 +1172,30 @@ function lightModeCssIfEnabled() {
   return '';
 }
 
-function uaPatchIfNeeded() {
+function uaPatchOptsForUrl(url) {
   try {
     const ua = require('../user-agent');
-    return ua.mainWorldUaPatchSource();
+    return { googleAuth: ua.isGoogleAuthUrl(url || '') };
+  } catch {
+    return {};
+  }
+}
+
+function uaPatchIfNeeded(url) {
+  try {
+    const ua = require('../user-agent');
+    return ua.mainWorldUaPatchSource(undefined, uaPatchOptsForUrl(url));
   } catch {
     return '';
+  }
+}
+
+function uaPatchDataIfNeeded(url) {
+  try {
+    const ua = require('../user-agent');
+    return ua.mainWorldUaPatchData(undefined, uaPatchOptsForUrl(url));
+  } catch {
+    return null;
   }
 }
 
@@ -1188,12 +1206,14 @@ function handleEarlyScriptlets(event, url) {
   try {
     const wc = event.sender;
     const accountId = wc ? wcToAccount.get(wc.id) : null;
+    const patchUrl = url || '';
     if (accountId && !isWindowBlockingEnabled(accountId)) {
       event.returnValue = {
         ok: true,
         scripts: [],
         styles: '',
-        uaPatch: uaPatchIfNeeded(),
+        uaPatch: uaPatchIfNeeded(patchUrl),
+        uaPatchData: uaPatchDataIfNeeded(patchUrl),
         lightModeCss: lightModeCssIfEnabled(),
       };
       return;
@@ -1204,12 +1224,20 @@ function handleEarlyScriptlets(event, url) {
       scripts: early.scripts || [],
       styles: early.styles || '',
       cached: !!early.cached,
-      uaPatch: uaPatchIfNeeded(),
+      uaPatch: uaPatchIfNeeded(patchUrl),
+      uaPatchData: uaPatchDataIfNeeded(patchUrl),
       lightModeCss: lightModeCssIfEnabled(),
     };
   } catch (err) {
     console.warn('[adblock] early-scriptlets', err && err.message);
-    event.returnValue = { ok: false, scripts: [], styles: '' };
+    const patchUrl = url || '';
+    event.returnValue = {
+      ok: false,
+      scripts: [],
+      styles: '',
+      uaPatch: uaPatchIfNeeded(patchUrl),
+      uaPatchData: uaPatchDataIfNeeded(patchUrl),
+    };
   }
 }
 

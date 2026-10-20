@@ -177,6 +177,7 @@ const SELFTEST_FULLSCREEN = selftestMode === 'fullscreen';
 const SELFTEST_EXT = selftestMode === 'ext';
 const SELFTEST_ABU = selftestMode === 'abu';
 const SELFTEST_SECURITY = selftestMode === 'security';
+const SELFTEST_UA = selftestMode === 'ua';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -196,7 +197,8 @@ const ANY_SELFTEST =
   SELFTEST_FULLSCREEN ||
   SELFTEST_EXT ||
   SELFTEST_ABU ||
-  SELFTEST_SECURITY;
+  SELFTEST_SECURITY ||
+  SELFTEST_UA;
 
 /** @type {object|null} recorded BrowserWindow chrome options for selftests / diagnostics */
 let recordedWindowChrome = null;
@@ -511,7 +513,8 @@ function createWindow() {
       SELFTEST_TITLEBAR ||
       SELFTEST_FULLSCREEN ||
       SELFTEST_ADBLOCK ||
-      SELFTEST_EXT,
+      SELFTEST_EXT ||
+      SELFTEST_UA,
     paintWhenInitiallyHidden: true,
     autoHideMenuBar: true,
     webPreferences: {
@@ -1027,6 +1030,32 @@ function createWindow() {
             rendererEval,
             ipcGuard,
             permissions,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_UA) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runUaSelftest } = require('./selftest-ua');
+          runUaSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            adblock,
+            userAgent,
+            sessionPersist,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);

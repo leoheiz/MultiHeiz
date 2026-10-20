@@ -212,6 +212,10 @@ async function runNodeChecks() {
   assert(permissions.checkPermission('a', 'usb', 'https://a.com') === false, 'usb');
   assert(permissions.checkPermission('a', 'hid', 'https://a.com') === false, 'hid');
   assert(permissions.checkPermission('a', 'serial', 'https://a.com') === false, 'serial');
+  assert(
+    permissions.checkPermission('a', 'publickey-credentials-get', 'https://a.com') === true,
+    'webauthn get'
+  );
   console.log('PASS: permissions geo/media not auto, usb/hid/serial deny');
 
   clearModuleMatch(/\/src\/main\/portable-update/);

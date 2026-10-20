@@ -487,6 +487,13 @@ function handlePanelWindowOpen(accountId, url, ses, wc) {
  */
 function openLoginPopup(accountId, url, ses) {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
+  permissions.attachToSession(ses, accountId);
+  userAgent.applySessionUserAgent(ses);
+  try {
+    adblock.attachSession(ses, accountId);
+  } catch {
+    /* ignore */
+  }
   const child = new BrowserWindow({
     width: 520,
     height: 720,
@@ -510,7 +517,29 @@ function openLoginPopup(accountId, url, ses) {
   } catch {
     /* ignore */
   }
-  userAgent.applySessionUserAgent(ses);
+  try {
+    adblock.bindWebContents(accountId, child.webContents);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (userAgent.isGoogleAuthUrl(url)) {
+      child.webContents.setUserAgent(userAgent.buildGoogleAuthUserAgent());
+    }
+  } catch {
+    /* ignore */
+  }
+  child.webContents.on('did-navigate', (_e, navUrl) => {
+    try {
+      if (userAgent.isGoogleAuthUrl(navUrl)) {
+        child.webContents.setUserAgent(userAgent.buildGoogleAuthUserAgent());
+      } else {
+        child.webContents.setUserAgent(chromeUserAgent());
+      }
+    } catch {
+      /* ignore */
+    }
+  });
   child.on('closed', () => {
     childPopups.delete(child);
     emitToRenderer({ type: 'toast', message: 'Login fechado — voltando ao painel' });
@@ -722,6 +751,16 @@ function createPanel(accountId) {
     touchAccount(accountId);
     notifyNav(accountId);
     signalLoadCommitted(accountId);
+    // Google auth: align webContents UA with per-request Google-auth headers
+    try {
+      if (userAgent.isGoogleAuthUrl(url)) {
+        view.webContents.setUserAgent(userAgent.buildGoogleAuthUserAgent());
+      } else {
+        view.webContents.setUserAgent(chromeUserAgent());
+      }
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('did-navigate-in-page', (_e, url) => {
     rememberUrl(accountId, url);

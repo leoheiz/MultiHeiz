@@ -32,6 +32,7 @@
     "selftest:v110": "node tools/selftest-v110.js",
     "selftest:v120": "node tools/selftest-v120.js",
     "selftest:security": "node tools/selftest-security.js",
+    "selftest:ua": "node tools/selftest-ua.js",
     "check:update-live": "node tools/check-update-live.js",
     "check:adblock-real": "node tools/check-adblock-real.js",
     "check:encoding": "node tools/check-encoding.js",

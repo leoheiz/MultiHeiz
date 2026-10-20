@@ -16,6 +16,11 @@ const AUTO_ALLOW = new Set([
   'fullscreen',
   'pointerLock',
   'pointer-lock',
+  // Google / IdP sign-in: allow WebAuthn + FedCM checks so cancelling a passkey
+  // dialog can fall through to password (v1.2.0 default-deny blocked these).
+  'publickey-credentials-get',
+  'publickey-credentials-create',
+  'identity-credentials-get',
 ]);
 
 /** Ask the user; remember per origin+permission+account. */
@@ -184,6 +189,15 @@ function classifyPermission(permission, requestingOrigin, details = {}) {
       ) {
         return 'allow';
       }
+      return 'deny';
+    }
+    // WebAuthn / FedCM: https IdPs only
+    if (
+      perm === 'publickey-credentials-get' ||
+      perm === 'publickey-credentials-create' ||
+      perm === 'identity-credentials-get'
+    ) {
+      if (origin.startsWith('https://')) return 'allow';
       return 'deny';
     }
     return 'allow';

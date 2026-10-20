@@ -8,6 +8,98 @@
 
 const { ipcRenderer, contextBridge } = require('electron');
 
+/**
+ * Trusted-Types-safe UA/CH patch: apply structured data via a native function
+ * (no new Function / <script> — Google accounts.google.com blocks those).
+ * @param {object|null|undefined} D
+ */
+function applyUaPatchData(D) {
+  if (!D || !D.ua) return;
+  try {
+    contextBridge.executeInMainWorld({
+      func: (data) => {
+        try {
+          Object.defineProperty(Navigator.prototype, 'userAgent', {
+            get: function () {
+              return data.ua;
+            },
+            configurable: true,
+          });
+        } catch (e) {
+          /* ignore */
+        }
+        try {
+          Object.defineProperty(navigator, 'userAgent', {
+            get: function () {
+              return data.ua;
+            },
+            configurable: true,
+          });
+        } catch (e) {
+          /* ignore */
+        }
+        var uad = {
+          brands: data.brands,
+          mobile: data.mobile,
+          platform: data.platform,
+          getHighEntropyValues: function () {
+            return Promise.resolve({
+              brands: data.brands,
+              mobile: data.mobile,
+              platform: data.platform,
+              platformVersion: data.platformVersion,
+              architecture: data.architecture,
+              bitness: data.bitness,
+              model: data.model,
+              uaFullVersion:
+                data.fullVersionList && data.fullVersionList[0]
+                  ? data.fullVersionList[0].version
+                  : undefined,
+              fullVersionList: data.fullVersionList,
+            });
+          },
+          toJSON: function () {
+            return { brands: data.brands, mobile: data.mobile, platform: data.platform };
+          },
+        };
+        try {
+          Object.defineProperty(Navigator.prototype, 'userAgentData', {
+            get: function () {
+              return uad;
+            },
+            configurable: true,
+          });
+        } catch (e) {
+          /* ignore */
+        }
+        try {
+          Object.defineProperty(navigator, 'userAgentData', {
+            get: function () {
+              return uad;
+            },
+            configurable: true,
+          });
+        } catch (e) {
+          /* ignore */
+        }
+        try {
+          Object.defineProperty(Navigator.prototype, 'webdriver', {
+            get: function () {
+              return false;
+            },
+            configurable: true,
+          });
+        } catch (e) {
+          /* ignore */
+        }
+      },
+      args: [D],
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 function injectInMainWorld(source) {
   if (!source) return;
   try {
@@ -73,7 +165,8 @@ function injectEarlySync() {
   const t1 =
     typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
   if (!payload || !payload.ok) {
-    if (payload && payload.uaPatch) injectInMainWorld(payload.uaPatch);
+    if (payload && payload.uaPatchData) applyUaPatchData(payload.uaPatchData);
+    else if (payload && payload.uaPatch) injectInMainWorld(payload.uaPatch);
     if (payload && payload.lightModeCss) {
       injectInMainWorld(styleInjectSource('mh-light-mode', payload.lightModeCss, 'set'));
     }
@@ -85,7 +178,8 @@ function injectEarlySync() {
   for (const script of payload.scripts || []) {
     injectInMainWorld(script);
   }
-  if (payload.uaPatch) injectInMainWorld(payload.uaPatch);
+  if (payload.uaPatchData) applyUaPatchData(payload.uaPatchData);
+  else if (payload.uaPatch) injectInMainWorld(payload.uaPatch);
   if (payload.lightModeCss) {
     injectInMainWorld(styleInjectSource('mh-light-mode', payload.lightModeCss, 'set'));
   }

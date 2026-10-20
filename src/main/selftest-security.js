@@ -160,7 +160,15 @@ async function runSecuritySelftest(ctx) {
     permissions.checkPermission('acc-sec-a', 'notifications', origin) === true,
     'notifications allowed for https'
   );
-  console.log('PASS: permission policy geo/media ask, usb/hid/serial deny');
+  assert(
+    permissions.checkPermission('acc-sec-a', 'publickey-credentials-get', origin) === true,
+    'webauthn get allowed for https (Google sign-in)'
+  );
+  assert(
+    permissions.checkPermission('acc-sec-a', 'publickey-credentials-create', origin) === true,
+    'webauthn create allowed for https'
+  );
+  console.log('PASS: permission policy geo/media ask, usb/hid/serial deny, webauthn allow');
 
   // Live session has handlers
   const ses = require('electron').session.fromPartition(panels.partitionFor('acc-sec-a'));
