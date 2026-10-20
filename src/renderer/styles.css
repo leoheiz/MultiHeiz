@@ -171,18 +171,45 @@ body {
   display: none;
 }
 
-#btn-sidebar-toggle {
+.sidebar-head-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+#btn-sidebar-collapse,
+#btn-sidebar-pin {
   /* Explicit: never inherit caption drag; keep clicks in fixed + legacy modes. */
   -webkit-app-region: no-drag;
   app-region: no-drag;
   pointer-events: auto;
   position: relative;
   z-index: 6;
+  flex-shrink: 0;
 }
 
-#btn-sidebar-toggle .ico-sidebar-pin.hidden,
-#btn-sidebar-toggle .ico-sidebar-hide.hidden {
+#btn-sidebar-collapse.hidden,
+#btn-sidebar-pin.hidden {
   display: none;
+}
+
+/* Compact: chevron points right (expand). Expanded: points left (collapse). */
+#btn-sidebar-collapse.is-collapsed .ico-sidebar-collapse {
+  transform: scaleX(-1);
+}
+
+/* Filled pin = fixed; muted outline look when auto-hide. */
+#btn-sidebar-pin:not(.is-pinned) .ico-sidebar-pin {
+  opacity: 0.55;
+}
+#btn-sidebar-pin.is-pinned .ico-sidebar-pin {
+  opacity: 1;
+  fill: currentColor;
 }
 
 #sidebar.collapsed,
@@ -221,7 +248,27 @@ body {
 #sidebar.collapsed .sidebar-head,
 #sidebar.auto-collapsed .sidebar-head {
   justify-content: center;
-  padding: 0 4px;
+  align-items: center;
+  height: auto;
+  min-height: var(--topbar-h);
+  padding: 4px 2px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Two buttons must fit the 52px rail: stack vertically when compact. */
+#sidebar.collapsed .sidebar-head-actions,
+#sidebar.auto-collapsed .sidebar-head-actions {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+}
+
+#sidebar.collapsed .sidebar-head-actions .btn,
+#sidebar.auto-collapsed .sidebar-head-actions .btn {
+  width: 36px;
+  height: 26px;
+  padding: 2px;
 }
 
 .sidebar-resize-handle {
@@ -253,7 +300,7 @@ body {
   flex-shrink: 0;
   /*
    * Never use caption drag here (fixed, auto-hide, or legacy). On Windows/Electron,
-   * drag on the head swallows clicks on #btn-sidebar-toggle even with nested no-drag;
+   * drag on the head swallows clicks on sidebar buttons even with nested no-drag;
    * in auto-hide it also fires mouseleave and closes the overlay before the pin.
    * Window drag lives on #topbar (inset when this overlay covers it).
    */
@@ -262,7 +309,8 @@ body {
 }
 
 .sidebar-head .btn,
-.sidebar-head button {
+.sidebar-head button,
+.sidebar-head-actions {
   -webkit-app-region: no-drag;
   app-region: no-drag;
   pointer-events: auto;
@@ -633,10 +681,17 @@ html[data-theme='claro'] .sidebar-item:hover {
 
 /* Overlay sidebar covers the left of #main-col; keep caption-drag out of that strip. */
 #app.sidebar-auto-hide-open #topbar {
-  margin-left: var(--sidebar-w);
-  width: calc(100% - var(--sidebar-w));
-  max-width: calc(100% - var(--sidebar-w));
+  margin-left: var(--sidebar-overlay-inset, var(--sidebar-w));
+  width: calc(100% - var(--sidebar-overlay-inset, var(--sidebar-w)));
+  max-width: calc(100% - var(--sidebar-overlay-inset, var(--sidebar-w)));
   box-sizing: border-box;
+}
+
+/* Compact overlay rail uses the icon-rail inset (not full --sidebar-w). */
+#app.sidebar-auto-hide-open.sidebar-rail-compact #topbar {
+  margin-left: var(--sidebar-w-collapsed);
+  width: calc(100% - var(--sidebar-w-collapsed));
+  max-width: calc(100% - var(--sidebar-w-collapsed));
 }
 
 #topbar > :not(.spacer):not(.tabs-wrap) {

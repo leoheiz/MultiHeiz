@@ -112,6 +112,10 @@
         {
           "tag": "Melhoria",
           "text": "Planilha: renomear abas (duplo clique e menu), redimensionar colunas/linhas (arraste e auto-ajuste), cabeçalhos A/B/C alinhados às células na mesma grade."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Barra lateral no modo padrão: seta (compacta 52px / expandida) e pino (fixar / esconder automaticamente) independentes e persistidos; no modo legado só a seta, sem auto-esconder."
         }
       ]
     },

@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * Selftest: real OS mouse click on #btn-sidebar-toggle (MULTIHEIZ_SELFTEST=realclick-sidebar).
+ * Selftest: real OS mouse click on sidebar pin / collapse (MULTIHEIZ_SELFTEST=realclick-sidebar).
  * Handshake via files in MULTIHEIZ_REALCLICK_DIR (orchestrated by tools/realclick-sidebar.js).
+ * Standard: #btn-sidebar-pin (auto-hide). Legacy: #btn-sidebar-collapse (compact/expand).
  */
 
 const fs = require('node:fs');
@@ -204,9 +205,11 @@ async function runRealclickSidebarSelftest(ctx) {
     await ctxSleep(150);
 
     const before = await rendererEval('window.__multiheizUi.getSidebarMode()');
+    const btnId =
+      expectKind === 'legacyCollapse' ? 'btn-sidebar-collapse' : 'btn-sidebar-pin';
     const hit = await rendererEval(`(function(){
-      const btn = document.getElementById('btn-sidebar-toggle');
-      if (!btn) return null;
+      const btn = document.getElementById(${JSON.stringify(btnId)});
+      if (!btn || btn.classList.contains('hidden')) return null;
       const r = btn.getBoundingClientRect();
       const cx = r.left + r.width / 2;
       const cy = r.top + r.height / 2;
@@ -228,6 +231,7 @@ async function runRealclickSidebarSelftest(ctx) {
         n = n.parentElement;
       }
       return {
+        btnId: ${JSON.stringify(btnId)},
         btnRect: { left: r.left, top: r.top, width: r.width, height: r.height, cx, cy },
         elementFromPoint: topEl ? (topEl.id || topEl.className || topEl.tagName) : null,
         topbarRect: topbar ? (() => { const t = topbar.getBoundingClientRect(); return { left: t.left, top: t.top, width: t.width, height: t.height }; })() : null,

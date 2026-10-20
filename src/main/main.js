@@ -214,9 +214,11 @@ const SELFTEST_GIS = selftestMode === 'gis';
 const SELFTEST_STORE = selftestMode === 'store';
 const SELFTEST_SIDEBAR = selftestMode === 'sidebar';
 const SELFTEST_REALCLICK_SIDEBAR = selftestMode === 'realclick-sidebar';
+const SELFTEST_REALCLICK_SIDEBAR2 = selftestMode === 'realclick-sidebar2';
 const SELFTEST_REALCLICK_LEGACY_COMPACT = selftestMode === 'realclick-legacy-compact';
 const SELFTEST_REALDRAG_TOPBAR = selftestMode === 'realdrag-topbar';
 const SELFTEST_REALHOVER_FULLSCREEN = selftestMode === 'realhover-fullscreen';
+const SELFTEST_SHOTS_SIDEBAR2 = selftestMode === 'shots-sidebar2';
 const SELFTEST_WORKSPACE_DELETE = selftestMode === 'workspace-delete';
 const SELFTEST_CONTEXTMENU = selftestMode === 'contextmenu';
 const SELFTEST_PROXY = selftestMode === 'proxy';
@@ -255,6 +257,7 @@ const ANY_SELFTEST =
   SELFTEST_STORE ||
   SELFTEST_SIDEBAR ||
   SELFTEST_REALCLICK_SIDEBAR ||
+  SELFTEST_REALCLICK_SIDEBAR2 ||
   SELFTEST_REALCLICK_LEGACY_COMPACT ||
   SELFTEST_REALDRAG_TOPBAR ||
   SELFTEST_REALHOVER_FULLSCREEN ||
@@ -266,6 +269,7 @@ const ANY_SELFTEST =
   SELFTEST_PERMISSIONS ||
   SELFTEST_CATALOG ||
   SELFTEST_SHOTS_TOOLS ||
+  SELFTEST_SHOTS_SIDEBAR2 ||
   SELFTEST_NOTES ||
   SELFTEST_REMINDERS ||
   SELFTEST_SHEET;
@@ -553,6 +557,7 @@ function createWindow() {
     SELFTEST_FULLSCREEN ||
     SELFTEST_SIDEBAR ||
     SELFTEST_REALCLICK_SIDEBAR ||
+    SELFTEST_REALCLICK_SIDEBAR2 ||
     SELFTEST_REALCLICK_LEGACY_COMPACT ||
     SELFTEST_REALDRAG_TOPBAR ||
     SELFTEST_REALHOVER_FULLSCREEN ||
@@ -562,6 +567,7 @@ function createWindow() {
     SELFTEST_PERMISSIONS ||
     SELFTEST_CATALOG ||
     SELFTEST_SHOTS_TOOLS ||
+    SELFTEST_SHOTS_SIDEBAR2 ||
     SELFTEST_NOTES ||
     SELFTEST_REMINDERS ||
     SELFTEST_SHEET
@@ -580,6 +586,7 @@ function createWindow() {
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_CATALOG ||
     SELFTEST_SHOTS_TOOLS ||
+    SELFTEST_SHOTS_SIDEBAR2 ||
     SELFTEST_NOTES ||
     SELFTEST_REMINDERS ||
     SELFTEST_SHEET;
@@ -636,6 +643,7 @@ function createWindow() {
       SELFTEST_FULLSCREEN ||
       SELFTEST_SIDEBAR ||
       SELFTEST_REALCLICK_SIDEBAR ||
+      SELFTEST_REALCLICK_SIDEBAR2 ||
       SELFTEST_REALCLICK_LEGACY_COMPACT ||
       SELFTEST_REALDRAG_TOPBAR ||
       SELFTEST_REALHOVER_FULLSCREEN ||
@@ -643,6 +651,7 @@ function createWindow() {
       SELFTEST_SETTINGS_PERF ||
       SELFTEST_WORKSPACE_DELETE ||
       SELFTEST_CATALOG ||
+      SELFTEST_SHOTS_SIDEBAR2 ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
       SELFTEST_UA,
@@ -1165,6 +1174,33 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_REALCLICK_SIDEBAR2) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runRealclickSidebar2Selftest } = require('./selftest-realclick-sidebar2');
+          runRealclickSidebar2Selftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            chromeFullscreen,
+            sidebarCursor,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_REALCLICK_LEGACY_COMPACT) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -1569,6 +1605,33 @@ function createWindow() {
             rendererEval,
             app,
             catalog,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_SHOTS_SIDEBAR2) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runShotsSidebar2 } = require('./selftest-shots-sidebar2');
+          runShotsSidebar2({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            chromeFullscreen,
+            sidebarCursor,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);

@@ -44,11 +44,16 @@ function defaultState() {
     /** Per-workspace free-tile map: { [wsId]: { [accountId]: { c, r, w, h } } } */
     freeTiles: {},
     ui: {
+      /**
+       * Compact icon rail (52px). Independent of sidebarAutoHide in standard mode;
+       * also used by legacy always-active compact/expand.
+       */
       sidebarCollapsed: false,
       /**
        * Auto-hide sidebar (overlay on hover). Used when settings.sidebarAlwaysActive is off.
-       * Default false = fixed sidebar. When true, panels use nearly full width; a thin
-       * hot-zone reveals the sidebar as an overlay without reflowing panel HTML layout.
+       * Default false = fixed (pinned). Independent of sidebarCollapsed (compact/expanded).
+       * When true, panels use nearly full width; a thin hot-zone reveals the sidebar as
+       * an overlay at the last chosen compact/expanded width.
        */
       sidebarAutoHide: false,
       layoutLocked: true,
@@ -89,8 +94,8 @@ function defaultState() {
       blankLinkMode: 'same', // same | new-panel
       lightMode: false,
       /**
-       * Legacy sidebar: top arrow collapses/expands like before (icon rail), with no
-       * auto-hide, hot-zone, or overlay inset. Default off = new fixed/auto-hide toggle.
+       * Legacy sidebar: only the collapse arrow (no pin); never auto-hides.
+       * Default off = standard mode with independent arrow (compact/expand) + pin (auto-hide).
        */
       sidebarAlwaysActive: false,
       /**
@@ -326,13 +331,24 @@ function migrate(parsed) {
   }
   // Profiles without sidebarAutoHide start FIXED (new mode). Keep an existing boolean
   // (user already chose auto-hide). Do not map old sidebarCollapsed → autoHide.
-  // Preserve sidebarCollapsed so legacy mode can restore the pre-1.3.0 compact/expand
-  // preference; outside legacy the renderer ignores the flag for layout.
   // Check *parsed* ui: defaultState already has sidebarAutoHide:false after merge.
   {
     const rawUi = parsed.ui && typeof parsed.ui === 'object' ? parsed.ui : {};
     if (typeof rawUi.sidebarAutoHide !== 'boolean') {
       next.ui.sidebarAutoHide = false;
+    }
+  }
+  // Dual-button model (arrow compact/expand + pin auto-hide): one-shot migration so
+  // existing fixed profiles stay fixed+expanded; auto-hide profiles stay auto-hide.
+  // Stale sidebarCollapsed from when the flag was ignored outside legacy must not
+  // suddenly shrink a fixed sidebar.
+  if (!next.settings.migrations || typeof next.settings.migrations !== 'object') {
+    next.settings.migrations = {};
+  }
+  if (!next.settings.migrations.sidebarDualButtons130) {
+    next.settings.migrations.sidebarDualButtons130 = true;
+    if (!next.settings.sidebarAlwaysActive && next.ui.sidebarAutoHide === false) {
+      next.ui.sidebarCollapsed = false;
     }
   }
   if (typeof next.ui.sidebarWidth !== 'number' || !Number.isFinite(next.ui.sidebarWidth)) {

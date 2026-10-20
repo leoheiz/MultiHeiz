@@ -226,7 +226,7 @@ async function runRealclickLegacyCompactSelftest(ctx) {
 
     const before = await measure();
     const hit = await rendererEval(`(function(){
-      const btn = document.getElementById('btn-sidebar-toggle');
+      const btn = document.getElementById('btn-sidebar-collapse');
       if (!btn) return null;
       const r = btn.getBoundingClientRect();
       return {
@@ -235,7 +235,7 @@ async function runRealclickLegacyCompactSelftest(ctx) {
         rect: { left: r.left, top: r.top, width: r.width, height: r.height },
       };
     })()`);
-    if (!hit) throw new Error('btn-sidebar-toggle missing');
+    if (!hit) throw new Error('btn-sidebar-collapse missing');
 
     const contentBounds = mainWindow.getContentBounds();
     const display = screen.getDisplayMatching(contentBounds);

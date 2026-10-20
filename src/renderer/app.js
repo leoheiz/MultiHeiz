@@ -141,7 +141,10 @@ const el = {
   sidebar: document.getElementById('sidebar'),
   sidebarHotzone: document.getElementById('sidebar-hotzone'),
   sidebarList: document.getElementById('sidebar-list'),
-  btnSidebarToggle: document.getElementById('btn-sidebar-toggle'),
+  btnSidebarCollapse: document.getElementById('btn-sidebar-collapse'),
+  btnSidebarPin: document.getElementById('btn-sidebar-pin'),
+  /** @deprecated use btnSidebarPin / btnSidebarCollapse — kept for older probes */
+  btnSidebarToggle: document.getElementById('btn-sidebar-pin'),
   tabs: document.getElementById('workspace-tabs'),
   btnTabsMore: document.getElementById('btn-tabs-more'),
   grid: document.getElementById('grid'),
@@ -543,10 +546,10 @@ function syncSidebarAutoHideTracking() {
 
 /**
  * Pixel width used for overlay shift-x / tracking while the sidebar is revealed.
- * Legacy compact (icon rail) uses SIDEBAR_W_COLLAPSED; otherwise the user width.
+ * Compact (icon rail, legacy or standard) uses SIDEBAR_W_COLLAPSED; otherwise user width.
  */
 function sidebarOverlayOpenWidthPx() {
-  if (isSidebarLegacyAlwaysActive() && isSidebarEffectivelyCollapsed()) {
+  if (isSidebarEffectivelyCollapsed()) {
     return SIDEBAR_W_COLLAPSED;
   }
   return clampSidebarWidth(state.ui && state.ui.sidebarWidth);
@@ -666,45 +669,44 @@ function applySidebarWidthCss() {
 }
 
 function isSidebarEffectivelyCollapsed() {
-  // Icon-rail compact/expand only in legacy mode (pre-1.3.0). New fixed/auto-hide
-  // mode never uses the collapsed width — even if ui.sidebarCollapsed is still true
-  // from an older profile (kept for when the user turns legacy back on).
-  if (!isSidebarLegacyAlwaysActive()) return false;
-  // Auto-hide overlay path is disabled while legacy is on (see isSidebarAutoHide).
-  if (isSidebarAutoHide()) return false;
   const userCollapsed = !!(state.ui && state.ui.sidebarCollapsed);
+  // Standard (fixed / auto-hide): arrow toggles compact (52px) ↔ expanded independently
+  // of pin state. Narrow auto-collapse remains legacy-only.
+  if (!isSidebarLegacyAlwaysActive()) {
+    return userCollapsed;
+  }
+  // Legacy: always visible; optional narrow auto-collapse under breakpoint.
   const auto = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT && !sidebarForceExpanded;
   return userCollapsed || auto;
 }
 
 function updateSidebarToggleUi() {
-  if (!el.btnSidebarToggle) return;
-  const hideIco = el.btnSidebarToggle.querySelector('.ico-sidebar-hide');
-  const pinIco = el.btnSidebarToggle.querySelector('.ico-sidebar-pin');
-  // F11: temporary pin/unpin (session only), same icons as auto-hide toggle.
-  if (isChromeHiddenMode()) {
-    const label = sidebarFsPinned ? 'Esconder automaticamente' : 'Fixar barra lateral';
-    el.btnSidebarToggle.title = label;
-    el.btnSidebarToggle.setAttribute('aria-label', label);
-    if (hideIco) hideIco.classList.toggle('hidden', !sidebarFsPinned);
-    if (pinIco) pinIco.classList.toggle('hidden', !!sidebarFsPinned);
-    return;
-  }
-  if (isSidebarLegacyAlwaysActive()) {
-    const collapsed = isSidebarEffectivelyCollapsed();
-    const label = collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral';
-    el.btnSidebarToggle.title = label;
-    el.btnSidebarToggle.setAttribute('aria-label', label);
-    if (hideIco) hideIco.classList.toggle('hidden', false);
-    if (pinIco) pinIco.classList.toggle('hidden', true);
-    return;
-  }
+  const collapseBtn = el.btnSidebarCollapse;
+  const pinBtn = el.btnSidebarPin;
+  const chromeHidden = isChromeHiddenMode();
+  const legacy = isSidebarLegacyAlwaysActive();
+  const collapsed = isSidebarEffectivelyCollapsed();
   const autoHide = isSidebarAutoHide();
-  const label = autoHide ? 'Fixar barra lateral' : 'Esconder automaticamente';
-  el.btnSidebarToggle.title = label;
-  el.btnSidebarToggle.setAttribute('aria-label', label);
-  if (hideIco) hideIco.classList.toggle('hidden', autoHide);
-  if (pinIco) pinIco.classList.toggle('hidden', !autoHide);
+
+  if (collapseBtn) {
+    const collapseLabel = collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral';
+    collapseBtn.title = collapseLabel;
+    collapseBtn.setAttribute('aria-label', collapseLabel);
+    collapseBtn.classList.toggle('is-collapsed', collapsed);
+    collapseBtn.classList.remove('hidden');
+  }
+
+  if (pinBtn) {
+    // Legacy (non-F11): pin hidden — only the collapse arrow. F11 always shows pin
+    // for temporary session pin (does not write prefs).
+    const showPin = chromeHidden || !legacy;
+    pinBtn.classList.toggle('hidden', !showPin);
+    const pinned = chromeHidden ? !!sidebarFsPinned : !autoHide;
+    const pinLabel = pinned ? 'Esconder automaticamente' : 'Fixar barra lateral';
+    pinBtn.title = pinLabel;
+    pinBtn.setAttribute('aria-label', pinLabel);
+    pinBtn.classList.toggle('is-pinned', pinned);
+  }
 }
 
 function updateSidebarCollapseClasses() {
@@ -712,7 +714,7 @@ function updateSidebarCollapseClasses() {
   const autoHide = isSidebarAutoHide();
   // F11 always uses overlay edge-reveal (ignore fixed / legacy layout for chrome).
   const overlayMode = chromeHidden || autoHide;
-  // Legacy compact/expand still applies while F11 overlay is open (saved rail state).
+  // Compact/expand applies in fixed, auto-hide overlay, and F11 (saved rail state).
   const collapsed = isSidebarEffectivelyCollapsed();
   const userCollapsed = !!(state.ui && state.ui.sidebarCollapsed);
   const auto =
@@ -725,6 +727,7 @@ function updateSidebarCollapseClasses() {
   if (el.app) {
     el.app.classList.toggle('sidebar-auto-hide', overlayMode);
     el.app.classList.toggle('sidebar-auto-hide-open', overlayMode && sidebarAutoHideOpen);
+    el.app.classList.toggle('sidebar-rail-compact', collapsed || auto);
   }
   if (el.sidebarHotzone) {
     // Hot-zone while edge-reveal active and not temporarily pinned in F11.
@@ -736,12 +739,18 @@ function updateSidebarCollapseClasses() {
   el.sidebar.classList.toggle('auto-collapsed', auto);
   el.sidebar.classList.toggle('auto-hide-open', overlayMode && sidebarAutoHideOpen);
 
+  const insetPx =
+    overlayMode && sidebarAutoHideOpen
+      ? sidebarOverlayOpenWidthPx()
+      : clampSidebarWidth(state.ui && state.ui.sidebarWidth);
+  document.documentElement.style.setProperty('--sidebar-overlay-inset', `${insetPx}px`);
+
   if (!overlayMode && sidebarAutoHideOpen) {
     sidebarAutoHideOpen = false;
     if (el.app) el.app.classList.remove('sidebar-auto-hide-open');
     syncSidebarOverlayBounds(false);
   } else if (overlayMode && sidebarAutoHideOpen) {
-    // Width may change if legacy compact/expand toggled while F11 overlay is open.
+    // Width may change if compact/expand toggled while overlay is open.
     syncSidebarOverlayBounds(true);
   }
 
@@ -2636,22 +2645,18 @@ if (el.tabs) {
 }
 window.addEventListener('resize', () => updateTabsOverflow());
 
-el.btnSidebarToggle.addEventListener('click', async () => {
+/**
+ * Arrow: compact (52px icon rail) ↔ expanded (full width). Independent of pin.
+ * Works in standard, legacy, and while auto-hide overlay / F11 is open.
+ */
+async function toggleSidebarCollapsed() {
   clearSidebarHoverTimers();
-  // F11: temporary pin/unpin — never writes sidebarAutoHide / legacy prefs.
-  if (isChromeHiddenMode()) {
-    if (sidebarFsPinned) {
-      sidebarFsPinned = false;
-      setSidebarAutoHideOpen(false, { force: true });
-      updateSidebarCollapseClasses();
-    } else {
-      sidebarFsPinned = true;
-      setSidebarAutoHideOpen(true, { force: true });
-      updateSidebarCollapseClasses();
-    }
-    return;
-  }
-  if (isSidebarLegacyAlwaysActive()) {
+  // Collapsing an open overlay shrinks the rail under the cursor; Chromium then
+  // fires mouseleave and would schedule hide — keep revealed while the user is
+  // still interacting with the header buttons.
+  const keepOverlayOpen = usesSidebarOverlay() && sidebarAutoHideOpen;
+  const legacy = isSidebarLegacyAlwaysActive();
+  if (legacy) {
     // Pre-1.3.0 behavior: collapse/expand icon rail (incl. narrow auto-collapse).
     const narrow = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT;
     const currentlyCollapsed = isSidebarEffectivelyCollapsed();
@@ -2668,18 +2673,59 @@ el.btnSidebarToggle.addEventListener('click', async () => {
       const collapsed = !state.ui?.sidebarCollapsed;
       applyState(await window.multiheiz.updateUi({ sidebarCollapsed: collapsed }));
     }
+  } else {
+    sidebarForceExpanded = false;
+    const collapsed = !state.ui?.sidebarCollapsed;
+    applyState(await window.multiheiz.updateUi({ sidebarCollapsed: collapsed }));
+  }
+  if (keepOverlayOpen) {
+    const holdOpen = () => {
+      clearSidebarHoverTimers();
+      sidebarCursorInside = true;
+      if (usesSidebarOverlay() && !sidebarAutoHideOpen) {
+        setSidebarAutoHideOpen(true, { force: true });
+      } else {
+        clearSidebarHoverTimers();
+      }
+    };
+    holdOpen();
+    // Layout shrink can fire mouseleave on the next frames; cancel that hide.
+    requestAnimationFrame(() => {
+      holdOpen();
+      setTimeout(holdOpen, 50);
+    });
+  }
+}
+
+/**
+ * Pin: fixed ↔ auto-hide (persisted). In F11: temporary session pin only.
+ * Does not change compact/expanded preference.
+ */
+async function toggleSidebarPin() {
+  clearSidebarHoverTimers();
+  // F11: temporary pin/unpin — never writes sidebarAutoHide / legacy prefs.
+  if (isChromeHiddenMode()) {
+    if (sidebarFsPinned) {
+      sidebarFsPinned = false;
+      setSidebarAutoHideOpen(false, { force: true });
+      updateSidebarCollapseClasses();
+    } else {
+      sidebarFsPinned = true;
+      setSidebarAutoHideOpen(true, { force: true });
+      updateSidebarCollapseClasses();
+    }
     return;
   }
+  if (isSidebarLegacyAlwaysActive()) return;
   sidebarForceExpanded = false;
   const nextAutoHide = !isSidebarAutoHide();
   if (!nextAutoHide) {
     // Pin while revealed: switch to fixed layout first (sidebar stays visible), then
-    // clear overlay — avoid a closed/open flash.
+    // clear overlay — avoid a closed/open flash. Keep compact/expanded as-is.
     const wasOpen = sidebarAutoHideOpen;
     applyState(
       await window.multiheiz.updateUi({
         sidebarAutoHide: false,
-        sidebarCollapsed: false,
       })
     );
     sidebarAutoHideOpen = false;
@@ -2694,13 +2740,22 @@ el.btnSidebarToggle.addEventListener('click', async () => {
   applyState(
     await window.multiheiz.updateUi({
       sidebarAutoHide: true,
-      // Clear collapsed flag when using the new fixed/auto-hide toggle.
-      sidebarCollapsed: false,
     })
   );
   // Entering auto-hide: start hidden (panels full width + hot-zone).
   setSidebarAutoHideOpen(false);
-});
+}
+
+if (el.btnSidebarCollapse) {
+  el.btnSidebarCollapse.addEventListener('click', () => {
+    toggleSidebarCollapsed().catch((err) => console.warn('sidebar collapse', err));
+  });
+}
+if (el.btnSidebarPin) {
+  el.btnSidebarPin.addEventListener('click', () => {
+    toggleSidebarPin().catch((err) => console.warn('sidebar pin', err));
+  });
+}
 
 /* Auto-hide: DOM hot-zone + leave hints; main cursor polling is the durable source of truth */
 (function setupSidebarAutoHideHover() {
@@ -3618,23 +3673,59 @@ window.__multiheizUi = {
     const hzCs = hz ? getComputedStyle(hz) : null;
     const head = el.sidebar ? el.sidebar.querySelector('.sidebar-head') : null;
     const headCs = head ? getComputedStyle(head) : null;
-    const pin = el.btnSidebarToggle;
+    const collapse = el.btnSidebarCollapse;
+    const pin = el.btnSidebarPin;
+    const collapseRect = collapse ? collapse.getBoundingClientRect() : null;
     const pinRect = pin ? pin.getBoundingClientRect() : null;
+    const collapseCs = collapse ? getComputedStyle(collapse) : null;
     const pinCs = pin ? getComputedStyle(pin) : null;
     const appRegionOf = (style) =>
       style ? style.webkitAppRegion || style.getPropertyValue('-webkit-app-region') || '' : '';
+    const collapseVisible = !!(collapse && !collapse.classList.contains('hidden'));
+    const pinVisible = !!(pin && !pin.classList.contains('hidden'));
+    let buttonsOverlap = false;
+    if (collapseVisible && pinVisible && collapseRect && pinRect) {
+      buttonsOverlap = !(
+        collapseRect.right <= pinRect.left ||
+        pinRect.right <= collapseRect.left ||
+        collapseRect.bottom <= pinRect.top ||
+        pinRect.bottom <= collapseRect.top
+      );
+    }
+    const sidebarW = el.sidebar ? el.sidebar.getBoundingClientRect().width : 0;
+    const buttonsFitCompact =
+      !collapseVisible ||
+      !pinVisible ||
+      !collapseRect ||
+      !pinRect ||
+      (collapseRect.right <= sidebarW + 1 &&
+        pinRect.right <= sidebarW + 1 &&
+        collapseRect.left >= -1 &&
+        pinRect.left >= -1);
+    const legacy = isSidebarLegacyAlwaysActive();
+    const collapseTitle = collapse ? collapse.title : '';
+    const pinTitle = pin ? pin.title : '';
+    // Compat: toggleTitle is pin label in standard/F11, collapse label in legacy.
+    const toggleTitle = legacy && !isChromeHiddenMode() ? collapseTitle : pinTitle;
     return {
-      legacyAlwaysActive: isSidebarLegacyAlwaysActive(),
+      legacyAlwaysActive: legacy,
       autoHide: isSidebarAutoHide(),
       open: !!sidebarAutoHideOpen,
       collapsed: isSidebarEffectivelyCollapsed(),
-      /** Persisted ui.sidebarCollapsed (legacy compact key; ignored outside legacy) */
+      /** Persisted ui.sidebarCollapsed (compact key; used in standard + legacy) */
       sidebarCollapsedPref: !!(state.ui && state.ui.sidebarCollapsed),
       chromeHidden: isChromeHiddenMode(),
       fsPinned: !!sidebarFsPinned,
       overlayMode: usesSidebarOverlay(),
-      toggleTitle: el.btnSidebarToggle ? el.btnSidebarToggle.title : '',
-      sidebarWidth: el.sidebar ? el.sidebar.getBoundingClientRect().width : 0,
+      toggleTitle,
+      collapseTitle,
+      pinTitle,
+      collapseVisible,
+      pinVisible,
+      pinFilled: !!(pin && pin.classList.contains('is-pinned')),
+      buttonsOverlap,
+      buttonsFitCompact,
+      sidebarWidth: sidebarW,
       sidebarCollapsedWidth: SIDEBAR_W_COLLAPSED,
       hotzoneWidth: hz && !hz.classList.contains('hidden') ? hz.getBoundingClientRect().width : 0,
       hotzoneHidden: !hz || hz.classList.contains('hidden'),
@@ -3646,19 +3737,28 @@ window.__multiheizUi = {
       cursorInside: sidebarCursorInside,
       headAppRegion: appRegionOf(headCs),
       pinAppRegion: appRegionOf(pinCs),
+      collapseAppRegion: appRegionOf(collapseCs),
       pinPointerEvents: pinCs ? pinCs.pointerEvents : '',
+      collapsePointerEvents: collapseCs ? collapseCs.pointerEvents : '',
       pinDisabled: pin ? !!pin.disabled : true,
+      collapseDisabled: collapse ? !!collapse.disabled : true,
       pinCenter: pinRect
         ? { x: pinRect.left + pinRect.width / 2, y: pinRect.top + pinRect.height / 2 }
+        : null,
+      collapseCenter: collapseRect
+        ? {
+            x: collapseRect.left + collapseRect.width / 2,
+            y: collapseRect.top + collapseRect.height / 2,
+          }
         : null,
     };
   },
   /**
-   * Selftest: fire a real DOM click on #btn-sidebar-toggle (not a direct collapse helper).
-   * Programmatic HTMLElement.click() still goes through the button's click listener.
+   * Selftest: DOM click on the collapse arrow (#btn-sidebar-collapse).
+   * Legacy tests and compact/expand checks use this.
    */
   clickSidebarToggleButton: async () => {
-    const btn = document.getElementById('btn-sidebar-toggle');
+    const btn = document.getElementById('btn-sidebar-collapse');
     if (!btn) return { ok: false, reason: 'missing-button' };
     btn.dispatchEvent(
       new MouseEvent('click', { bubbles: true, cancelable: true, view: window })
@@ -3666,13 +3766,24 @@ window.__multiheizUi = {
     await new Promise((r) => setTimeout(r, 80));
     return { ok: true, mode: window.__multiheizUi.getSidebarMode() };
   },
+  /** Selftest: DOM click on the pin (#btn-sidebar-pin). F11 uses this for session pin. */
+  clickSidebarPinButton: async () => {
+    const btn = document.getElementById('btn-sidebar-pin');
+    if (!btn || btn.classList.contains('hidden')) return { ok: false, reason: 'missing-button' };
+    btn.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, view: window })
+    );
+    await new Promise((r) => setTimeout(r, 80));
+    return { ok: true, mode: window.__multiheizUi.getSidebarMode() };
+  },
+  clickSidebarCollapseButton: async () => window.__multiheizUi.clickSidebarToggleButton(),
   syncSidebarAfterLegacyChange: async () => {
     clearSidebarHoverTimers();
     sidebarAutoHideOpen = false;
     sidebarCursorInside = null;
     sidebarFsPinned = false;
     if (!isSidebarLegacyAlwaysActive()) {
-      // Leaving legacy → new fixed mode: clear icon-rail + stuck overlay state.
+      // Leaving legacy → standard fixed: clear icon-rail so migration is expanded.
       if (state.ui?.sidebarCollapsed) {
         applyState(await window.multiheiz.updateUi({ sidebarCollapsed: false }));
       }
@@ -3746,7 +3857,12 @@ window.__multiheizUi = {
     return !!sidebarFsPinned;
   },
   toggleSidebarAutoHide: async () => {
-    if (el.btnSidebarToggle) el.btnSidebarToggle.click();
+    if (el.btnSidebarPin) el.btnSidebarPin.click();
+    await new Promise((r) => setTimeout(r, 80));
+    return window.__multiheizUi.getSidebarMode();
+  },
+  toggleSidebarCollapsed: async () => {
+    if (el.btnSidebarCollapse) el.btnSidebarCollapse.click();
     await new Promise((r) => setTimeout(r, 80));
     return window.__multiheizUi.getSidebarMode();
   },
@@ -3870,8 +3986,11 @@ window.__multiheizUi = {
     }
     const settingsBtn = el.btnSettings;
     const settingsRect = settingsBtn ? settingsBtn.getBoundingClientRect() : null;
-    const pin = el.btnSidebarToggle;
-    const pinRect = pin ? pin.getBoundingClientRect() : null;
+    const pin = el.btnSidebarPin;
+    const collapse = el.btnSidebarCollapse;
+    const pinRect = pin && !pin.classList.contains('hidden') ? pin.getBoundingClientRect() : null;
+    const collapseRect =
+      collapse && !collapse.classList.contains('hidden') ? collapse.getBoundingClientRect() : null;
     const sidebar = el.sidebar;
     const pinSamples = [];
     if (pinRect && pinRect.width > 0 && pinRect.height > 0) {
@@ -3883,6 +4002,16 @@ window.__multiheizUi = {
       ];
       for (const [px, py] of pts) {
         pinSamples.push(window.__multiheizUi.getEffectiveAppRegionAt(px, py));
+      }
+    }
+    const collapseSamples = [];
+    if (collapseRect && collapseRect.width > 0 && collapseRect.height > 0) {
+      const pts = [
+        [collapseRect.left + collapseRect.width / 2, collapseRect.top + collapseRect.height / 2],
+        [collapseRect.left + 2, collapseRect.top + 2],
+      ];
+      for (const [px, py] of pts) {
+        collapseSamples.push(window.__multiheizUi.getEffectiveAppRegionAt(px, py));
       }
     }
     return {
@@ -3897,10 +4026,20 @@ window.__multiheizUi = {
       layoutSelectRegion: regionOf(document.getElementById('layout-select')),
       sidebarRegion: regionOf(sidebar),
       pinRegion: regionOf(pin),
+      collapseRegion: regionOf(collapse),
       pinRect: pinRect
         ? { left: pinRect.left, top: pinRect.top, width: pinRect.width, height: pinRect.height }
         : null,
+      collapseRect: collapseRect
+        ? {
+            left: collapseRect.left,
+            top: collapseRect.top,
+            width: collapseRect.width,
+            height: collapseRect.height,
+          }
+        : null,
       pinSamples,
+      collapseSamples,
       topbarRect: { left: barRect.left, top: barRect.top, width: barRect.width, height: barRect.height },
       settingsDialogOpen: !!(el.dlgSettings && el.dlgSettings.open),
     };

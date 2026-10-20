@@ -290,7 +290,7 @@ async function runFullscreenSelftest(ctx) {
   setCursorContent(5, midY);
   await sleep(280);
   await waitForLayoutSettle();
-  await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await rendererEval('window.__multiheizUi.clickSidebarPinButton()');
   await sleep(150);
   modeFs = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (!modeFs.fsPinned || !modeFs.open) {
@@ -306,7 +306,7 @@ async function runFullscreenSelftest(ctx) {
     app.exit(1);
     return;
   }
-  await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await rendererEval('window.__multiheizUi.clickSidebarPinButton()');
   await sleep(150);
   modeFs = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (modeFs.fsPinned || modeFs.open) {

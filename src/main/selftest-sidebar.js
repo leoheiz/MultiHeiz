@@ -240,15 +240,40 @@ async function runSidebarSelftest(ctx) {
     setCursorContent(400, midY);
   }
 
-  /* ---------- Fixed mode (default on new profile) ---------- */
+  /* ---------- Fixed mode (default on new profile): two independent buttons ---------- */
   let mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (!mode || mode.autoHide !== false || mode.open !== false || mode.legacyAlwaysActive) {
     console.log('FAIL: start should be fixed (autoHide false, legacy off)', mode);
     app.exit(1);
     return;
   }
-  if (mode.toggleTitle !== 'Esconder automaticamente') {
-    console.log('FAIL: fixed tooltip', mode.toggleTitle);
+  if (mode.collapsed || mode.sidebarCollapsedPref) {
+    console.log('FAIL: default fixed should be expanded', mode);
+    app.exit(1);
+    return;
+  }
+  if (!mode.collapseVisible || !mode.pinVisible) {
+    console.log('FAIL: standard mode must show both arrow and pin', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.buttonsOverlap) {
+    console.log('FAIL: arrow and pin must not overlap', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.pinTitle !== 'Esconder automaticamente' || mode.toggleTitle !== 'Esconder automaticamente') {
+    console.log('FAIL: fixed pin tooltip', mode.pinTitle, mode.toggleTitle);
+    app.exit(1);
+    return;
+  }
+  if (mode.collapseTitle !== 'Recolher barra lateral') {
+    console.log('FAIL: fixed collapse tooltip', mode.collapseTitle);
+    app.exit(1);
+    return;
+  }
+  if (!mode.pinFilled) {
+    console.log('FAIL: pin should look filled when fixed', mode);
     app.exit(1);
     return;
   }
@@ -263,10 +288,67 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
+  if (!(mode.sidebarWidth >= 160)) {
+    console.log('FAIL: fixed expanded sidebar width', mode.sidebarWidth);
+    app.exit(1);
+    return;
+  }
   const fixedX = fixed.bounds.x;
   const fixedW = fixed.bounds.width;
-  console.log('PASS: fixed mode (default)', { mode, bounds: fixed.bounds });
+  console.log('PASS: fixed mode (default, two buttons)', { mode, bounds: fixed.bounds });
   await saveSidebarShot(ctx, 'sidebar-pinned.png');
+
+  /* ---------- Arrow: fixed expanded → compact (panels reflow) ---------- */
+  mode = await rendererEval('window.__multiheizUi.toggleSidebarCollapsed()');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!mode.collapsed || mode.autoHide || !mode.pinVisible || !mode.collapseVisible) {
+    console.log('FAIL: arrow should compact while staying fixed', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.buttonsOverlap || !mode.buttonsFitCompact) {
+    console.log('FAIL: both buttons must fit compact 52px without overlap', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.collapseTitle !== 'Expandir barra lateral') {
+    console.log('FAIL: compact collapse tooltip', mode.collapseTitle);
+    app.exit(1);
+    return;
+  }
+  if (!(mode.sidebarWidth >= 40 && mode.sidebarWidth <= 70)) {
+    console.log('FAIL: fixed compact width ~52px', mode.sidebarWidth);
+    app.exit(1);
+    return;
+  }
+  const fixedCompact = panelBounds();
+  if (fixedCompact.overlayW !== 0 || !(fixedCompact.bounds.x >= 40 && fixedCompact.bounds.x <= 90)) {
+    console.log('FAIL: fixed compact panel bounds', fixedCompact);
+    app.exit(1);
+    return;
+  }
+  if (!(fixedCompact.bounds.width > fixedW + 50)) {
+    console.log('FAIL: compact should free panel width', {
+      compact: fixedCompact.bounds,
+      fixedW,
+    });
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: fixed compact via arrow', { mode, bounds: fixedCompact.bounds });
+
+  mode = await rendererEval('window.__multiheizUi.toggleSidebarCollapsed()');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (mode.collapsed || mode.autoHide || !(mode.sidebarWidth >= 160)) {
+    console.log('FAIL: arrow should expand again while fixed', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: fixed expand via arrow');
 
   /**
    * Regression (e68678d): #topbar is drag; interactive / sidebar / pin are no-drag;
@@ -305,21 +387,38 @@ async function runSidebarSelftest(ctx) {
       app.exit(1);
       return false;
     }
-    if (probe.pinRegion !== 'no-drag') {
-      console.log('FAIL: pin button must be no-drag', label, probe.pinRegion);
-      app.exit(1);
-      return false;
+    // Pin may be hidden in legacy (non-F11); only assert when the control is on-screen.
+    if (probe.pinRect) {
+      if (probe.pinRegion !== 'no-drag') {
+        console.log('FAIL: pin button must be no-drag', label, probe.pinRegion);
+        app.exit(1);
+        return false;
+      }
+      const pinDrag = (probe.pinSamples || []).find((s) => s && s.region === 'drag');
+      if (pinDrag) {
+        console.log('FAIL: pin rect must not have effective drag (sidebar open/fixed)', label, pinDrag);
+        app.exit(1);
+        return false;
+      }
     }
-    const pinDrag = (probe.pinSamples || []).find((s) => s && s.region === 'drag');
-    if (pinDrag) {
-      console.log('FAIL: pin rect must not have effective drag (sidebar open/fixed)', label, pinDrag);
-      app.exit(1);
-      return false;
+    if (probe.collapseRect) {
+      if (probe.collapseRegion && probe.collapseRegion !== 'no-drag') {
+        console.log('FAIL: collapse arrow must be no-drag', label, probe.collapseRegion);
+        app.exit(1);
+        return false;
+      }
+      const collapseDrag = (probe.collapseSamples || []).find((s) => s && s.region === 'drag');
+      if (collapseDrag) {
+        console.log('FAIL: collapse rect must not have effective drag', label, collapseDrag);
+        app.exit(1);
+        return false;
+      }
     }
     console.log('PASS: topbar app-region regression', label, {
       topbarRegion: probe.topbarRegion,
       empty: probe.emptyEffective && probe.emptyEffective.region,
       pinSamples: (probe.pinSamples || []).map((s) => s && s.region),
+      collapseSamples: (probe.collapseSamples || []).map((s) => s && s.region),
     });
     return true;
   }
@@ -336,8 +435,13 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (mode.toggleTitle !== 'Fixar barra lateral') {
-    console.log('FAIL: auto-hide tooltip', mode.toggleTitle);
+  if (mode.pinTitle !== 'Fixar barra lateral' || mode.toggleTitle !== 'Fixar barra lateral') {
+    console.log('FAIL: auto-hide pin tooltip', mode.pinTitle, mode.toggleTitle);
+    app.exit(1);
+    return;
+  }
+  if (!mode.pinVisible || !mode.collapseVisible || mode.pinFilled) {
+    console.log('FAIL: auto-hide must keep both buttons; pin unfilled', mode);
     app.exit(1);
     return;
   }
@@ -658,8 +762,18 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (mode.toggleTitle !== 'Expandir barra lateral') {
-    console.log('FAIL: legacy compact tooltip', mode.toggleTitle);
+  if (mode.pinVisible) {
+    console.log('FAIL: legacy must hide pin button', mode);
+    app.exit(1);
+    return;
+  }
+  if (!mode.collapseVisible) {
+    console.log('FAIL: legacy must show collapse arrow', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.toggleTitle !== 'Expandir barra lateral' || mode.collapseTitle !== 'Expandir barra lateral') {
+    console.log('FAIL: legacy compact tooltip', mode.toggleTitle, mode.collapseTitle);
     app.exit(1);
     return;
   }
@@ -698,18 +812,18 @@ async function runSidebarSelftest(ctx) {
     bounds: legacyCompact.bounds,
   });
 
-  // Head + pin must not be caption-drag (Windows swallows real clicks otherwise).
-  if (mode.headAppRegion === 'drag' || mode.pinAppRegion === 'drag') {
-    console.log('FAIL: legacy head/pin must be no-drag for clicks', {
+  // Head + arrow must not be caption-drag (Windows swallows real clicks otherwise).
+  if (mode.headAppRegion === 'drag' || mode.collapseAppRegion === 'drag') {
+    console.log('FAIL: legacy head/collapse must be no-drag for clicks', {
       headAppRegion: mode.headAppRegion,
-      pinAppRegion: mode.pinAppRegion,
+      collapseAppRegion: mode.collapseAppRegion,
     });
     app.exit(1);
     return;
   }
   if (!(await assertTopbarAppRegions('legacy-compact'))) return;
-  if (mode.pinDisabled || mode.pinPointerEvents === 'none') {
-    console.log('FAIL: legacy toggle must be clickable', mode);
+  if (mode.collapseDisabled || mode.collapsePointerEvents === 'none') {
+    console.log('FAIL: legacy collapse arrow must be clickable', mode);
     app.exit(1);
     return;
   }
@@ -826,8 +940,13 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (mode.toggleTitle !== 'Esconder automaticamente') {
-    console.log('FAIL: after legacy off tooltip', mode.toggleTitle);
+  if (!mode.pinVisible || !mode.collapseVisible) {
+    console.log('FAIL: after legacy off both buttons must return', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.pinTitle !== 'Esconder automaticamente' || mode.toggleTitle !== 'Esconder automaticamente') {
+    console.log('FAIL: after legacy off pin tooltip', mode.pinTitle, mode.toggleTitle);
     app.exit(1);
     return;
   }
@@ -877,7 +996,7 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: sidebarAlwaysActive persisted to disk (autoHide kept in ui)');
 
-  /* ---------- Migration: missing sidebarAutoHide → fixed; preserve collapsed for legacy ---------- */
+  /* ---------- Migration: missing sidebarAutoHide → fixed; dual-button expands fixed ---------- */
   {
     const { migrate } = require('./state');
     const m = migrate({
@@ -897,8 +1016,14 @@ async function runSidebarSelftest(ctx) {
       app.exit(1);
       return;
     }
-    if (m.ui.sidebarCollapsed !== true) {
-      console.log('FAIL: old sidebarCollapsed true must be preserved for legacy', m.ui);
+    // Dual-button one-shot: fixed profiles become expanded (no surprise shrink).
+    if (m.ui.sidebarCollapsed !== false) {
+      console.log('FAIL: dual-button migration should expand fixed profiles', m.ui);
+      app.exit(1);
+      return;
+    }
+    if (!m.settings.migrations || !m.settings.migrations.sidebarDualButtons130) {
+      console.log('FAIL: sidebarDualButtons130 migration flag missing', m.settings);
       app.exit(1);
       return;
     }
@@ -914,7 +1039,7 @@ async function runSidebarSelftest(ctx) {
       accounts: [],
       layout: '1',
       page: 0,
-      ui: { sidebarCollapsed: false, sidebarAutoHide: true, layoutLocked: true, sidebarWidth: 240 },
+      ui: { sidebarCollapsed: true, sidebarAutoHide: true, layoutLocked: true, sidebarWidth: 240 },
       settings: { migrations: { keepAlive120: true }, sidebarAlwaysActive: false },
       appearance: { preset: 'escuro' },
       freeTiles: {},
@@ -924,7 +1049,51 @@ async function runSidebarSelftest(ctx) {
       app.exit(1);
       return;
     }
-    console.log('PASS: migration defaults to fixed; preserves collapsed; keeps existing autoHide');
+    // Auto-hide keeps last compact preference (independent of pin).
+    if (kept.ui.sidebarCollapsed !== true) {
+      console.log('FAIL: auto-hide profile should keep sidebarCollapsed', kept.ui);
+      app.exit(1);
+      return;
+    }
+    const fixedExpand = migrate({
+      version: 1,
+      workspaces: [{ id: 'ws-sb', name: 'Sidebar' }],
+      activeWorkspaceId: 'ws-sb',
+      accounts: [],
+      layout: '1',
+      page: 0,
+      ui: { sidebarCollapsed: true, sidebarAutoHide: false, layoutLocked: true, sidebarWidth: 240 },
+      settings: { migrations: { keepAlive120: true }, sidebarAlwaysActive: false },
+      appearance: { preset: 'escuro' },
+      freeTiles: {},
+    });
+    if (fixedExpand.ui.sidebarCollapsed !== false || fixedExpand.ui.sidebarAutoHide !== false) {
+      console.log('FAIL: fixed+stale-compact must become fixed+expanded', fixedExpand.ui);
+      app.exit(1);
+      return;
+    }
+    // Second migrate must not re-clear an intentional compact after flag is set.
+    const again = migrate({
+      version: 1,
+      workspaces: [{ id: 'ws-sb', name: 'Sidebar' }],
+      activeWorkspaceId: 'ws-sb',
+      accounts: [],
+      layout: '1',
+      page: 0,
+      ui: { sidebarCollapsed: true, sidebarAutoHide: false, layoutLocked: true, sidebarWidth: 240 },
+      settings: {
+        migrations: { keepAlive120: true, sidebarDualButtons130: true },
+        sidebarAlwaysActive: false,
+      },
+      appearance: { preset: 'escuro' },
+      freeTiles: {},
+    });
+    if (again.ui.sidebarCollapsed !== true) {
+      console.log('FAIL: after migration flag, compact preference must stick', again.ui);
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: migration dual-button (fixed→expanded once; keep autoHide; flag idempotent)');
   }
 
   /* ---------- F11: edge-reveal overlay (auto-hide prefs) ---------- */
@@ -1040,7 +1209,7 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await rendererEval('window.__multiheizUi.clickSidebarPinButton()');
   await sleep(150);
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (!mode.fsPinned || !mode.open || mode.autoHide !== prefAutoHideBeforeFs) {
@@ -1058,7 +1227,7 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: F11 pin keeps sidebar open');
 
-  await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await rendererEval('window.__multiheizUi.clickSidebarPinButton()');
   await sleep(150);
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (mode.fsPinned || mode.open) {
