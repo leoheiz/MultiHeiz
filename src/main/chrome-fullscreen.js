@@ -7,6 +7,12 @@
  *
  * Policy when a panel is in HTML5 fullscreen: do not intercept F11 or Esc (page keeps
  * the keys; we do not toggle our mode on that keypress).
+ *
+ * Windows note: an owned child BrowserWindow with alwaysOnTop can scramble the owner's
+ * z-order/activation after setFullScreen. The exit hint is a non-topmost owned child
+ * (HTML overlay in the main renderer would sit under WebContentsViews). After entering
+ * fullscreen we show/focus/moveTop the main window and briefly pin alwaysOnTop, then
+ * clear it and restore focus to the previously focused panel.
  */
 
 const { BrowserWindow } = require('electron');
@@ -17,6 +23,10 @@ let mainWindow = null;
 let emitToRenderer = () => {};
 /** @type {() => void} */
 let onLayoutChange = () => {};
+/** @type {() => string | null} */
+let getFocusedPanelId = () => null;
+/** @type {(accountId: string | null) => void} */
+let focusPanelById = () => {};
 
 let chromeHidden = false;
 /** Account ids whose webContents reported HTML5 fullscreen. */
@@ -28,16 +38,27 @@ let toggleLockUntil = 0;
 let hintTimer = null;
 /** @type {import('electron').BrowserWindow | null} */
 let hintWin = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let alwaysOnTopTimer = null;
+/** @type {(() => void) | null} */
+let pendingEnterFsHandler = null;
 
 /**
  * @param {import('electron').BrowserWindow} win
  * @param {(payload: object) => void} emit
  * @param {() => void} layoutChange
+ * @param {{ getFocusedPanelId?: () => string | null, focusPanelById?: (id: string | null) => void }} [opts]
  */
-function init(win, emit, layoutChange) {
+function init(win, emit, layoutChange, opts = {}) {
   mainWindow = win;
   emitToRenderer = typeof emit === 'function' ? emit : () => {};
   onLayoutChange = typeof layoutChange === 'function' ? layoutChange : () => {};
+  if (typeof opts.getFocusedPanelId === 'function') {
+    getFocusedPanelId = opts.getFocusedPanelId;
+  }
+  if (typeof opts.focusPanelById === 'function') {
+    focusPanelById = opts.focusPanelById;
+  }
 }
 
 function isChromeHidden() {
@@ -65,6 +86,87 @@ function clearHtmlFullscreen(accountId) {
   if (accountId) htmlFullscreenAccounts.delete(accountId);
 }
 
+function clearAlwaysOnTopTimer() {
+  if (alwaysOnTopTimer) {
+    clearTimeout(alwaysOnTopTimer);
+    alwaysOnTopTimer = null;
+  }
+}
+
+function ensureNotAlwaysOnTop() {
+  clearAlwaysOnTopTimer();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (mainWindow.isAlwaysOnTop()) mainWindow.setAlwaysOnTop(false);
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearPendingEnterFs() {
+  if (pendingEnterFsHandler && mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.removeListener('enter-full-screen', pendingEnterFsHandler);
+    } catch {
+      /* ignore */
+    }
+  }
+  pendingEnterFsHandler = null;
+}
+
+/**
+ * Bring the main window to the foreground after OS fullscreen activation.
+ * Temporary alwaysOnTop (~250ms) helps Windows when titleBarStyle is hidden;
+ * it is always cleared afterwards.
+ * @param {string | null} restoreAccountId
+ */
+function bringMainWindowForward(restoreAccountId) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (!mainWindow.isVisible()) mainWindow.show();
+    try {
+      mainWindow.setAlwaysOnTop(true);
+    } catch {
+      /* ignore */
+    }
+    try {
+      mainWindow.moveTop();
+    } catch {
+      /* ignore */
+    }
+    try {
+      mainWindow.focus();
+    } catch {
+      /* ignore */
+    }
+    try {
+      mainWindow.show();
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* ignore */
+  }
+
+  clearAlwaysOnTopTimer();
+  alwaysOnTopTimer = setTimeout(() => {
+    alwaysOnTopTimer = null;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      mainWindow.setAlwaysOnTop(false);
+    } catch {
+      /* ignore */
+    }
+    if (restoreAccountId) {
+      try {
+        focusPanelById(restoreAccountId);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, 250);
+}
+
 function destroyHint() {
   if (hintTimer) {
     clearTimeout(hintTimer);
@@ -80,6 +182,11 @@ function destroyHint() {
   hintWin = null;
 }
 
+/**
+ * Exit hint as an owned child window (no alwaysOnTop — that broke parent z-order
+ * on Windows after setFullScreen). Child ownership keeps it above the parent's
+ * WebContentsViews without pinching the main window behind other apps.
+ */
 function showExitHint() {
   destroyHint();
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -103,7 +210,7 @@ function showExitHint() {
       height: h,
       x,
       y,
-      alwaysOnTop: true,
+      alwaysOnTop: false,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -128,6 +235,16 @@ function showExitHint() {
 }
 
 /**
+ * After fullscreen is active: activate window, then show the exit hint.
+ * @param {string | null} restoreAccountId
+ * @param {boolean} wantHint
+ */
+function afterEnteredFullScreen(restoreAccountId, wantHint) {
+  bringMainWindowForward(restoreAccountId);
+  if (wantHint) showExitHint();
+}
+
+/**
  * @param {boolean} hidden
  * @param {{ fromWindowEvent?: boolean, showHint?: boolean }} [opts]
  */
@@ -135,25 +252,64 @@ function setChromeHidden(hidden, opts = {}) {
   const next = !!hidden;
   const fromWindowEvent = !!opts.fromWindowEvent;
   const changed = chromeHidden !== next;
+  const restoreAccountId = getFocusedPanelId();
+  const wantHint = !!(next && opts.showHint);
   chromeHidden = next;
 
   if (!fromWindowEvent && mainWindow && !mainWindow.isDestroyed()) {
     const fs = mainWindow.isFullScreen();
-    if (chromeHidden && !fs) mainWindow.setFullScreen(true);
-    if (!chromeHidden && fs) mainWindow.setFullScreen(false);
+    if (chromeHidden && !fs) {
+      clearPendingEnterFs();
+      const onEnter = () => {
+        pendingEnterFsHandler = null;
+        afterEnteredFullScreen(restoreAccountId, wantHint);
+      };
+      pendingEnterFsHandler = onEnter;
+      mainWindow.once('enter-full-screen', onEnter);
+      mainWindow.setFullScreen(true);
+      // Fallback if the event already fired or is delayed oddly
+      setTimeout(() => {
+        if (
+          pendingEnterFsHandler === onEnter &&
+          mainWindow &&
+          !mainWindow.isDestroyed() &&
+          mainWindow.isFullScreen()
+        ) {
+          try {
+            mainWindow.removeListener('enter-full-screen', onEnter);
+          } catch {
+            /* ignore */
+          }
+          pendingEnterFsHandler = null;
+          afterEnteredFullScreen(restoreAccountId, wantHint);
+        }
+      }, 400);
+    } else if (chromeHidden && fs) {
+      // Already fullscreen (e.g. re-enter) — still activate + optional hint
+      afterEnteredFullScreen(restoreAccountId, wantHint);
+    }
+    if (!chromeHidden && fs) {
+      clearPendingEnterFs();
+      ensureNotAlwaysOnTop();
+      destroyHint();
+      mainWindow.setFullScreen(false);
+    }
   }
 
   if (changed || opts.showHint) {
     emitToRenderer({
       type: 'chrome:hidden',
       hidden: chromeHidden,
-      showHint: !!(chromeHidden && opts.showHint),
+      showHint: wantHint,
     });
     onLayoutChange();
   }
 
-  if (chromeHidden && opts.showHint) showExitHint();
-  if (!chromeHidden) destroyHint();
+  if (!chromeHidden) {
+    clearPendingEnterFs();
+    ensureNotAlwaysOnTop();
+    destroyHint();
+  }
 }
 
 function enter() {
@@ -212,6 +368,9 @@ function handleBeforeInput(event, input, accountId) {
  * OS left fullscreen by other means — clear chrome-hidden cleanly.
  */
 function onLeaveFullScreen() {
+  clearPendingEnterFs();
+  ensureNotAlwaysOnTop();
+  destroyHint();
   if (!chromeHidden) return;
   setChromeHidden(false, { fromWindowEvent: true });
 }
@@ -238,4 +397,6 @@ module.exports = {
   getDebugState,
   showExitHint,
   destroyHint,
+  bringMainWindowForward,
+  ensureNotAlwaysOnTop,
 };

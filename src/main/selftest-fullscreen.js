@@ -1,10 +1,11 @@
 'use strict';
 
 const http = require('node:http');
-const { app } = require('electron');
+const { app, screen } = require('electron');
 
 /**
  * Selftest for MultiHeiz 1.2.0 phase 6 — F11 fullscreen focus mode.
+ * Also asserts Windows activation/z-order helpers after enter/leave.
  */
 async function runFullscreenSelftest(ctx) {
   const {
@@ -157,6 +158,8 @@ async function runFullscreenSelftest(ctx) {
   chromeFullscreen.enter();
   await sleep(500);
   await waitForLayoutSettle();
+  // Wait past the temporary alwaysOnTop pin (~250ms) used to raise the window on Windows
+  await sleep(400);
 
   if (!mainWindow.isFullScreen()) {
     console.log('FAIL: window should be fullScreen after enter');
@@ -168,6 +171,39 @@ async function runFullscreenSelftest(ctx) {
     app.exit(1);
     return;
   }
+  if (mainWindow.isAlwaysOnTop()) {
+    console.log('FAIL: isAlwaysOnTop should be false after enter settle');
+    app.exit(1);
+    return;
+  }
+  if (mainWindow.isFocused()) {
+    console.log('PASS: isFocused()==true after enter');
+  } else {
+    console.log(
+      'WARN: isFocused()==false after enter (OS may deny focus in headless/offscreen selftest)'
+    );
+  }
+  try {
+    const bounds = mainWindow.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const wa = display.bounds;
+    const covers =
+      bounds.x <= wa.x + 2 &&
+      bounds.y <= wa.y + 2 &&
+      bounds.x + bounds.width >= wa.x + wa.width - 2 &&
+      bounds.y + bounds.height >= wa.y + wa.height - 2;
+    if (!covers) {
+      console.log('FAIL: fullscreen bounds should cover display', { bounds, display: wa });
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: fullscreen bounds cover display', { bounds, display: wa });
+  } catch (err) {
+    console.log('FAIL: display matching check', err && err.message ? err.message : err);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: enter activation — fullscreen, not alwaysOnTop');
 
   const visEnter = await rendererEval('window.__multiheizUi.getChromeVisibility()');
   if (!visEnter || !visEnter.chromeHidden) {
@@ -255,6 +291,13 @@ async function runFullscreenSelftest(ctx) {
   console.log('PASS: Esc via panel exits mode and restores chrome');
 
   /* ---------- F11 via panel input ---------- */
+  panels.setFocusedAccount('acc-fs-a');
+  try {
+    const wc = panels.getPanelCapture('acc-fs-a');
+    if (wc) wc.focus();
+  } catch {
+    /* ignore */
+  }
   await sendPanelKey('F11');
   if (!chromeFullscreen.isChromeHidden() || !mainWindow.isFullScreen()) {
     console.log('FAIL: F11 via panel should enter mode', chromeFullscreen.getDebugState());
@@ -262,15 +305,27 @@ async function runFullscreenSelftest(ctx) {
     return;
   }
   await waitForLayoutSettle();
+  await sleep(400);
+  if (mainWindow.isAlwaysOnTop()) {
+    console.log('FAIL: isAlwaysOnTop should be false after F11 panel enter settle');
+    app.exit(1);
+    return;
+  }
   if (!assertUnionFillsContent('after-f11')) return;
-  console.log('PASS: F11 via panel enters mode');
+  console.log('PASS: F11 via panel enters mode (not alwaysOnTop)');
 
   await sendPanelKey('F11');
+  await sleep(400);
   if (chromeFullscreen.isChromeHidden() || mainWindow.isFullScreen()) {
     console.log('FAIL: F11 again should exit', {
       chromeHidden: chromeFullscreen.isChromeHidden(),
       isFullScreen: mainWindow.isFullScreen(),
     });
+    app.exit(1);
+    return;
+  }
+  if (mainWindow.isAlwaysOnTop()) {
+    console.log('FAIL: isAlwaysOnTop should be false after F11 exit');
     app.exit(1);
     return;
   }
@@ -292,6 +347,11 @@ async function runFullscreenSelftest(ctx) {
     app.exit(1);
     return;
   }
+  if (mainWindow.isAlwaysOnTop()) {
+    console.log('FAIL: isAlwaysOnTop should be false after leave-full-screen');
+    app.exit(1);
+    return;
+  }
   console.log('PASS: leave-full-screen clears chrome-hidden');
 
   try {
@@ -300,6 +360,7 @@ async function runFullscreenSelftest(ctx) {
     /* ignore */
   }
   chromeFullscreen.destroyHint();
+  chromeFullscreen.ensureNotAlwaysOnTop();
   console.log('PASS: selftest:fullscreen complete');
   app.exit(0);
 }

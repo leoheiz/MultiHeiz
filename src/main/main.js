@@ -612,7 +612,21 @@ function createWindow() {
   }
 
   panels.initPanels(mainWindow, emitToRenderer);
-  chromeFullscreen.init(mainWindow, emitToRenderer, notifyDisplayOrChromeChange);
+  chromeFullscreen.init(mainWindow, emitToRenderer, notifyDisplayOrChromeChange, {
+    getFocusedPanelId: () => panels.getFocusedAccountId(),
+    focusPanelById: (accountId) => {
+      if (!accountId) return;
+      panels.setFocusedAccount(accountId);
+      const wc = panels.getPanelCapture(accountId);
+      if (wc && !wc.isDestroyed()) {
+        try {
+          wc.focus();
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+  });
   memory.initMemory(emitToRenderer);
 
   // Harden main UI: stay on local index.html; no webviews / window.open
