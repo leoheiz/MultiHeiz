@@ -238,6 +238,7 @@ const SELFTEST_LAYOUT_WORKSPACE = selftestMode === 'layout-workspace';
 const SELFTEST_POPOVER_OVERLAY = selftestMode === 'popover-overlay';
 const SELFTEST_REALHOVER_VOLUME = selftestMode === 'realhover-volume';
 const SELFTEST_LAG_AUDIT = selftestMode === 'lag-audit';
+const SELFTEST_PERF = selftestMode === 'perf';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -286,7 +287,8 @@ const ANY_SELFTEST =
   SELFTEST_LAYOUT_WORKSPACE ||
   SELFTEST_POPOVER_OVERLAY ||
   SELFTEST_REALHOVER_VOLUME ||
-  SELFTEST_LAG_AUDIT;
+  SELFTEST_LAG_AUDIT ||
+  SELFTEST_PERF;
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -592,7 +594,10 @@ function createWindow() {
     SELFTEST_SHEET ||
     SELFTEST_VOLUME ||
     SELFTEST_SHOTS_VOLUME ||
-    SELFTEST_LAYOUT_WORKSPACE
+    SELFTEST_LAYOUT_WORKSPACE ||
+    SELFTEST_PERF ||
+    SELFTEST_LAG_AUDIT ||
+    SELFTEST_POPOVER_OVERLAY
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -680,7 +685,11 @@ function createWindow() {
       SELFTEST_SHOTS_SIDEBAR2 ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
-      SELFTEST_UA,
+      SELFTEST_UA ||
+      SELFTEST_PERF ||
+      SELFTEST_LAG_AUDIT ||
+      SELFTEST_POPOVER_OVERLAY ||
+      SELFTEST_REALHOVER_VOLUME,
     paintWhenInitiallyHidden: true,
     autoHideMenuBar: true,
     webPreferences: {
@@ -1924,6 +1933,32 @@ function createWindow() {
           failSelftest(err);
         }
       }, 800);
+    });
+  } else if (SELFTEST_PERF) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runPerfSelftest } = require('./selftest-perf');
+          runPerfSelftest({
+            mainWindow,
+            panels,
+            popoverOverlay,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 500);
     });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
