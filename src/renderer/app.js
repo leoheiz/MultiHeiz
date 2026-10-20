@@ -394,7 +394,13 @@ function applyState(next) {
   }
 }
 
+/** Legacy setting: arrow collapses like before (no auto-hide / hot-zone / overlay). */
+function isSidebarLegacyAlwaysActive() {
+  return !!(state.settings && state.settings.sidebarAlwaysActive);
+}
+
 function isSidebarAutoHide() {
+  if (isSidebarLegacyAlwaysActive()) return false;
   return !!(state.ui && state.ui.sidebarAutoHide);
 }
 
@@ -512,12 +518,21 @@ function isSidebarEffectivelyCollapsed() {
 
 function updateSidebarToggleUi() {
   if (!el.btnSidebarToggle) return;
+  const hideIco = el.btnSidebarToggle.querySelector('.ico-sidebar-hide');
+  const pinIco = el.btnSidebarToggle.querySelector('.ico-sidebar-pin');
+  if (isSidebarLegacyAlwaysActive()) {
+    const collapsed = isSidebarEffectivelyCollapsed();
+    const label = collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral';
+    el.btnSidebarToggle.title = label;
+    el.btnSidebarToggle.setAttribute('aria-label', label);
+    if (hideIco) hideIco.classList.toggle('hidden', false);
+    if (pinIco) pinIco.classList.toggle('hidden', true);
+    return;
+  }
   const autoHide = isSidebarAutoHide();
   const label = autoHide ? 'Fixar barra lateral' : 'Esconder automaticamente';
   el.btnSidebarToggle.title = label;
   el.btnSidebarToggle.setAttribute('aria-label', label);
-  const hideIco = el.btnSidebarToggle.querySelector('.ico-sidebar-hide');
-  const pinIco = el.btnSidebarToggle.querySelector('.ico-sidebar-pin');
   if (hideIco) hideIco.classList.toggle('hidden', autoHide);
   if (pinIco) pinIco.classList.toggle('hidden', !autoHide);
 }
@@ -1952,6 +1967,25 @@ window.addEventListener('resize', () => updateTabsOverflow());
 
 el.btnSidebarToggle.addEventListener('click', async () => {
   clearSidebarHoverTimers();
+  if (isSidebarLegacyAlwaysActive()) {
+    // Pre-1.3.0 behavior: collapse/expand icon rail (incl. narrow auto-collapse).
+    const narrow = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT;
+    const currentlyCollapsed = isSidebarEffectivelyCollapsed();
+    if (narrow) {
+      if (currentlyCollapsed) {
+        sidebarForceExpanded = true;
+        applyState(await window.multiheiz.updateUi({ sidebarCollapsed: false }));
+      } else {
+        sidebarForceExpanded = false;
+        applyState(await window.multiheiz.updateUi({ sidebarCollapsed: true }));
+      }
+    } else {
+      sidebarForceExpanded = false;
+      const collapsed = !state.ui?.sidebarCollapsed;
+      applyState(await window.multiheiz.updateUi({ sidebarCollapsed: collapsed }));
+    }
+    return;
+  }
   sidebarForceExpanded = false;
   const nextAutoHide = !isSidebarAutoHide();
   if (!nextAutoHide) {
@@ -1961,7 +1995,7 @@ el.btnSidebarToggle.addEventListener('click', async () => {
   applyState(
     await window.multiheiz.updateUi({
       sidebarAutoHide: nextAutoHide,
-      // Clear legacy collapsed flag when using the new toggle.
+      // Clear collapsed flag when using the new fixed/auto-hide toggle.
       sidebarCollapsed: false,
     })
   );
@@ -2675,8 +2709,10 @@ window.__multiheizUi = {
     const hz = el.sidebarHotzone;
     const hzCs = hz ? getComputedStyle(hz) : null;
     return {
+      legacyAlwaysActive: isSidebarLegacyAlwaysActive(),
       autoHide: isSidebarAutoHide(),
       open: !!sidebarAutoHideOpen,
+      collapsed: isSidebarEffectivelyCollapsed(),
       chromeHidden: isChromeHiddenMode(),
       toggleTitle: el.btnSidebarToggle ? el.btnSidebarToggle.title : '',
       sidebarWidth: el.sidebar ? el.sidebar.getBoundingClientRect().width : 0,
@@ -2688,6 +2724,29 @@ window.__multiheizUi = {
       delays: { showMs: SIDEBAR_SHOW_DELAY_MS, hideMs: SIDEBAR_HIDE_DELAY_MS },
       hotzonePx: SIDEBAR_HOTZONE_PX,
     };
+  },
+  syncSidebarAfterLegacyChange: async () => {
+    clearSidebarHoverTimers();
+    if (!isSidebarLegacyAlwaysActive()) {
+      sidebarAutoHideOpen = false;
+      if (state.ui?.sidebarCollapsed) {
+        applyState(await window.multiheiz.updateUi({ sidebarCollapsed: false }));
+      }
+    } else {
+      sidebarAutoHideOpen = false;
+    }
+    updateSidebarCollapseClasses();
+    await syncSidebarOverlayBounds(!!(isSidebarAutoHide() && sidebarAutoHideOpen));
+    scheduleSync();
+    return window.__multiheizUi.getSidebarMode();
+  },
+  setSidebarAlwaysActive: async (on) => {
+    clearSidebarHoverTimers();
+    const st = await window.multiheiz.updateSettings({ sidebarAlwaysActive: !!on });
+    applyState(st);
+    await window.__multiheizUi.syncSidebarAfterLegacyChange();
+    await new Promise((r) => setTimeout(r, 50));
+    return window.__multiheizUi.getSidebarMode();
   },
   /** Simulate hot-zone / leave for selftests (bypasses real mouse over WebContentsView). */
   sidebarHotzoneEnter: () => {
@@ -2915,6 +2974,7 @@ window.__mhV16Hooks = {
   fillAppearanceForm,
   readAppearanceFromForm,
   updateAppearanceLive: applyAppearance,
+  syncSidebarAfterLegacyChange: (...args) => window.__multiheizUi.syncSidebarAfterLegacyChange(...args),
   getAppVersion: () => appVersion,
   focusAccount: async (id, opts) => {
     const st = state;

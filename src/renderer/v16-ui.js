@@ -1856,6 +1856,7 @@
           backgroundFps: Number(form.backgroundFps.value) || 5,
           backgroundPreset: (form.backgroundPreset && form.backgroundPreset.value) || 'balanced',
           lightMode: !!(form.lightMode && form.lightMode.checked),
+          sidebarAlwaysActive: !!(form.sidebarAlwaysActive && form.sidebarAlwaysActive.checked),
           frameCapHidden: Number(form.frameCapHidden && form.frameCapHidden.value) || 30,
           frameCapAll: Number(form.frameCapAll && form.frameCapAll.value) || 0,
           preferHighPerfGpu: !!(form.preferHighPerfGpu && form.preferHighPerfGpu.checked),
@@ -1876,8 +1877,14 @@
             abuCompat: !(form.extAbuCompat && form.extAbuCompat.checked === false),
           },
         };
+        const prevSidebarAlways = !!(getState().settings && getState().settings.sidebarAlwaysActive);
         const st = await window.multiheiz.updateSettings(partial);
         applyState(st);
+        if (prevSidebarAlways !== !!partial.sidebarAlwaysActive) {
+          if (hooks().syncSidebarAfterLegacyChange) {
+            await hooks().syncSidebarAfterLegacyChange();
+          }
+        }
         await window.multiheiz.downloadsSettings({
           askWhereToSave: !!form.askWhereToSave.checked,
         });
@@ -2071,6 +2078,7 @@
     form.backgroundFps.value = String(Number(s.backgroundFps) || 5);
     if (form.backgroundPreset) form.backgroundPreset.value = s.backgroundPreset || 'balanced';
     if (form.lightMode) form.lightMode.checked = !!s.lightMode;
+    if (form.sidebarAlwaysActive) form.sidebarAlwaysActive.checked = !!s.sidebarAlwaysActive;
     if (form.frameCapHidden) form.frameCapHidden.value = String(Number(s.frameCapHidden) || 30);
     if (form.frameCapAll) form.frameCapAll.value = String(Number(s.frameCapAll) || 0);
     if (form.preferHighPerfGpu) form.preferHighPerfGpu.checked = !!s.preferHighPerfGpu;
