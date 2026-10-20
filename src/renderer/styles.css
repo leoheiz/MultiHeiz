@@ -14,8 +14,9 @@
   --statusbar-h: 28px;
   --sidebar-w: 240px;
   --sidebar-w-collapsed: 52px;
-  /* Hot-zone strip when sidebar is in auto-hide (must be real DOM under WebContentsViews) */
-  --sidebar-hotzone-w: 5px;
+  /* Hot-zone strip when sidebar is in auto-hide (must be real DOM under WebContentsViews).
+   * Keep ~6px so page content stays wide; main also polls ≤12px from the left edge. */
+  --sidebar-hotzone-w: 6px;
   --panel-header-h: 30px;
   --radius: 8px;
   --radius-sm: 6px;
@@ -134,7 +135,7 @@ body {
 
 /*
  * Auto-hide: sidebar leaves the flex flow (absolute) so panels keep full width.
- * A separate #sidebar-hotzone provides the ~5px mouse strip. When open, the sidebar
+ * A separate #sidebar-hotzone provides the ~6px mouse strip. When open, the sidebar
  * slides in as an HTML overlay; main shifts WebContentsView bounds (see panels.js).
  */
 #app.sidebar-auto-hide #sidebar {
@@ -154,6 +155,15 @@ body {
   transform: translateX(0);
   pointer-events: auto;
   box-shadow: 4px 0 18px rgba(0, 0, 0, 0.35);
+}
+
+/*
+ * In auto-hide the head must not be a Windows caption drag region: entering drag
+ * around the pin fires mouseleave on #sidebar and would close the overlay early.
+ */
+#app.sidebar-auto-hide #sidebar .sidebar-head {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 #app.sidebar-auto-hide #sidebar .sidebar-resize-handle {
