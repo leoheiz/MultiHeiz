@@ -214,6 +214,7 @@ const SELFTEST_GIS = selftestMode === 'gis';
 const SELFTEST_STORE = selftestMode === 'store';
 const SELFTEST_SIDEBAR = selftestMode === 'sidebar';
 const SELFTEST_REALCLICK_SIDEBAR = selftestMode === 'realclick-sidebar';
+const SELFTEST_REALCLICK_LEGACY_COMPACT = selftestMode === 'realclick-legacy-compact';
 const SELFTEST_REALDRAG_TOPBAR = selftestMode === 'realdrag-topbar';
 const SELFTEST_REALHOVER_FULLSCREEN = selftestMode === 'realhover-fullscreen';
 const SELFTEST_WORKSPACE_DELETE = selftestMode === 'workspace-delete';
@@ -250,6 +251,7 @@ const ANY_SELFTEST =
   SELFTEST_STORE ||
   SELFTEST_SIDEBAR ||
   SELFTEST_REALCLICK_SIDEBAR ||
+  SELFTEST_REALCLICK_LEGACY_COMPACT ||
   SELFTEST_REALDRAG_TOPBAR ||
   SELFTEST_REALHOVER_FULLSCREEN ||
   SELFTEST_WORKSPACE_DELETE ||
@@ -543,6 +545,7 @@ function createWindow() {
     SELFTEST_FULLSCREEN ||
     SELFTEST_SIDEBAR ||
     SELFTEST_REALCLICK_SIDEBAR ||
+    SELFTEST_REALCLICK_LEGACY_COMPACT ||
     SELFTEST_REALDRAG_TOPBAR ||
     SELFTEST_REALHOVER_FULLSCREEN ||
     SELFTEST_CONTEXTMENU ||
@@ -558,7 +561,7 @@ function createWindow() {
 
   // adblock-real / sidebar / workspace-delete: keep window off-screen so nothing
   // pops on the desktop, but still paint (layout / WebContentsView bounds).
-  // realclick-sidebar / realdrag-topbar / realhover-fullscreen must be on-screen for a real OS mouse.
+  // realclick-* / realdrag-topbar / realhover-fullscreen must be on-screen for a real OS mouse.
   const offscreenSelftest =
     SELFTEST_ADBLOCK_REAL ||
     SELFTEST_SIDEBAR ||
@@ -617,6 +620,7 @@ function createWindow() {
       SELFTEST_FULLSCREEN ||
       SELFTEST_SIDEBAR ||
       SELFTEST_REALCLICK_SIDEBAR ||
+      SELFTEST_REALCLICK_LEGACY_COMPACT ||
       SELFTEST_REALDRAG_TOPBAR ||
       SELFTEST_REALHOVER_FULLSCREEN ||
       SELFTEST_CONTEXTMENU ||
@@ -1124,6 +1128,33 @@ function createWindow() {
         try {
           const { runRealclickSidebarSelftest } = require('./selftest-realclick-sidebar');
           runRealclickSidebarSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            chromeFullscreen,
+            sidebarCursor,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_REALCLICK_LEGACY_COMPACT) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runRealclickLegacyCompactSelftest } = require('./selftest-realclick-legacy-compact');
+          runRealclickLegacyCompactSelftest({
             mainWindow,
             panels,
             getState,

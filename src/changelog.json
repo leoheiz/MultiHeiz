@@ -58,6 +58,10 @@
           "text": "Modo legado da barra lateral: a seta do topo volta a recolher/expandir (cabeçalho sem região de arraste no Windows)."
         },
         {
+          "tag": "Correção",
+          "text": "Modo legado da barra lateral volta ao compacto/expandido original (pré-1.3.0): inicia estreita (só ícones), a seta alterna para largura total com nomes; estado persiste; em F11 revela no estado salvo; nunca auto-esconde."
+        },
+        {
           "tag": "Novo",
           "text": "Menu de contexto nativo (botão direito) nos painéis."
         },

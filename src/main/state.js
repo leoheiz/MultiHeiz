@@ -324,15 +324,15 @@ function migrate(parsed) {
   if (typeof next.ui.sidebarCollapsed !== 'boolean') {
     next.ui.sidebarCollapsed = false;
   }
-  // Profiles without sidebarAutoHide start FIXED. Keep an existing boolean (user already
-  // chose auto-hide in the new mode). Do not map old sidebarCollapsed → autoHide.
+  // Profiles without sidebarAutoHide start FIXED (new mode). Keep an existing boolean
+  // (user already chose auto-hide). Do not map old sidebarCollapsed → autoHide.
+  // Preserve sidebarCollapsed so legacy mode can restore the pre-1.3.0 compact/expand
+  // preference; outside legacy the renderer ignores the flag for layout.
   // Check *parsed* ui: defaultState already has sidebarAutoHide:false after merge.
   {
     const rawUi = parsed.ui && typeof parsed.ui === 'object' ? parsed.ui : {};
     if (typeof rawUi.sidebarAutoHide !== 'boolean') {
       next.ui.sidebarAutoHide = false;
-      // Full fixed bar (not icon-rail) for profiles that never used the new toggle.
-      next.ui.sidebarCollapsed = false;
     }
   }
   if (typeof next.ui.sidebarWidth !== 'number' || !Number.isFinite(next.ui.sidebarWidth)) {

@@ -19,6 +19,8 @@ const SIDEBAR_AUTO_BREAKPOINT = 900;
 const SIDEBAR_W_MIN = 160;
 const SIDEBAR_W_MAX = 360;
 const SIDEBAR_W_DEFAULT = 240;
+/** Icon-rail width in legacy compact mode (matches --sidebar-w-collapsed) */
+const SIDEBAR_W_COLLAPSED = 52;
 /** px movement before a header/handle gesture commits as drag */
 const DRAG_THRESHOLD = 4;
 
@@ -528,7 +530,9 @@ function syncSidebarAutoHideTracking() {
     window.multiheiz.setSidebarAutoHideTracking({
       enabled: edge,
       open: !!(edge && sidebarAutoHideOpen),
-      sidebarWidth: clampSidebarWidth(state.ui && state.ui.sidebarWidth),
+      sidebarWidth: edge && sidebarAutoHideOpen
+        ? sidebarOverlayOpenWidthPx()
+        : clampSidebarWidth(state.ui && state.ui.sidebarWidth),
       // Still report chrome-hidden for debug; main keeps polling when enabled.
       chromeHidden: isChromeHiddenMode(),
     });
@@ -538,13 +542,23 @@ function syncSidebarAutoHideTracking() {
 }
 
 /**
+ * Pixel width used for overlay shift-x / tracking while the sidebar is revealed.
+ * Legacy compact (icon rail) uses SIDEBAR_W_COLLAPSED; otherwise the user width.
+ */
+function sidebarOverlayOpenWidthPx() {
+  if (isSidebarLegacyAlwaysActive() && isSidebarEffectivelyCollapsed()) {
+    return SIDEBAR_W_COLLAPSED;
+  }
+  return clampSidebarWidth(state.ui && state.ui.sidebarWidth);
+}
+
+/**
  * Sync main-process WebContentsView inset for the sidebar overlay strip.
  * @param {boolean} open
  */
 async function syncSidebarOverlayBounds(open) {
   if (!window.multiheiz.setSidebarOverlay) return;
-  const w =
-    open && usesSidebarOverlay() ? clampSidebarWidth(state.ui && state.ui.sidebarWidth) : 0;
+  const w = open && usesSidebarOverlay() ? sidebarOverlayOpenWidthPx() : 0;
   try {
     await window.multiheiz.setSidebarOverlay(w);
   } catch {
@@ -652,7 +666,11 @@ function applySidebarWidthCss() {
 }
 
 function isSidebarEffectivelyCollapsed() {
-  // Auto-hide uses overlay + hot-zone, not the icon-rail collapsed width.
+  // Icon-rail compact/expand only in legacy mode (pre-1.3.0). New fixed/auto-hide
+  // mode never uses the collapsed width — even if ui.sidebarCollapsed is still true
+  // from an older profile (kept for when the user turns legacy back on).
+  if (!isSidebarLegacyAlwaysActive()) return false;
+  // Auto-hide overlay path is disabled while legacy is on (see isSidebarAutoHide).
   if (isSidebarAutoHide()) return false;
   const userCollapsed = !!(state.ui && state.ui.sidebarCollapsed);
   const auto = window.innerWidth < SIDEBAR_AUTO_BREAKPOINT && !sidebarForceExpanded;
@@ -694,13 +712,15 @@ function updateSidebarCollapseClasses() {
   const autoHide = isSidebarAutoHide();
   // F11 always uses overlay edge-reveal (ignore fixed / legacy layout for chrome).
   const overlayMode = chromeHidden || autoHide;
+  // Legacy compact/expand still applies while F11 overlay is open (saved rail state).
+  const collapsed = isSidebarEffectivelyCollapsed();
   const userCollapsed = !!(state.ui && state.ui.sidebarCollapsed);
   const auto =
+    isSidebarLegacyAlwaysActive() &&
     !overlayMode &&
     window.innerWidth < SIDEBAR_AUTO_BREAKPOINT &&
     !sidebarForceExpanded &&
     !userCollapsed;
-  const collapsed = overlayMode ? false : isSidebarEffectivelyCollapsed();
 
   if (el.app) {
     el.app.classList.toggle('sidebar-auto-hide', overlayMode);
@@ -720,6 +740,9 @@ function updateSidebarCollapseClasses() {
     sidebarAutoHideOpen = false;
     if (el.app) el.app.classList.remove('sidebar-auto-hide-open');
     syncSidebarOverlayBounds(false);
+  } else if (overlayMode && sidebarAutoHideOpen) {
+    // Width may change if legacy compact/expand toggled while F11 overlay is open.
+    syncSidebarOverlayBounds(true);
   }
 
   syncSidebarAutoHideTracking();
@@ -3605,11 +3628,14 @@ window.__multiheizUi = {
       autoHide: isSidebarAutoHide(),
       open: !!sidebarAutoHideOpen,
       collapsed: isSidebarEffectivelyCollapsed(),
+      /** Persisted ui.sidebarCollapsed (legacy compact key; ignored outside legacy) */
+      sidebarCollapsedPref: !!(state.ui && state.ui.sidebarCollapsed),
       chromeHidden: isChromeHiddenMode(),
       fsPinned: !!sidebarFsPinned,
       overlayMode: usesSidebarOverlay(),
       toggleTitle: el.btnSidebarToggle ? el.btnSidebarToggle.title : '',
       sidebarWidth: el.sidebar ? el.sidebar.getBoundingClientRect().width : 0,
+      sidebarCollapsedWidth: SIDEBAR_W_COLLAPSED,
       hotzoneWidth: hz && !hz.classList.contains('hidden') ? hz.getBoundingClientRect().width : 0,
       hotzoneHidden: !hz || hz.classList.contains('hidden'),
       transform: cs ? cs.transform : '',
@@ -3642,24 +3668,41 @@ window.__multiheizUi = {
   },
   syncSidebarAfterLegacyChange: async () => {
     clearSidebarHoverTimers();
+    sidebarAutoHideOpen = false;
+    sidebarCursorInside = null;
+    sidebarFsPinned = false;
     if (!isSidebarLegacyAlwaysActive()) {
-      sidebarAutoHideOpen = false;
+      // Leaving legacy → new fixed mode: clear icon-rail + stuck overlay state.
       if (state.ui?.sidebarCollapsed) {
         applyState(await window.multiheiz.updateUi({ sidebarCollapsed: false }));
       }
     } else {
-      sidebarAutoHideOpen = false;
+      // Entering legacy → original resting state is compact (icon rail), always visible.
+      // Keep an already-compact preference; otherwise force compact (not full expanded).
+      if (!state.ui?.sidebarCollapsed) {
+        applyState(await window.multiheiz.updateUi({ sidebarCollapsed: true }));
+      }
     }
     updateSidebarCollapseClasses();
-    await syncSidebarOverlayBounds(!!(isSidebarAutoHide() && sidebarAutoHideOpen));
+    await syncSidebarOverlayBounds(false);
+    syncSidebarAutoHideTracking();
     scheduleSync();
     return window.__multiheizUi.getSidebarMode();
   },
   setSidebarAlwaysActive: async (on) => {
     clearSidebarHoverTimers();
+    const was = isSidebarLegacyAlwaysActive();
     const st = await window.multiheiz.updateSettings({ sidebarAlwaysActive: !!on });
     applyState(st);
-    await window.__multiheizUi.syncSidebarAfterLegacyChange();
+    // Only run enter/leave transition when the flag actually flips (avoid resetting
+    // compact/expand while already in legacy — e.g. repeated selftest calls).
+    if (was !== !!on) {
+      await window.__multiheizUi.syncSidebarAfterLegacyChange();
+    } else {
+      updateSidebarCollapseClasses();
+      await syncSidebarOverlayBounds(false);
+      syncSidebarAutoHideTracking();
+    }
     await new Promise((r) => setTimeout(r, 50));
     return window.__multiheizUi.getSidebarMode();
   },

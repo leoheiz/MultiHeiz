@@ -355,10 +355,10 @@ async function runRealclickSidebarSelftest(ctx) {
   const def2 = await runMode('default-pin-while-open', 'autoHide');
   if (!def2) return;
 
-  // --- Modo legado: collapse then expand ---
+  // --- Modo legado: inicia compacto → expand → compact ---
   await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');
   updateState((s) => {
-    s.ui = { ...(s.ui || {}), sidebarAutoHide: false, sidebarCollapsed: false };
+    s.ui = { ...(s.ui || {}), sidebarAutoHide: false, sidebarCollapsed: true };
     s.settings = { ...s.settings, sidebarAlwaysActive: true };
   });
   flushSave();
@@ -368,9 +368,9 @@ async function runRealclickSidebarSelftest(ctx) {
   await rendererEval('window.__multiheizUi.syncSidebarAfterLegacyChange()');
   await waitForLayoutSettle();
 
-  const leg1 = await runMode('legacy-collapse', 'legacyCollapse');
+  const leg1 = await runMode('legacy-expand', 'legacyCollapse');
   if (!leg1) return;
-  const leg2 = await runMode('legacy-expand', 'legacyCollapse');
+  const leg2 = await runMode('legacy-compact', 'legacyCollapse');
   if (!leg2) return;
 
   const allOk = results.every((r) => r.ok);

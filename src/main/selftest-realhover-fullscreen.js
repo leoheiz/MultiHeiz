@@ -289,7 +289,12 @@ async function runRealhoverFullscreenSelftest(ctx) {
     if (!mode.open) {
       throw new Error('edge hover did not reveal: ' + JSON.stringify(mode));
     }
-    if (!(openB.overlayW >= 200) || !near(openB.bounds.x, openB.overlayW, 8)) {
+    if (kind === 'legacy' && beforePrefs.collapsed) {
+      // Legacy compact: overlay ~52px icon rail.
+      if (!(openB.overlayW >= 40 && openB.overlayW <= 70) || !near(openB.bounds.x, openB.overlayW, 8)) {
+        throw new Error('legacy compact overlay should be ~52px: ' + JSON.stringify(openB));
+      }
+    } else if (!(openB.overlayW >= 200) || !near(openB.bounds.x, openB.overlayW, 8)) {
       throw new Error('panels not shifted left of overlay: ' + JSON.stringify(openB));
     }
     console.log('PASS', modeName, 'edge reveal + overlay above/left of panels', openB);
@@ -364,6 +369,9 @@ async function runRealhoverFullscreenSelftest(ctx) {
     }
     if (kind === 'legacy' && (!mode.legacyAlwaysActive || mode.overlayMode)) {
       throw new Error('legacy should restore without overlay: ' + JSON.stringify(mode));
+    }
+    if (kind === 'legacy' && mode.collapsed !== beforePrefs.collapsed) {
+      throw new Error('legacy compact/expand changed after F11: ' + JSON.stringify({ beforePrefs, mode }));
     }
     console.log('PASS', modeName, 'exit F11 restores mode', beforePrefs);
 

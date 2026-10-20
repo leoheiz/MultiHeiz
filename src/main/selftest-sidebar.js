@@ -648,18 +648,18 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: toggle back to fixed');
 
-  /* ---------- Legacy mode: old collapse, no hot-zone / overlay ---------- */
+  /* ---------- Legacy mode: always visible compact rail, toggle expand, never auto-hide ---------- */
   mode = await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');
   await sleep(200);
   await waitForLayoutSettle();
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
-  if (!mode.legacyAlwaysActive || mode.autoHide || mode.open || mode.collapsed) {
-    console.log('FAIL: legacy on should pin expanded (no autoHide)', mode);
+  if (!mode.legacyAlwaysActive || mode.autoHide || mode.open || !mode.collapsed) {
+    console.log('FAIL: legacy on should start compact (icon rail, no autoHide)', mode);
     app.exit(1);
     return;
   }
-  if (mode.toggleTitle !== 'Recolher barra lateral') {
-    console.log('FAIL: legacy expanded tooltip', mode.toggleTitle);
+  if (mode.toggleTitle !== 'Expandir barra lateral') {
+    console.log('FAIL: legacy compact tooltip', mode.toggleTitle);
     app.exit(1);
     return;
   }
@@ -668,21 +668,35 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  const legacyFixed = panelBounds();
-  if (legacyFixed.overlayW !== 0 || !(legacyFixed.bounds.x >= 160)) {
-    console.log('FAIL: legacy expanded bounds like old fixed', legacyFixed);
+  if (!(mode.sidebarWidth >= 40 && mode.sidebarWidth <= 70)) {
+    console.log('FAIL: legacy start compact width ~52px', mode.sidebarWidth);
+    app.exit(1);
+    return;
+  }
+  const legacyCompact = panelBounds();
+  if (legacyCompact.overlayW !== 0) {
+    console.log('FAIL: legacy must not use overlay', legacyCompact);
+    app.exit(1);
+    return;
+  }
+  // Compact rail ~52px + padding → panel x well below expanded (~240).
+  if (!(legacyCompact.bounds.x >= 40 && legacyCompact.bounds.x <= 90)) {
+    console.log('FAIL: legacy compact panel x should sit after ~52px rail', legacyCompact.bounds);
     app.exit(1);
     return;
   }
   await rendererEval('window.__multiheizUi.sidebarHotzoneEnter()');
   await sleep(250);
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
-  if (mode.open || mode.autoHide) {
-    console.log('FAIL: legacy hotzone must not reveal overlay sidebar', mode);
+  if (mode.open || mode.autoHide || !mode.collapsed) {
+    console.log('FAIL: legacy hotzone must not reveal overlay / must stay compact', mode);
     app.exit(1);
     return;
   }
-  console.log('PASS: legacy mode expanded + hotzone inert', legacyFixed.bounds);
+  console.log('PASS: legacy inicia compacto + hotzone inerte', {
+    mode,
+    bounds: legacyCompact.bounds,
+  });
 
   // Head + pin must not be caption-drag (Windows swallows real clicks otherwise).
   if (mode.headAppRegion === 'drag' || mode.pinAppRegion === 'drag') {
@@ -693,14 +707,14 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (!(await assertTopbarAppRegions('legacy-expanded'))) return;
+  if (!(await assertTopbarAppRegions('legacy-compact'))) return;
   if (mode.pinDisabled || mode.pinPointerEvents === 'none') {
     console.log('FAIL: legacy toggle must be clickable', mode);
     app.exit(1);
     return;
   }
 
-  /* Real button click (dispatch on #btn-sidebar-toggle) — collapse then expand */
+  /* Real button click — compact → expand → compact */
   let clickRes = await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
   await sleep(200);
   await waitForLayoutSettle();
@@ -710,60 +724,19 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (!mode.legacyAlwaysActive || !mode.collapsed || mode.autoHide) {
-    console.log('FAIL: legacy real-button click should collapse icon-rail', mode);
-    app.exit(1);
-    return;
-  }
-  if (mode.toggleTitle !== 'Expandir barra lateral') {
-    console.log('FAIL: legacy collapsed tooltip', mode.toggleTitle);
-    app.exit(1);
-    return;
-  }
-  const legacyCollapsed = panelBounds();
-  if (legacyCollapsed.overlayW !== 0) {
-    console.log('FAIL: legacy collapse must not use overlay', legacyCollapsed);
-    app.exit(1);
-    return;
-  }
-  if (!(legacyCollapsed.bounds.x < legacyFixed.bounds.x - 80)) {
-    console.log('FAIL: collapsed rail should free panel width (smaller x)', {
-      collapsed: legacyCollapsed.bounds,
-      expanded: legacyFixed.bounds,
-    });
-    app.exit(1);
-    return;
-  }
-  if (!(mode.sidebarWidth >= 40 && mode.sidebarWidth <= 70)) {
-    console.log('FAIL: collapsed sidebar width ~52px', mode.sidebarWidth);
-    app.exit(1);
-    return;
-  }
-  console.log('PASS: legacy collapse via real #btn-sidebar-toggle click', legacyCollapsed.bounds);
-  await saveSidebarShot(ctx, 'sidebar-legacy-collapsed.png');
-
-  clickRes = await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
-  await sleep(200);
-  await waitForLayoutSettle();
-  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
-  if (!clickRes || !clickRes.ok) {
-    console.log('FAIL: legacy expand click missing button', clickRes);
-    app.exit(1);
-    return;
-  }
   if (!mode.legacyAlwaysActive || mode.collapsed || mode.autoHide) {
-    console.log('FAIL: legacy real-button click should expand again', mode);
+    console.log('FAIL: legacy real-button click should expand', mode);
     app.exit(1);
     return;
   }
   if (mode.toggleTitle !== 'Recolher barra lateral') {
-    console.log('FAIL: legacy expanded tooltip after second click', mode.toggleTitle);
+    console.log('FAIL: legacy expanded tooltip', mode.toggleTitle);
     app.exit(1);
     return;
   }
-  const legacyExpandedAgain = panelBounds();
-  if (legacyExpandedAgain.overlayW !== 0 || !(legacyExpandedAgain.bounds.x >= 160)) {
-    console.log('FAIL: legacy expand should restore panel inset', legacyExpandedAgain);
+  const legacyExpanded = panelBounds();
+  if (legacyExpanded.overlayW !== 0 || !(legacyExpanded.bounds.x >= 160)) {
+    console.log('FAIL: legacy expand should push panels (no overlay)', legacyExpanded);
     app.exit(1);
     return;
   }
@@ -772,22 +745,84 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  if (!(legacyExpandedAgain.bounds.x > legacyCollapsed.bounds.x + 80)) {
-    console.log('FAIL: expand should reclaim panel x vs collapsed', {
-      expanded: legacyExpandedAgain.bounds,
-      collapsed: legacyCollapsed.bounds,
+  if (!(legacyExpanded.bounds.x > legacyCompact.bounds.x + 80)) {
+    console.log('FAIL: expand should reclaim panel x vs compact', {
+      expanded: legacyExpanded.bounds,
+      compact: legacyCompact.bounds,
     });
     app.exit(1);
     return;
   }
-  console.log('PASS: legacy expand via real #btn-sidebar-toggle click', legacyExpandedAgain.bounds);
+  console.log('PASS: legacy expand via #btn-sidebar-toggle', {
+    sidebarWidth: mode.sidebarWidth,
+    bounds: legacyExpanded.bounds,
+  });
+  await saveSidebarShot(ctx, 'sidebar-legacy-expanded.png');
+
+  clickRes = await rendererEval('window.__multiheizUi.clickSidebarToggleButton()');
+  await sleep(200);
+  await waitForLayoutSettle();
+  mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
+  if (!clickRes || !clickRes.ok) {
+    console.log('FAIL: legacy compact click missing button', clickRes);
+    app.exit(1);
+    return;
+  }
+  if (!mode.legacyAlwaysActive || !mode.collapsed || mode.autoHide) {
+    console.log('FAIL: legacy real-button click should return to compact', mode);
+    app.exit(1);
+    return;
+  }
+  if (mode.toggleTitle !== 'Expandir barra lateral') {
+    console.log('FAIL: legacy compact tooltip after second click', mode.toggleTitle);
+    app.exit(1);
+    return;
+  }
+  const legacyCompactAgain = panelBounds();
+  if (legacyCompactAgain.overlayW !== 0) {
+    console.log('FAIL: legacy re-compact must not use overlay', legacyCompactAgain);
+    app.exit(1);
+    return;
+  }
+  if (!(mode.sidebarWidth >= 40 && mode.sidebarWidth <= 70)) {
+    console.log('FAIL: re-compact sidebar width ~52px', mode.sidebarWidth);
+    app.exit(1);
+    return;
+  }
+  if (!(legacyCompactAgain.bounds.x < legacyExpanded.bounds.x - 80)) {
+    console.log('FAIL: re-compact should free panel width (smaller x)', {
+      compact: legacyCompactAgain.bounds,
+      expanded: legacyExpanded.bounds,
+    });
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: legacy compact via #btn-sidebar-toggle', {
+    sidebarWidth: mode.sidebarWidth,
+    bounds: legacyCompactAgain.bounds,
+  });
+  await saveSidebarShot(ctx, 'sidebar-legacy-collapsed.png');
+
+  // Persist compact preference to disk before leaving legacy.
+  flushSave();
+  {
+    const userData = app.getPath('userData');
+    const statePath = path.join(userData, 'multiheiz-state.json');
+    const rawCompact = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    if (!rawCompact.ui || rawCompact.ui.sidebarCollapsed !== true) {
+      console.log('FAIL: sidebarCollapsed true not written while legacy compact', rawCompact.ui);
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: legacy compact sidebarCollapsed persisted to disk');
+  }
 
   mode = await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(false)');
   await sleep(200);
   await waitForLayoutSettle();
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
   if (mode.legacyAlwaysActive || mode.autoHide || mode.collapsed) {
-    console.log('FAIL: legacy off should return to fixed (new mode)', mode);
+    console.log('FAIL: legacy off should return to fixed (new mode, no stuck auto-hide)', mode);
     app.exit(1);
     return;
   }
@@ -802,7 +837,7 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
-  console.log('PASS: legacy off → new fixed/auto-hide mode');
+  console.log('PASS: legacy off → new fixed/auto-hide mode (clean)');
 
   /* ---------- Persist auto-hide for disk check + legacy for phase 2 ---------- */
   await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
@@ -842,7 +877,7 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: sidebarAlwaysActive persisted to disk (autoHide kept in ui)');
 
-  /* ---------- Migration: missing sidebarAutoHide → fixed ---------- */
+  /* ---------- Migration: missing sidebarAutoHide → fixed; preserve collapsed for legacy ---------- */
   {
     const { migrate } = require('./state');
     const m = migrate({
@@ -857,8 +892,13 @@ async function runSidebarSelftest(ctx) {
       appearance: { preset: 'escuro' },
       freeTiles: {},
     });
-    if (!(m.ui.sidebarAutoHide === false && m.ui.sidebarCollapsed === false)) {
-      console.log('FAIL: missing sidebarAutoHide should migrate to fixed', m.ui);
+    if (m.ui.sidebarAutoHide !== false) {
+      console.log('FAIL: missing sidebarAutoHide should migrate to fixed (autoHide false)', m.ui);
+      app.exit(1);
+      return;
+    }
+    if (m.ui.sidebarCollapsed !== true) {
+      console.log('FAIL: old sidebarCollapsed true must be preserved for legacy', m.ui);
       app.exit(1);
       return;
     }
@@ -884,7 +924,7 @@ async function runSidebarSelftest(ctx) {
       app.exit(1);
       return;
     }
-    console.log('PASS: migration defaults to fixed; keeps existing autoHide');
+    console.log('PASS: migration defaults to fixed; preserves collapsed; keeps existing autoHide');
   }
 
   /* ---------- F11: edge-reveal overlay (auto-hide prefs) ---------- */
@@ -1092,16 +1132,17 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: F11 from fixed + restore');
 
-  /* ---------- F11 from legacy ---------- */
+  /* ---------- F11 from legacy (reveal saved compact/expand; restore after) ---------- */
   await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');
   await sleep(200);
   await waitForLayoutSettle();
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
-  if (!mode.legacyAlwaysActive || mode.autoHide) {
-    console.log('FAIL: expected legacy before F11-legacy', mode);
+  if (!mode.legacyAlwaysActive || mode.autoHide || !mode.collapsed) {
+    console.log('FAIL: expected legacy compact before F11-legacy', mode);
     app.exit(1);
     return;
   }
+  const legacyCollapsedBeforeFs = true;
   parkCursorAway();
   await sleep(100);
   chromeFullscreen.enter();
@@ -1123,28 +1164,43 @@ async function runSidebarSelftest(ctx) {
     app.exit(1);
     return;
   }
+  // Saved state was compact → overlay should be icon-rail width (~52), not full 240.
+  fsBounds = panelBounds();
+  if (!(fsBounds.overlayW >= 40 && fsBounds.overlayW <= 70) || !near(fsBounds.bounds.x, fsBounds.overlayW, 4)) {
+    console.log('FAIL: F11 legacy compact reveal should shift by ~52px', fsBounds);
+    app.exit(1);
+    return;
+  }
+  if (!mode.collapsed) {
+    console.log('FAIL: F11 legacy reveal should keep collapsed class', mode);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: F11 legacy reveal in saved compact width', fsBounds);
+
   chromeFullscreen.exit();
   await sleep(400);
   await waitForLayoutSettle();
   mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
-  if (mode.chromeHidden || !mode.legacyAlwaysActive || mode.open || mode.overlayMode) {
-    console.log('FAIL: leave F11 should restore legacy expanded', mode);
+  if (
+    mode.chromeHidden ||
+    !mode.legacyAlwaysActive ||
+    mode.open ||
+    mode.overlayMode ||
+    mode.collapsed !== legacyCollapsedBeforeFs
+  ) {
+    console.log('FAIL: leave F11 should restore legacy compact (saved state)', mode);
     app.exit(1);
     return;
   }
-  console.log('PASS: F11 from legacy + restore');
+  console.log('PASS: F11 from legacy + restore compact');
 
-  // Restore legacy ON for phase 2 restart persistence.
-  await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(true)');
-  await sleep(200);
-  await waitForLayoutSettle();
-
-  // Phase 2 checks settings.sidebarAlwaysActive — drop panel URLs so restart does not hit a dead server.
+  // Leave legacy ON + compact for phase 2 restart persistence.
   updateState((s) => {
     s.accounts = [];
     s.maximizedAccountId = null;
     s.settings = { ...(s.settings || {}), sidebarAlwaysActive: true };
-    s.ui = { ...(s.ui || {}), sidebarAutoHide: true, sidebarCollapsed: false };
+    s.ui = { ...(s.ui || {}), sidebarAutoHide: true, sidebarCollapsed: true };
   });
   flushSave();
 
@@ -1184,23 +1240,33 @@ async function runPhase2Persistence(ctx) {
     return;
   }
   const mode = await rendererEval('window.__multiheizUi.getSidebarMode()');
-  if (!mode.legacyAlwaysActive || mode.autoHide || mode.open) {
-    console.log('FAIL: phase2 renderer mode (legacy overrides autoHide)', mode);
+  if (!mode.legacyAlwaysActive || mode.autoHide || mode.open || !mode.collapsed) {
+    console.log('FAIL: phase2 renderer mode (legacy compact, never auto-hide)', mode);
     app.exit(1);
     return;
   }
-  if (mode.toggleTitle !== 'Recolher barra lateral' && mode.toggleTitle !== 'Expandir barra lateral') {
-    console.log('FAIL: phase2 legacy tooltip', mode.toggleTitle);
+  if (mode.toggleTitle !== 'Expandir barra lateral') {
+    console.log('FAIL: phase2 legacy compact tooltip', mode.toggleTitle);
     app.exit(1);
     return;
   }
-  if (!mode.hotzoneHidden) {
-    console.log('FAIL: phase2 hotzone must stay hidden in legacy', mode);
+  if (!mode.hotzoneHidden || mode.appClassAutoHide) {
+    console.log('FAIL: phase2 hotzone must stay hidden in legacy (never auto-hide)', mode);
+    app.exit(1);
+    return;
+  }
+  if (!(mode.sidebarWidth >= 40 && mode.sidebarWidth <= 70)) {
+    console.log('FAIL: phase2 compact width ~52px', mode.sidebarWidth);
+    app.exit(1);
+    return;
+  }
+  if (!st.ui || st.ui.sidebarCollapsed !== true) {
+    console.log('FAIL: phase2 ui.sidebarCollapsed must stay true', st.ui);
     app.exit(1);
     return;
   }
   flushSave();
-  console.log('PASS: persistence after restart (sidebarAlwaysActive legacy)');
+  console.log('PASS: persistence after restart (legacy compact + sidebarAlwaysActive)');
   console.log('SELFTEST sidebar OK');
   app.exit(0);
 }

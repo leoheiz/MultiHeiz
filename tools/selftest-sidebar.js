@@ -5,9 +5,10 @@
  * Uso: npm run selftest:sidebar
  *
  * Phase 1: default fixed, auto-hide hot-zone/overlay, main cursor poll (reveal ≤12px /
- *   outside edge / keep-open / pin-while-revealed), legacy collapse/expand via real
- *   #btn-sidebar-toggle click (DOM dispatch), F11, disk writes.
- * Phase 2: same MULTIHEIZ_USERDATA — asserts sidebarAlwaysActive persisted (legacy mode).
+ *   outside edge / keep-open / pin-while-revealed), legacy starts compact then
+ *   expand/compact via #btn-sidebar-toggle click (DOM dispatch), F11 reveal in saved
+ *   compact width, disk writes; legado never auto-hides.
+ * Phase 2: same MULTIHEIZ_USERDATA — asserts sidebarAlwaysActive + compact persisted.
  *
  * Env opcional:
  *   MULTIHEIZ_EXE — caminho de MultiHeiz.exe empacotado; se definido, spawn sem args
