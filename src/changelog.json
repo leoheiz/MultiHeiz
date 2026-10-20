@@ -84,6 +84,10 @@
         {
           "tag": "Correção",
           "text": "Em tela cheia (F11) a barra lateral volta a abrir pela borda esquerda (zona quente / overlay), com pino temporário; ao sair, o modo anterior é restaurado sem alterar a preferência salva."
+        },
+        {
+          "tag": "Novo",
+          "text": "Permissões de site (microfone, câmera, notificações, localização, área de transferência, compartilhar tela): prompt no painel, ícone de informações do site na barra de endereço e indicador quando mic/câmera estão em uso."
         }
       ]
     },

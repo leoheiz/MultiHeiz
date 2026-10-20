@@ -61,6 +61,15 @@ contextBridge.exposeInMainWorld('multiheiz', {
   proxyTest: (accountId) => ipcRenderer.invoke('proxy:test', accountId),
   dohSet: (partial) => ipcRenderer.invoke('doh:set', partial),
   dohGetSelftestCalls: () => ipcRenderer.invoke('doh:get-selftest-calls'),
+  permissionsRespond: (payload) => ipcRenderer.invoke('permissions:respond', payload),
+  permissionsGet: (accountId, origin) =>
+    ipcRenderer.invoke('permissions:get', { accountId, origin }),
+  permissionsSet: (accountId, origin, permission, value) =>
+    ipcRenderer.invoke('permissions:set', { accountId, origin, permission, value }),
+  permissionsReset: (accountId, origin) =>
+    ipcRenderer.invoke('permissions:reset', { accountId, origin }),
+  permissionsMediaUseGet: (accountId) =>
+    ipcRenderer.invoke('permissions:media-use-get', accountId),
   getMemoryMetrics: () => ipcRenderer.invoke('memory:metrics'),
   freeMemory: () => ipcRenderer.invoke('memory:free'),
   getAppInfo: () => ipcRenderer.invoke('app:info'),

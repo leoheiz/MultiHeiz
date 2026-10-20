@@ -275,6 +275,130 @@ function injectEarlySync() {
 
 injectEarlySync();
 
+/**
+ * Indicador de captura mic/câmera.
+ * Electron 44 não expõe app/session "media-access"; observamos getUserMedia no main
+ * world e reportamos via bridge → ipc-message do painel (como panel:fps).
+ * O main world é recriado a cada navegação — reaplicamos o hook cedo (preload + rehook).
+ */
+(function installMediaUseObserver() {
+  try {
+    contextBridge.exposeInMainWorld('__mhMediaUseReport', (payload) => {
+      try {
+        ipcRenderer.send('panel:media-use', {
+          microphone: !!(payload && payload.microphone),
+          camera: !!(payload && payload.camera),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+  } catch {
+    /* ignore */
+  }
+
+  function hookMainWorld() {
+    try {
+      contextBridge.executeInMainWorld({
+        func: () => {
+          try {
+            if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+              return;
+            }
+            if (window.__MH_MEDIA_USE_HOOK__) return;
+            window.__MH_MEDIA_USE_HOOK__ = true;
+            /** @type {MediaStream[]} */
+            var liveStreams = [];
+            var pollTimer = null;
+            function recountAndReport() {
+              var mic = 0;
+              var cam = 0;
+              var next = [];
+              for (var i = 0; i < liveStreams.length; i++) {
+                var s = liveStreams[i];
+                var tracks = [];
+                try {
+                  tracks = s.getTracks();
+                } catch (eT) {
+                  continue;
+                }
+                var anyLive = false;
+                for (var j = 0; j < tracks.length; j++) {
+                  var t = tracks[j];
+                  if (!t || t.readyState !== 'live') continue;
+                  anyLive = true;
+                  if (t.kind === 'audio') mic += 1;
+                  if (t.kind === 'video') cam += 1;
+                }
+                if (anyLive) next.push(s);
+              }
+              liveStreams = next;
+              try {
+                if (typeof window.__mhMediaUseReport === 'function') {
+                  window.__mhMediaUseReport({
+                    microphone: mic > 0,
+                    camera: cam > 0,
+                  });
+                }
+              } catch (e0) {
+                /* ignore */
+              }
+              if (!liveStreams.length && pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+              }
+            }
+            function watchStream(stream) {
+              if (!stream) return;
+              liveStreams.push(stream);
+              try {
+                stream.getTracks().forEach(function (track) {
+                  try {
+                    track.addEventListener('ended', recountAndReport);
+                  } catch (e1) {
+                    /* ignore */
+                  }
+                });
+              } catch (e2) {
+                /* ignore */
+              }
+              recountAndReport();
+              if (!pollTimer) {
+                pollTimer = setInterval(recountAndReport, 400);
+              }
+            }
+            var orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+            navigator.mediaDevices.getUserMedia = function (constraints) {
+              return orig(constraints).then(function (stream) {
+                try {
+                  watchStream(stream);
+                } catch (e3) {
+                  /* ignore */
+                }
+                return stream;
+              });
+            };
+          } catch (e3) {
+            /* ignore */
+          }
+        },
+        args: [],
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  hookMainWorld();
+  try {
+    ipcRenderer.on('mh-rehook-media', () => {
+      hookMainWorld();
+    });
+  } catch {
+    /* ignore */
+  }
+})();
+
 /** Ctrl+wheel zoom — preventDefault so page pinch-zoom does not double-apply. */
 try {
   window.addEventListener(

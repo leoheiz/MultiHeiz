@@ -219,6 +219,7 @@ const SELFTEST_CONTEXTMENU = selftestMode === 'contextmenu';
 const SELFTEST_PROXY = selftestMode === 'proxy';
 const SELFTEST_DOH = selftestMode === 'doh';
 const SELFTEST_SETTINGS_PERF = selftestMode === 'settings-perf';
+const SELFTEST_PERMISSIONS = selftestMode === 'permissions';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -251,7 +252,13 @@ const ANY_SELFTEST =
   SELFTEST_CONTEXTMENU ||
   SELFTEST_PROXY ||
   SELFTEST_DOH ||
-  SELFTEST_SETTINGS_PERF;
+  SELFTEST_SETTINGS_PERF ||
+  SELFTEST_PERMISSIONS;
+
+// Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
+if (SELFTEST_PERMISSIONS) {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+}
 
 // YouTube selftests: map YT hosts to loopback (local HTTPS page-server).
 if (SELFTEST_ABU_YT || SELFTEST_BUILTIN_YT) {
@@ -534,7 +541,8 @@ function createWindow() {
     SELFTEST_REALHOVER_FULLSCREEN ||
     SELFTEST_CONTEXTMENU ||
     SELFTEST_SETTINGS_PERF ||
-    SELFTEST_WORKSPACE_DELETE
+    SELFTEST_WORKSPACE_DELETE ||
+    SELFTEST_PERMISSIONS
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -1429,6 +1437,33 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_PERMISSIONS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runPermissionsSelftest } = require('./selftest-permissions');
+          runPermissionsSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            permissions,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_GIS) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -2194,6 +2229,14 @@ function registerIpc() {
     });
     ipcMain.handle('selftest:sidebar-cursor-tracking', () => sidebarCursor.getTracking());
     ipcMain.handle('selftest:sidebar-cursor-classify', () => sidebarCursor.classifyCursor());
+    ipcMain.handle('selftest:permissions-respond', (_e, payload) => {
+      const accountId = payload && payload.accountId;
+      const action = payload && payload.action;
+      return permissions.selftestRespond(accountId, action);
+    });
+    ipcMain.handle('selftest:permissions-peek', (_e, accountId) => {
+      return permissions.selftestPeekPrompt(accountId);
+    });
   }
 }
 
@@ -4417,7 +4460,11 @@ app.whenReady().then(async () => {
     getMainWindow: () => mainWindow,
     isPanelWebContents: (wc) => panels.isPanelWebContents(wc),
   });
-  permissions.initPermissions({ getMainWindow: () => mainWindow });
+  permissions.initPermissions({
+    getMainWindow: () => mainWindow,
+    emit: emitToRenderer,
+    resolveAccountIdFromWebContents: (wc) => panels.accountIdForWebContents(wc),
+  });
   userAgent.applyAppUserAgentFallback();
   sessionPersist.startPeriodicFlush(() => panels.getAccountSessions());
   proxy.initProxy({

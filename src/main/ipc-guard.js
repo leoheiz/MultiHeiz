@@ -18,6 +18,8 @@ const PANEL_CHANNELS = new Set([
   '@ghostery/adblocker/is-mutation-observer-enabled',
   'multiheiz/ext-early',
   'multiheiz/ext-early-done',
+  // Indicador mic/câmera (panel-preload → main)
+  'panel:media-use',
 ]);
 
 const INDEX_HTML = path.resolve(__dirname, '..', 'renderer', 'index.html');

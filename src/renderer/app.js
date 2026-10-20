@@ -234,6 +234,11 @@ const ICO = {
   // Shield (adblock) — own SVG path
   shield:
     'M12 2l8 3v6c0 5.25-3.4 9.74-8 11-4.6-1.26-8-5.75-8-11V5l8-3zM12 6.2l-5.2 1.95v4.1c0 3.7 2.35 6.9 5.2 8.05 2.85-1.15 5.2-4.35 5.2-8.05v-4.1L12 6.2z',
+  // Info do site (cadeado / i)
+  siteInfo:
+    'M12 2a10 10 0 100 20 10 10 0 000-20zm0 4a1.25 1.25 0 110 2.5A1.25 1.25 0 0112 6zm-1.25 4h2.5v8h-2.5v-8z',
+  mic: 'M12 1a3 3 0 00-3 3v6a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v1a7 7 0 01-14 0v-1M12 19v4M8 23h8',
+  camera: 'M23 7l-5 4V8a2 2 0 00-2-2H3a2 2 0 00-2 2v8a2 2 0 002 2h13a2 2 0 002-2v-3l5 4V7z',
   home: 'M3 11l9-8 9 8v9a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1v-9z',
   // Lucide puzzle (extension actions)
   puzzle:
@@ -256,6 +261,23 @@ function settingsIconHtml() {
 /** @type {Map<string, number>} */
 const adblockPageCounts = new Map();
 let adblockSessionTotal = 0;
+
+/** Prompt de permissão ativo por painel (barra sob o header). */
+/** @type {Map<string, object>} */
+const permissionPrompts = new Map();
+
+/** Uso de mídia por painel. */
+/** @type {Map<string, { microphone: boolean, camera: boolean }>} */
+const mediaUseByPanel = new Map();
+
+const SITE_PERM_LABELS = {
+  microphone: 'Microfone',
+  camera: 'Câmera',
+  notifications: 'Notificações',
+  geolocation: 'Localização',
+  'clipboard-read': 'Área de transferência',
+  'display-capture': 'Compartilhar tela',
+};
 
 function slotsForLayout(layout, count) {
   const map = { '1': 1, '2': 2, '4': 4, '6': 6 };
@@ -920,6 +942,7 @@ function closeMenus() {
   const hadExt = document.querySelectorAll('.panel-ext-menu').length > 0;
   document.querySelectorAll('.context-menu').forEach((n) => n.remove());
   document.querySelectorAll('.panel-ext-menu').forEach((n) => n.remove());
+  document.querySelectorAll('.panel-site-perm-popover').forEach((n) => n.remove());
   if (hadCtx) popOverlay('context-menu');
   if (hadExt) popOverlay('panel-ext-menu');
 }
@@ -1311,6 +1334,36 @@ function buildPanelSlot(acc, tile) {
     }
   }
 
+  const siteInfoBtn = iconBtn(ICO.siteInfo, 'Informações do site', (e) => {
+    e.stopPropagation();
+    const r = siteInfoBtn.getBoundingClientRect();
+    openSitePermissionsPopover(acc.id, Math.round(r.left), Math.round(r.bottom + 4));
+  });
+  siteInfoBtn.dataset.role = 'panel-site-info';
+  siteInfoBtn.classList.add('panel-site-info');
+
+  const mediaUse = mediaUseByPanel.get(acc.id) || { microphone: false, camera: false };
+  const mediaInd = document.createElement('span');
+  mediaInd.className = 'panel-media-use';
+  mediaInd.dataset.role = 'panel-media-use';
+  if (mediaUse.microphone) {
+    const micEl = document.createElement('span');
+    micEl.className = 'panel-media-use-icon is-mic';
+    micEl.title = 'Microfone em uso';
+    micEl.innerHTML = svg(ICO.mic);
+    mediaInd.appendChild(micEl);
+  }
+  if (mediaUse.camera) {
+    const camEl = document.createElement('span');
+    camEl.className = 'panel-media-use-icon is-cam';
+    camEl.title = 'Câmera em uso';
+    camEl.innerHTML = svg(ICO.camera);
+    mediaInd.appendChild(camEl);
+  }
+  if (!mediaUse.microphone && !mediaUse.camera) {
+    mediaInd.hidden = true;
+  }
+
   const titleBlock = document.createElement('div');
   titleBlock.className = 'panel-title-block';
   titleBlock.title = 'Clique para editar URL · duplo clique maximiza';
@@ -1399,7 +1452,7 @@ function buildPanelSlot(acc, tile) {
 
   // Star + shield + puzzle on the left so header-actions stay compact (livre drag hit-tests ~35% into header)
   actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnMax, btnMore);
-  header.append(stripe, fav, btnStar, btnShield, btnExt, titleBlock, actions);
+  header.append(stripe, fav, siteInfoBtn, mediaInd, btnStar, btnShield, btnExt, titleBlock, actions);
   header.dataset.role = 'panel-header';
 
   const zPct = zoomPctFor(acc.id);
@@ -1459,6 +1512,7 @@ function buildPanelSlot(acc, tile) {
   if (cachedOffer) {
     ensureStoreOfferBar(slot, acc.id, cachedOffer);
   }
+  ensurePermissionPromptBar(slot, acc.id, permissionPrompts.get(acc.id) || null);
 
   if (isLivreEditMode()) {
     for (const dir of ['e', 's', 'se']) {
@@ -1478,6 +1532,231 @@ function buildPanelSlot(acc, tile) {
   }
 
   return slot;
+}
+
+/**
+ * Atualiza indicador mic/câmera na barra do painel.
+ * @param {string} accountId
+ * @param {{ microphone?: boolean, camera?: boolean }} flags
+ */
+function applyMediaUseToPanel(accountId, flags) {
+  mediaUseByPanel.set(accountId, {
+    microphone: !!flags.microphone,
+    camera: !!flags.camera,
+  });
+  const slot = el.grid && el.grid.querySelector(`.panel-slot[data-account-id="${accountId}"]`);
+  if (!slot) return;
+  let ind = slot.querySelector('.panel-media-use');
+  if (!ind) {
+    ind = document.createElement('span');
+    ind.className = 'panel-media-use';
+    ind.dataset.role = 'panel-media-use';
+    const siteBtn = slot.querySelector('[data-role="panel-site-info"]');
+    if (siteBtn && siteBtn.nextSibling) {
+      siteBtn.parentNode.insertBefore(ind, siteBtn.nextSibling);
+    } else if (siteBtn) {
+      siteBtn.after(ind);
+    } else {
+      const header = slot.querySelector('.panel-header');
+      if (header) header.appendChild(ind);
+    }
+  }
+  ind.replaceChildren();
+  if (flags.microphone) {
+    const micEl = document.createElement('span');
+    micEl.className = 'panel-media-use-icon is-mic';
+    micEl.title = 'Microfone em uso';
+    micEl.innerHTML = svg(ICO.mic);
+    ind.appendChild(micEl);
+  }
+  if (flags.camera) {
+    const camEl = document.createElement('span');
+    camEl.className = 'panel-media-use-icon is-cam';
+    camEl.title = 'Câmera em uso';
+    camEl.innerHTML = svg(ICO.camera);
+    ind.appendChild(camEl);
+  }
+  ind.hidden = !flags.microphone && !flags.camera;
+}
+
+/**
+ * Faixa de permissão do site (sob o header do painel), estilo store-bar.
+ * @param {HTMLElement} slot
+ * @param {string} accountId
+ * @param {object|null} prompt
+ */
+function ensurePermissionPromptBar(slot, accountId, prompt) {
+  let bar = slot.querySelector('.panel-perm-bar');
+  if (!prompt) {
+    if (bar) {
+      bar.remove();
+      scheduleSync();
+    }
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'panel-perm-bar';
+    bar.dataset.role = 'panel-perm-bar';
+    const content = slot.querySelector('.panel-content');
+    const storeBar = slot.querySelector('.panel-store-bar');
+    if (storeBar) slot.insertBefore(bar, storeBar);
+    else if (content) slot.insertBefore(bar, content);
+    else slot.appendChild(bar);
+  }
+  bar.dataset.accountId = accountId;
+  bar.dataset.requestId = prompt.requestId || '';
+  bar.replaceChildren();
+
+  const label = document.createElement('span');
+  label.className = 'panel-perm-bar-label';
+  label.textContent = prompt.message || 'Este site pediu uma permissão';
+
+  const btnAllow = document.createElement('button');
+  btnAllow.type = 'button';
+  btnAllow.className = 'btn primary panel-perm-bar-btn';
+  btnAllow.dataset.role = 'perm-allow';
+  btnAllow.textContent = 'Permitir';
+  btnAllow.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await window.multiheiz.permissionsRespond({
+      requestId: prompt.requestId,
+      action: 'allow',
+    });
+  });
+
+  const btnBlock = document.createElement('button');
+  btnBlock.type = 'button';
+  btnBlock.className = 'btn ghost panel-perm-bar-btn';
+  btnBlock.dataset.role = 'perm-deny';
+  btnBlock.textContent = 'Bloquear';
+  btnBlock.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await window.multiheiz.permissionsRespond({
+      requestId: prompt.requestId,
+      action: 'deny',
+    });
+  });
+
+  const btnClose = document.createElement('button');
+  btnClose.type = 'button';
+  btnClose.className = 'btn icon ghost panel-perm-bar-close';
+  btnClose.dataset.role = 'perm-dismiss';
+  btnClose.title = 'Negar só desta vez';
+  btnClose.setAttribute('aria-label', 'Fechar');
+  btnClose.textContent = '×';
+  btnClose.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await window.multiheiz.permissionsRespond({
+      requestId: prompt.requestId,
+      action: 'dismiss',
+    });
+  });
+
+  bar.append(label, btnAllow, btnBlock, btnClose);
+  scheduleSync();
+}
+
+/**
+ * Popover de permissões do site (origem + Perguntar/Permitir/Bloquear).
+ * @param {string} accountId
+ * @param {number} x
+ * @param {number} y
+ */
+async function openSitePermissionsPopover(accountId, x, y) {
+  closeMenus();
+  const nav = navState.get(accountId) || {};
+  const acc = (state.accounts || []).find((a) => a.id === accountId);
+  let origin = '';
+  const candidates = [nav.url, acc && acc.lastUrl, acc && acc.startUrl];
+  for (const raw of candidates) {
+    try {
+      const o = new URL(String(raw || '')).origin;
+      if (o.startsWith('http://') || o.startsWith('https://')) {
+        origin = o;
+        break;
+      }
+    } catch {
+      /* next */
+    }
+  }
+  if (!origin) {
+    showToast('Abra um site http(s) para gerenciar permissões.');
+    return;
+  }
+
+  const data = await window.multiheiz.permissionsGet(accountId, origin);
+  const states = (data && data.states) || {};
+
+  const pop = document.createElement('div');
+  pop.className = 'panel-site-perm-popover';
+  pop.dataset.role = 'site-perm-popover';
+  pop.style.left = `${Math.max(8, x)}px`;
+  pop.style.top = `${Math.max(8, y)}px`;
+
+  const title = document.createElement('div');
+  title.className = 'panel-site-perm-origin';
+  title.textContent = origin;
+
+  const list = document.createElement('div');
+  list.className = 'panel-site-perm-list';
+
+  const keys = Object.keys(SITE_PERM_LABELS);
+  for (const key of keys) {
+    const row = document.createElement('div');
+    row.className = 'panel-site-perm-row';
+    const lab = document.createElement('span');
+    lab.className = 'panel-site-perm-name';
+    lab.textContent = SITE_PERM_LABELS[key];
+    const sel = document.createElement('select');
+    sel.className = 'panel-site-perm-select';
+    sel.dataset.permission = key;
+    for (const [val, text] of [
+      ['ask', 'Perguntar'],
+      ['allow', 'Permitir'],
+      ['deny', 'Bloquear'],
+    ]) {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = text;
+      if ((states[key] || 'ask') === val) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener('change', async () => {
+      const res = await window.multiheiz.permissionsSet(
+        accountId,
+        origin,
+        key,
+        sel.value
+      );
+      if (res && res.needsReload) {
+        showToast('Recarregue a página para aplicar.');
+      }
+    });
+    row.append(lab, sel);
+    list.appendChild(row);
+  }
+
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'btn ghost panel-site-perm-reset';
+  resetBtn.dataset.role = 'perm-reset';
+  resetBtn.textContent = 'Redefinir permissões';
+  resetBtn.addEventListener('click', async () => {
+    await window.multiheiz.permissionsReset(accountId, origin);
+    pop.remove();
+    showToast('Permissões redefinidas. O site perguntará de novo.');
+  });
+
+  pop.append(title, list, resetBtn);
+  document.body.appendChild(pop);
+
+  const onDoc = (ev) => {
+    if (pop.contains(ev.target)) return;
+    pop.remove();
+    document.removeEventListener('mousedown', onDoc, true);
+  };
+  setTimeout(() => document.addEventListener('mousedown', onDoc, true), 0);
 }
 
 /**
@@ -2863,6 +3142,38 @@ window.multiheiz.onEvent((payload) => {
     }
     return;
   }
+  if (payload.type === 'permissions:prompt' && payload.accountId) {
+    permissionPrompts.set(payload.accountId, payload);
+    const slot = el.grid.querySelector(`.panel-slot[data-account-id="${payload.accountId}"]`);
+    if (slot) ensurePermissionPromptBar(slot, payload.accountId, payload);
+  }
+  if (
+    (payload.type === 'permissions:prompt-closed' || payload.type === 'permissions:prompt-cleared') &&
+    payload.accountId
+  ) {
+    if (payload.type === 'permissions:prompt-cleared') {
+      permissionPrompts.delete(payload.accountId);
+    } else if (payload.requestId) {
+      const cur = permissionPrompts.get(payload.accountId);
+      if (cur && cur.requestId === payload.requestId) {
+        permissionPrompts.delete(payload.accountId);
+      }
+    }
+    const slot = el.grid.querySelector(`.panel-slot[data-account-id="${payload.accountId}"]`);
+    if (slot) {
+      ensurePermissionPromptBar(
+        slot,
+        payload.accountId,
+        permissionPrompts.get(payload.accountId) || null
+      );
+    }
+  }
+  if (payload.type === 'permissions:media-use' && payload.accountId) {
+    applyMediaUseToPanel(payload.accountId, {
+      microphone: !!payload.microphone,
+      camera: !!payload.camera,
+    });
+  }
   if (payload.type === 'extensions:store-offer') {
     updateStoreOfferBar(payload.accountId, payload.offer || null);
     return;
@@ -3331,6 +3642,88 @@ window.__multiheizUi = {
   getFreeTiles: () => workspaceTiles(),
   proposeTiles,
   THEME_PRESETS,
+  /** Selftest: prompt de permissão visível no painel. */
+  getPermissionPrompt: (accountId) => {
+    const id = accountId || focusedAccountId;
+    const bar = id
+      ? document.querySelector(`.panel-slot[data-account-id="${id}"] .panel-perm-bar`)
+      : document.querySelector('.panel-perm-bar');
+    if (!bar) return null;
+    const label = bar.querySelector('.panel-perm-bar-label');
+    return {
+      accountId: bar.dataset.accountId || id,
+      requestId: bar.dataset.requestId || '',
+      message: label ? label.textContent : '',
+    };
+  },
+  clickPermissionAllow: (accountId) => {
+    const id = accountId || focusedAccountId;
+    const btn = document.querySelector(
+      `.panel-slot[data-account-id="${id}"] .panel-perm-bar [data-role="perm-allow"]`
+    );
+    if (btn) btn.click();
+    return !!btn;
+  },
+  clickPermissionDeny: (accountId) => {
+    const id = accountId || focusedAccountId;
+    const btn = document.querySelector(
+      `.panel-slot[data-account-id="${id}"] .panel-perm-bar [data-role="perm-deny"]`
+    );
+    if (btn) btn.click();
+    return !!btn;
+  },
+  openSitePermissions: async (accountId) => {
+    const id = accountId || focusedAccountId;
+    const btn = document.querySelector(
+      `.panel-slot[data-account-id="${id}"] [data-role="panel-site-info"]`
+    );
+    const r = btn ? btn.getBoundingClientRect() : { left: 80, bottom: 80 };
+    await openSitePermissionsPopover(id, Math.round(r.left), Math.round(r.bottom + 4));
+    await new Promise((res) => setTimeout(res, 80));
+    const pop = document.querySelector('.panel-site-perm-popover');
+    if (!pop) return null;
+    const rows = [...pop.querySelectorAll('.panel-site-perm-row')].map((row) => {
+      const name = row.querySelector('.panel-site-perm-name');
+      const sel = row.querySelector('select');
+      return {
+        name: name ? name.textContent : '',
+        permission: sel ? sel.dataset.permission : '',
+        value: sel ? sel.value : '',
+      };
+    });
+    return {
+      origin: (pop.querySelector('.panel-site-perm-origin') || {}).textContent || '',
+      rows,
+    };
+  },
+  clickPermissionReset: () => {
+    const btn = document.querySelector('.panel-site-perm-popover [data-role="perm-reset"]');
+    if (btn) btn.click();
+    return !!btn;
+  },
+  getMediaUseIcons: (accountId) => {
+    const id = accountId || focusedAccountId;
+    const fromMap = mediaUseByPanel.get(id) || { microphone: false, camera: false };
+    const ind = document.querySelector(
+      `.panel-slot[data-account-id="${id}"] .panel-media-use`
+    );
+    return {
+      microphone: !!(fromMap.microphone || (ind && !ind.hidden && ind.querySelector('.is-mic'))),
+      camera: !!(fromMap.camera || (ind && !ind.hidden && ind.querySelector('.is-cam'))),
+      map: fromMap,
+      dom: ind
+        ? { hidden: !!ind.hidden, html: ind.innerHTML.slice(0, 80) }
+        : null,
+    };
+  },
+  /** Selftest: puxar estado de mídia do main se o evento tiver sido perdido. */
+  syncMediaUseFromMain: async (accountId) => {
+    const id = accountId || focusedAccountId;
+    if (!id || !window.multiheiz.permissionsMediaUseGet) return null;
+    const flags = await window.multiheiz.permissionsMediaUseGet(id);
+    if (flags) applyMediaUseToPanel(id, flags);
+    return flags;
+  },
 };
 
 /** @type {string} */

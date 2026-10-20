@@ -45,6 +45,7 @@
     "selftest:proxy": "node tools/selftest-proxy.js",
     "selftest:doh": "node tools/selftest-doh.js",
     "selftest:settings-perf": "node tools/selftest-settings-perf.js",
+    "selftest:permissions": "node tools/selftest-permissions.js",
     "check:update-live": "node tools/check-update-live.js",
     "check:adblock-real": "node tools/check-adblock-real.js",
     "check:encoding": "node tools/check-encoding.js",

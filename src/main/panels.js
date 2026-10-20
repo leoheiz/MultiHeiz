@@ -1067,6 +1067,12 @@ function createPanel(accountId) {
   }
 
   view.webContents.on('did-navigate', (_e, url) => {
+    try {
+      permissions.cancelPromptsForAccount(accountId);
+      permissions.clearMediaInUse(accountId);
+    } catch {
+      /* ignore */
+    }
     rememberUrl(accountId, url);
     recordHistory(accountId, url);
     touchAccount(accountId);
@@ -1109,7 +1115,14 @@ function createPanel(accountId) {
       /* ignore */
     }
   });
-  view.webContents.on('dom-ready', () => signalLoadCommitted(accountId));
+  view.webContents.on('dom-ready', () => {
+    signalLoadCommitted(accountId);
+    try {
+      view.webContents.send('mh-rehook-media');
+    } catch {
+      /* ignore */
+    }
+  });
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame || event.defaultPrevented) return;
     const codeStr = String(errorDescription || '');
@@ -1172,6 +1185,18 @@ function createPanel(accountId) {
         accountId,
         fps: data.fps,
       });
+      return;
+    }
+    // Indicador mic/câmera: panel-preload observa getUserMedia (sem evento media-access no Electron 44).
+    if (channel === 'panel:media-use' && data && typeof data === 'object') {
+      try {
+        permissions.setMediaInUse(accountId, {
+          microphone: !!data.microphone,
+          camera: !!data.camera,
+        });
+      } catch {
+        /* ignore */
+      }
     }
   });
   view.webContents.on('focus', () => {
@@ -1379,6 +1404,12 @@ function getOverlaySnapshotMap() {
 function destroyPanel(accountId, { keepLastUrl = true } = {}) {
   clearSuspendTimer(accountId);
   pruneLoadQueueAccount(accountId);
+  try {
+    permissions.cancelPromptsForAccount(accountId);
+    permissions.clearMediaInUse(accountId);
+  } catch {
+    /* ignore */
+  }
   const entry = panels.get(accountId);
   if (!entry) return;
   const { view } = entry;
@@ -2279,6 +2310,22 @@ function listActivePanelIds() {
  * (extension action/options windows share persist:acc-* partitions).
  * @param {import('electron').WebContents | null | undefined} wc
  */
+/**
+ * @param {import('electron').WebContents | null | undefined} wc
+ * @returns {string|null}
+ */
+function accountIdForWebContents(wc) {
+  if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) return null;
+  for (const [id, entry] of panels.entries()) {
+    try {
+      if (entry.view && entry.view.webContents === wc) return id;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
 function isPanelWebContents(wc) {
   if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) return false;
   for (const entry of panels.values()) {
@@ -2345,6 +2392,7 @@ module.exports = {
   destroyAllPanels,
   listActivePanelIds,
   isPanelWebContents,
+  accountIdForWebContents,
   partitionFor,
   normalizeUrl,
   chromeUserAgent,

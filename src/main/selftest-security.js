@@ -157,8 +157,8 @@ async function runSecuritySelftest(ctx) {
   assert(permissions.checkPermission('acc-sec-a', 'hid', origin) === false, 'hid denied');
   assert(permissions.checkPermission('acc-sec-a', 'serial', origin) === false, 'serial denied');
   assert(
-    permissions.checkPermission('acc-sec-a', 'notifications', origin) === true,
-    'notifications allowed for https'
+    permissions.checkPermission('acc-sec-a', 'notifications', origin) === false,
+    'notifications ask (not auto-granted)'
   );
   assert(
     permissions.checkPermission('acc-sec-a', 'publickey-credentials-get', origin) === true,
@@ -172,7 +172,9 @@ async function runSecuritySelftest(ctx) {
     permissions.checkPermission('acc-sec-a', 'identity-credentials-get', origin) === false,
     'FedCM identity-credentials-get denied'
   );
-  console.log('PASS: permission policy geo/media ask, usb/hid/serial deny, webauthn allow, FedCM deny');
+  console.log(
+    'PASS: permission policy geo/media/notifications ask, usb/hid/serial deny, webauthn allow, FedCM deny'
+  );
 
   // Live session has handlers
   const ses = require('electron').session.fromPartition(panels.partitionFor('acc-sec-a'));
