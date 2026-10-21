@@ -45,6 +45,7 @@
     "check:realhover-fullscreen": "node tools/realhover-fullscreen.js",
     "shots:sidebar2": "node tools/shots-sidebar2.js",
     "selftest:workspace-delete": "node tools/selftest-workspace-delete.js",
+    "selftest:shared-session": "node tools/selftest-shared-session.js",
     "selftest:ua": "node tools/selftest-ua.js",
     "selftest:gis": "node tools/selftest-gis.js",
     "selftest:abu-yt": "node tools/selftest-abu-yt.js",

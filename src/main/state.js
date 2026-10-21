@@ -49,7 +49,14 @@ function defaultState() {
   const wsId = 'ws-default';
   return {
     version: 1,
-    workspaces: [{ id: wsId, name: 'Principal' }],
+    workspaces: [
+      {
+        id: wsId,
+        name: 'Principal',
+        sessionType: 'independent',
+        sharedPartitionId: null,
+      },
+    ],
     activeWorkspaceId: wsId,
     accounts: [],
     /**
@@ -263,7 +270,22 @@ function migrate(parsed) {
     windowMaximized: !!parsed.windowMaximized,
     workspaces:
       Array.isArray(parsed.workspaces) && parsed.workspaces.length
-        ? parsed.workspaces
+        ? parsed.workspaces.map((w) => {
+            try {
+              const part = require('./partition');
+              return part.normalizeWorkspaceSessionFields(w);
+            } catch {
+              return {
+                ...w,
+                sessionType:
+                  w && w.sessionType === 'conventional' ? 'conventional' : 'independent',
+                sharedPartitionId:
+                  w && w.sharedPartitionId != null && String(w.sharedPartitionId).trim()
+                    ? String(w.sharedPartitionId).trim()
+                    : null,
+              };
+            }
+          })
         : base.workspaces,
     accounts: Array.isArray(parsed.accounts)
       ? parsed.accounts.map((a) => {

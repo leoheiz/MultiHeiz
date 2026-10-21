@@ -2592,6 +2592,22 @@ function rebindPanelSession(accountId) {
   return true;
 }
 
+/**
+ * Limpa storage/cache de uma partição pelo id (sem destruir painéis).
+ * @param {string} partitionId
+ */
+async function clearPartitionData(partitionId) {
+  const partId = String(partitionId || '').trim();
+  if (!partId) return;
+  const ses = session.fromPartition(partition.partitionString(partId));
+  await ses.clearStorageData();
+  try {
+    await ses.clearCache();
+  } catch {
+    /* ignore */
+  }
+}
+
 async function clearAllPartitionCaches() {
   const st = getState();
   const seen = new Set();
@@ -2732,6 +2748,7 @@ module.exports = {
   panelIsAudible,
   clearAccountSession,
   rebindPanelSession,
+  clearPartitionData,
   markAccountRemoving,
   unmarkAccountRemoving,
   isAccountRemoving,

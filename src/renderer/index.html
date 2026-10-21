@@ -208,6 +208,22 @@
       <form method="dialog" id="form-workspace">
         <h2>Categoria</h2>
         <label>Nome <input name="name" required maxlength="48" /></label>
+        <label
+          >Tipo de sessão
+          <select name="sessionType" id="ws-session-type">
+            <option value="independent">Sessão independente</option>
+            <option value="conventional">Navegador convencional</option>
+          </select>
+        </label>
+        <p class="dlg-ws-hint" id="ws-session-hint">
+          Cada janela tem cookies e login próprios.
+        </p>
+        <label id="ws-shared-wrap" hidden
+          >Sessão compartilhada
+          <select name="sharedFrom" id="ws-shared-from">
+            <option value="new">nova (vazia)</option>
+          </select>
+        </label>
         <div class="dlg-actions">
           <button type="submit" class="btn primary" value="ok">Salvar</button>
           <button type="button" class="btn ghost" id="btn-ws-cancel">Cancelar</button>

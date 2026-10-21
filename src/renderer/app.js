@@ -219,6 +219,10 @@ const el = {
   accountWsSelect: document.getElementById('account-ws-select'),
   dlgWorkspace: document.getElementById('dlg-workspace'),
   formWorkspace: document.getElementById('form-workspace'),
+  wsSessionType: document.getElementById('ws-session-type'),
+  wsSessionHint: document.getElementById('ws-session-hint'),
+  wsSharedWrap: document.getElementById('ws-shared-wrap'),
+  wsSharedFrom: document.getElementById('ws-shared-from'),
   dlgSettings: document.getElementById('dlg-settings'),
   formSettings: document.getElementById('form-settings'),
   dlgConfirm: document.getElementById('dlg-confirm'),
@@ -3159,9 +3163,66 @@ function openAccountDialog(account, opts = {}) {
   });
 }
 
+/**
+ * @param {{ prefer?: string, includeKeep?: boolean }} [opts]
+ */
+function fillWorkspaceSharedFromOptions(opts) {
+  if (!el.wsSharedFrom) return;
+  const prefer = opts && opts.prefer ? String(opts.prefer) : '';
+  const includeKeep = !!(opts && opts.includeKeep);
+  el.wsSharedFrom.innerHTML = '';
+  if (includeKeep) {
+    const optKeep = document.createElement('option');
+    optKeep.value = 'keep';
+    optKeep.textContent = 'manter sessão atual';
+    el.wsSharedFrom.appendChild(optKeep);
+  }
+  const optNew = document.createElement('option');
+  optNew.value = 'new';
+  optNew.textContent = 'nova (vazia)';
+  el.wsSharedFrom.appendChild(optNew);
+  const workspaces = state.workspaces || [];
+  const wsName = (id) => {
+    const w = workspaces.find((x) => x.id === id);
+    return (w && w.name) || 'Área';
+  };
+  for (const a of state.accounts || []) {
+    if (!a || !a.id) continue;
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = `${a.name || a.id} — ${wsName(a.workspaceId)}`;
+    el.wsSharedFrom.appendChild(opt);
+  }
+  if (prefer && [...el.wsSharedFrom.options].some((o) => o.value === prefer)) {
+    el.wsSharedFrom.value = prefer;
+  } else if (includeKeep) {
+    el.wsSharedFrom.value = 'keep';
+  } else {
+    el.wsSharedFrom.value = 'new';
+  }
+}
+
+function syncWorkspaceSessionUi() {
+  if (!el.wsSessionType) return;
+  const conventional = el.wsSessionType.value === 'conventional';
+  if (el.wsSharedWrap) el.wsSharedWrap.hidden = !conventional;
+  if (el.wsSessionHint) {
+    el.wsSessionHint.textContent = conventional
+      ? 'Todas as janelas desta área compartilham uma sessão (como abas de um navegador).'
+      : 'Cada janela tem cookies e login próprios.';
+  }
+}
+
 function openWorkspaceDialog(ws) {
   editingWorkspaceId = ws ? ws.id : null;
   el.formWorkspace.name.value = ws ? ws.name : '';
+  const sessionType =
+    ws && ws.sessionType === 'conventional' ? 'conventional' : 'independent';
+  if (el.wsSessionType) el.wsSessionType.value = sessionType;
+  fillWorkspaceSharedFromOptions({
+    includeKeep: !!(ws && sessionType === 'conventional'),
+  });
+  syncWorkspaceSessionUi();
   pushOverlay('dlg-workspace');
   el.dlgWorkspace.showModal();
 }
@@ -3988,14 +4049,79 @@ el.formAccount.addEventListener('submit', async (e) => {
 
 document.getElementById('btn-account-cancel').addEventListener('click', () => el.dlgAccount.close());
 
+if (el.wsSessionType) {
+  el.wsSessionType.addEventListener('change', () => {
+    const conventional = el.wsSessionType.value === 'conventional';
+    const editing = !!editingWorkspaceId;
+    const prev = editing
+      ? (state.workspaces || []).find((w) => w.id === editingWorkspaceId)
+      : null;
+    const wasConv = prev && prev.sessionType === 'conventional';
+    fillWorkspaceSharedFromOptions({
+      includeKeep: !!(editing && conventional && wasConv),
+    });
+    syncWorkspaceSessionUi();
+  });
+}
+
 el.formWorkspace.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const name = String(new FormData(el.formWorkspace).get('name') || '').trim();
+  const fd = new FormData(el.formWorkspace);
+  const name = String(fd.get('name') || '').trim();
   if (!name) return;
+  const sessionType =
+    String(fd.get('sessionType') || 'independent') === 'conventional'
+      ? 'conventional'
+      : 'independent';
+  const sharedFromRaw = String(fd.get('sharedFrom') || 'new').trim() || 'new';
+
   if (editingWorkspaceId) {
-    applyState(await window.multiheiz.renameWorkspace(editingWorkspaceId, name));
+    const prev = (state.workspaces || []).find((w) => w.id === editingWorkspaceId);
+    const prevType =
+      prev && prev.sessionType === 'conventional' ? 'conventional' : 'independent';
+    const payload = {
+      id: editingWorkspaceId,
+      name,
+      sessionType,
+    };
+    if (sessionType === 'conventional') {
+      if (sharedFromRaw === 'keep' && prevType === 'conventional') {
+        // omit sharedFrom → main mantém sharedPartitionId atual
+      } else {
+        payload.sharedFrom = sharedFromRaw === 'keep' ? 'new' : sharedFromRaw;
+      }
+    }
+    const switchingToConventional =
+      sessionType === 'conventional' && prevType === 'independent';
+    const res = await window.multiheiz.updateWorkspace(payload);
+    if (res && res.state) applyState(res.state);
+    else if (res && !res.ok) {
+      showToast(res.error || 'Não foi possível atualizar a área');
+      return;
+    }
+    const orphans = (res && res.orphanPartitionIds) || [];
+    const st = (res && res.state) || state;
+    const stillUnused = orphans.filter((pid) => {
+      const n = (st.accounts || []).filter(
+        (a) => (a.partitionId || a.id) === pid
+      ).length;
+      return n === 0;
+    });
+    if (switchingToConventional && stillUnused.length) {
+      confirmAction(
+        'Apagar os dados das sessões antigas que ficaram sem uso? (cookies e armazenamento)',
+        async () => {
+          const cleared = await window.multiheiz.clearUnusedPartitions(stillUnused);
+          if (cleared && cleared.state) applyState(cleared.state);
+        }
+      );
+    }
   } else {
-    applyState(await window.multiheiz.createWorkspace(name));
+    const createPayload = { name, sessionType };
+    if (sessionType === 'conventional') {
+      createPayload.sharedFrom = sharedFromRaw === 'keep' ? 'new' : sharedFromRaw;
+    }
+    applyState(await window.multiheiz.createWorkspace(createPayload));
   }
   el.dlgWorkspace.close();
 });

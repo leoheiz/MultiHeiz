@@ -301,6 +301,7 @@ const SELFTEST_SOCKETS = selftestMode === 'sockets';
 const SELFTEST_AUTOSTART = selftestMode === 'autostart';
 const SELFTEST_DIFF_UPDATE = selftestMode === 'diff-update';
 const SELFTEST_DIAGNOSTICS = selftestMode === 'diagnostics';
+const SELFTEST_SHARED_SESSION = selftestMode === 'shared-session';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -364,7 +365,8 @@ const ANY_SELFTEST =
   SELFTEST_SOCKETS ||
   SELFTEST_AUTOSTART ||
   SELFTEST_DIFF_UPDATE ||
-  SELFTEST_DIAGNOSTICS;
+  SELFTEST_DIAGNOSTICS ||
+  SELFTEST_SHARED_SESSION;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -701,6 +703,7 @@ function createWindow() {
     SELFTEST_CONTEXTMENU ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
+    SELFTEST_SHARED_SESSION ||
     SELFTEST_PERMISSIONS ||
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
@@ -738,6 +741,7 @@ function createWindow() {
     SELFTEST_ADBLOCK_REAL ||
     SELFTEST_SIDEBAR ||
     SELFTEST_WORKSPACE_DELETE ||
+    SELFTEST_SHARED_SESSION ||
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
     SELFTEST_EDIT_START_URL ||
@@ -816,6 +820,7 @@ function createWindow() {
         SELFTEST_CONTEXTMENU ||
         SELFTEST_SETTINGS_PERF ||
         SELFTEST_WORKSPACE_DELETE ||
+        SELFTEST_SHARED_SESSION ||
         SELFTEST_LAYOUT_WORKSPACE ||
         SELFTEST_CATALOG ||
         SELFTEST_CUSTOM_SITE ||
@@ -1699,6 +1704,85 @@ function createWindow() {
             rendererEval,
             waitForLayoutSettle,
             waitForPanels,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_SHARED_SESSION) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runSharedSessionSelftest } = require('./selftest-shared-session');
+          runSharedSessionSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            waitForPanels,
+            removeAccountById,
+            openAccountWithSameSession,
+            updateWorkspaceForSelftest: (payload) => updateWorkspaceSession(payload),
+            createAccountForSelftest: (data) => {
+              // Reuse account:create handler logic via invoke simulation
+              const s = getState();
+              const id = makeId('acc');
+              const workspaceId = (data && data.workspaceId) || s.activeWorkspaceId;
+              const homepageFallback =
+                (s.settings && s.settings.homepage) || 'https://www.google.com';
+              let startUrl = homepageFallback;
+              if (data && data.startUrl) startUrl = String(data.startUrl);
+              const account = {
+                id,
+                name: (data && data.name) || `Janela ${s.accounts.length + 1}`,
+                color: '#2bb8a6',
+                startUrl,
+                workspaceId,
+                muted: false,
+                volume: 100,
+                pauseInBackground: false,
+                keepAliveInBackground: false,
+                privateHistory: false,
+                adblockEnabled: true,
+                showUnread: true,
+                lastUrl: null,
+                zoomFactor: 1,
+              };
+              const wsForAcc = (s.workspaces || []).find((w) => w && w.id === workspaceId);
+              const wsConventional =
+                wsForAcc &&
+                partition.normalizeWorkspaceSessionType(wsForAcc.sessionType) ===
+                  partition.SESSION_TYPE_CONVENTIONAL &&
+                wsForAcc.sharedPartitionId;
+              if (data && data.partitionId) {
+                account.partitionId = String(data.partitionId);
+              } else if (wsConventional && !(data && data.useSeparateSession)) {
+                account.partitionId = String(wsForAcc.sharedPartitionId);
+              } else {
+                account.partitionId = id;
+              }
+              updateState((st) => {
+                st.accounts.push(account);
+              });
+              try {
+                adblock.attachAllAccountSessions();
+              } catch {
+                /* ignore */
+              }
+              const next = publicState();
+              emitToRenderer({ type: 'state:changed', state: next });
+              return {
+                state: next,
+                account: (next.accounts || []).find((a) => a.id === id) || account,
+              };
+            },
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -2601,6 +2685,129 @@ async function removeAccountById(id) {
 }
 
 /**
+ * Resolve partitionId para área "Navegador convencional".
+ * opts.sharedFrom: 'new' | accountId | omit (new)
+ * opts.sharedPartitionId: id explícito (selftest)
+ * @param {object} opts
+ * @returns {string}
+ */
+function resolveSharedPartitionChoice(opts) {
+  if (opts && opts.sharedPartitionId != null && String(opts.sharedPartitionId).trim()) {
+    return String(opts.sharedPartitionId).trim();
+  }
+  const from = opts && opts.sharedFrom != null ? String(opts.sharedFrom).trim() : 'new';
+  if (from && from !== 'new') {
+    const src = (getState().accounts || []).find((a) => a && a.id === from);
+    if (src) return partition.resolvePartitionId(src);
+  }
+  return makeId('sess');
+}
+
+/**
+ * Aplica tipo de sessão / nome da área. Ao mudar para convencional, todas as
+ * janelas da área passam a usar a partição compartilhada (rebinding).
+ * Partições antigas órfãs só são limpas se clearUnusedPartitions=true
+ * (UI real com confirmação; selftest não limpa).
+ * @param {object} payload
+ */
+async function updateWorkspaceSession(payload) {
+  const id = payload && payload.id;
+  if (!id) return { ok: false, error: 'id obrigatório', state: publicState() };
+  const s0 = getState();
+  const ws0 = (s0.workspaces || []).find((w) => w.id === id);
+  if (!ws0) return { ok: false, error: 'Área não encontrada', state: publicState() };
+
+  const nextType =
+    payload.sessionType != null
+      ? partition.normalizeWorkspaceSessionType(payload.sessionType)
+      : partition.normalizeWorkspaceSessionType(ws0.sessionType);
+  const prevType = partition.normalizeWorkspaceSessionType(ws0.sessionType);
+  const name =
+    payload.name != null ? String(payload.name).trim() || ws0.name : null;
+
+  /** @type {string[]} */
+  const orphanPartitionIds = [];
+  /** @type {string[]} */
+  const rebindIds = [];
+
+  if (nextType === partition.SESSION_TYPE_CONVENTIONAL) {
+    const sharedPartitionId =
+      prevType === partition.SESSION_TYPE_CONVENTIONAL &&
+      ws0.sharedPartitionId &&
+      payload.sharedFrom == null &&
+      payload.sharedPartitionId == null
+        ? String(ws0.sharedPartitionId)
+        : resolveSharedPartitionChoice(payload);
+
+    updateState((s) => {
+      const w = s.workspaces.find((x) => x.id === id);
+      if (!w) return;
+      if (name) w.name = name;
+      w.sessionType = partition.SESSION_TYPE_CONVENTIONAL;
+      w.sharedPartitionId = sharedPartitionId;
+      for (const a of s.accounts || []) {
+        if (!a || a.workspaceId !== id) continue;
+        const oldPid = partition.resolvePartitionId(a);
+        if (oldPid !== sharedPartitionId) {
+          orphanPartitionIds.push(oldPid);
+          rebindIds.push(a.id);
+        }
+        a.partitionId = sharedPartitionId;
+      }
+    });
+  } else {
+    updateState((s) => {
+      const w = s.workspaces.find((x) => x.id === id);
+      if (!w) return;
+      if (name) w.name = name;
+      w.sessionType = partition.SESSION_TYPE_INDEPENDENT;
+      // Mantém sharedPartitionId no workspace (histórico); novos painéis não usam.
+      // Janelas existentes ficam com o partitionId atual.
+    });
+  }
+
+  for (const accId of rebindIds) {
+    try {
+      panels.rebindPanelSession(accId);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const clearUnused = !!payload.clearUnusedPartitions && !ANY_SELFTEST;
+  if (clearUnused) {
+    const unique = [...new Set(orphanPartitionIds)];
+    for (const pid of unique) {
+      if (partition.countPartitionUsers(pid, getState().accounts) === 0) {
+        try {
+          await panels.clearPartitionData(pid);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  try {
+    adblock.attachAllAccountSessions();
+  } catch {
+    /* ignore */
+  }
+
+  const next = publicState();
+  emitToRenderer({ type: 'state:changed', state: next });
+  if (rebindIds.length) {
+    emitToRenderer({ type: 'layout:recompute' });
+  }
+  return {
+    ok: true,
+    state: next,
+    rebound: rebindIds,
+    orphanPartitionIds: [...new Set(orphanPartitionIds)],
+  };
+}
+
+/**
  * Nova janela na mesma área, reutilizando a partição (cookies/storage) da origem.
  * Abre na URL inicial da origem.
  * @param {string} sourceAccountId
@@ -3185,10 +3392,29 @@ function registerIpc() {
     passkeysUi: require('./passkeys').getPasskeysUi(),
   }));
 
-  ipcMain.handle('workspace:create', (_e, name) => {
+  ipcMain.handle('workspace:create', (_e, payload) => {
+    const opts =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload
+        : { name: payload };
     const id = makeId('ws');
+    const name = String((opts && opts.name) || '').trim() || 'Nova categoria';
+    const sessionType = partition.normalizeWorkspaceSessionType(
+      opts && opts.sessionType
+    );
+    let sharedPartitionId = null;
+    if (sessionType === partition.SESSION_TYPE_CONVENTIONAL) {
+      sharedPartitionId = resolveSharedPartitionChoice(opts);
+    }
     updateState((s) => {
-      s.workspaces.push({ id, name: name || 'Nova categoria' });
+      s.workspaces.push(
+        partition.normalizeWorkspaceSessionFields({
+          id,
+          name,
+          sessionType,
+          sharedPartitionId,
+        })
+      );
       // New area starts with a copy of the current area's layout (documented default).
       if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
         s.layoutByWorkspace = {};
@@ -3204,6 +3430,30 @@ function registerIpc() {
       if (w && name) w.name = String(name).trim() || w.name;
     });
     return publicState();
+  });
+
+  /**
+   * Atualiza nome e/ou tipo de sessão da área.
+   * payload: { id, name?, sessionType?, sharedFrom?: 'new'|accountId, clearUnusedPartitions?: boolean }
+   */
+  ipcMain.handle('workspace:update', async (_e, payload) => {
+    return updateWorkspaceSession(payload || {});
+  });
+
+  ipcMain.handle('partition:clear-unused', async (_e, partitionIds) => {
+    const ids = Array.isArray(partitionIds) ? partitionIds : [];
+    for (const pid of ids) {
+      const key = String(pid || '').trim();
+      if (!key) continue;
+      if (partition.countPartitionUsers(key, getState().accounts) === 0) {
+        try {
+          await panels.clearPartitionData(key);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return { ok: true, state: publicState() };
   });
 
   ipcMain.handle('workspace:delete', async (_e, id) => {
@@ -3318,10 +3568,18 @@ function registerIpc() {
       lastUrl: null,
       zoomFactor: 1,
     };
-    // Sessão compartilhada: partitionId explícito (persist:acc-<partitionId>).
-    // Sem campo = sessão própria (partitionId implícito = id).
+    // Sessão: partitionId explícito, ou área "Navegador convencional", ou própria.
+    const wsForAcc = (s.workspaces || []).find((w) => w && w.id === workspaceId);
+    const wsConventional =
+      wsForAcc &&
+      partition.normalizeWorkspaceSessionType(wsForAcc.sessionType) ===
+        partition.SESSION_TYPE_CONVENTIONAL &&
+      wsForAcc.sharedPartitionId;
+    const forceSeparate = !!(data && data.useSeparateSession);
     if (data && data.partitionId != null && String(data.partitionId).trim()) {
       account.partitionId = String(data.partitionId).trim();
+    } else if (wsConventional && !forceSeparate) {
+      account.partitionId = String(wsForAcc.sharedPartitionId);
     } else {
       account.partitionId = id;
     }

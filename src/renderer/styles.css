@@ -673,6 +673,13 @@ html[data-theme='claro'] .sidebar-item:hover {
   width: calc(100vw - 32px);
 }
 
+.dlg-ws-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  opacity: 0.8;
+  line-height: 1.35;
+}
+
 .dlg-proxy-hint {
   margin: 0 0 12px;
   font-size: 0.85rem;

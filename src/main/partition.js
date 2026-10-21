@@ -87,6 +87,38 @@ function enrichAccountsSessionShare(accounts) {
   });
 }
 
+/** Tipos de sessão da área de trabalho (labels pt-BR na UI). */
+const SESSION_TYPE_INDEPENDENT = 'independent';
+const SESSION_TYPE_CONVENTIONAL = 'conventional';
+
+/**
+ * @param {unknown} value
+ * @returns {'independent'|'conventional'}
+ */
+function normalizeWorkspaceSessionType(value) {
+  return value === SESSION_TYPE_CONVENTIONAL
+    ? SESSION_TYPE_CONVENTIONAL
+    : SESSION_TYPE_INDEPENDENT;
+}
+
+/**
+ * Garante campos de sessão em um workspace (migração idempotente).
+ * @param {object} ws
+ * @returns {object}
+ */
+function normalizeWorkspaceSessionFields(ws) {
+  if (!ws || typeof ws !== 'object') return ws;
+  const sessionType = normalizeWorkspaceSessionType(ws.sessionType);
+  let sharedPartitionId = null;
+  if (ws.sharedPartitionId != null && String(ws.sharedPartitionId).trim()) {
+    sharedPartitionId = String(ws.sharedPartitionId).trim();
+  }
+  if (sessionType !== SESSION_TYPE_CONVENTIONAL) {
+    // Mantém sharedPartitionId se existir (histórico); novos painéis não o usam.
+  }
+  return { ...ws, sessionType, sharedPartitionId };
+}
+
 module.exports = {
   resolvePartitionId,
   partitionString,
@@ -94,4 +126,8 @@ module.exports = {
   countPartitionUsers,
   partitionUsageMap,
   enrichAccountsSessionShare,
+  SESSION_TYPE_INDEPENDENT,
+  SESSION_TYPE_CONVENTIONAL,
+  normalizeWorkspaceSessionType,
+  normalizeWorkspaceSessionFields,
 };
