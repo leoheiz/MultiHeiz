@@ -2575,13 +2575,19 @@ function paintStatusBarNow() {
 }
 
 /**
- * Lightweight UI FPS probe: rAF counter sampled ~1/s into the status bar.
- * No per-frame DOM/IPC. Paused while the window is hidden/minimized/occluded.
+ * Lightweight UI FPS probe: short rAF bursts (~250 ms) about once per second.
+ * Idle time uses setTimeout only — no continuous rAF (avoids 60 Hz idle paint).
+ * Paused while the window is hidden/minimized/occluded.
  */
+const UI_FPS_BURST_MS = 250;
+const UI_FPS_INTERVAL_MS = 1000;
 let uiFpsFrames = 0;
-let uiFpsLastSample = 0;
+let uiFpsBurstStart = 0;
 /** @type {number} */
 let uiFpsRafId = 0;
+/** @type {number} */
+let uiFpsTimeoutId = 0;
+/** Armed (will sample); false when paused for hidden/minimized. */
 let uiFpsRunning = false;
 
 function uiFpsShouldRun() {
@@ -2600,33 +2606,75 @@ function uiFpsShouldRun() {
   return true;
 }
 
-function uiFpsTick(now) {
+function clearUiFpsRaf() {
+  if (!uiFpsRafId) return;
+  try {
+    cancelAnimationFrame(uiFpsRafId);
+  } catch {
+    /* ignore */
+  }
+  uiFpsRafId = 0;
+}
+
+function clearUiFpsTimeout() {
+  if (!uiFpsTimeoutId) return;
+  try {
+    clearTimeout(uiFpsTimeoutId);
+  } catch {
+    /* ignore */
+  }
+  uiFpsTimeoutId = 0;
+}
+
+function writeUiFpsLabel(fps) {
+  if (!(fps > 0)) return;
+  focusedFps = fps;
+  if (!el.statFps) return;
+  const next = `FPS ${focusedFps}`;
+  if (el.statFps.textContent !== next) el.statFps.textContent = next;
+}
+
+function scheduleNextUiFpsBurst() {
+  clearUiFpsTimeout();
+  if (!uiFpsRunning) return;
+  uiFpsTimeoutId = window.setTimeout(() => {
+    uiFpsTimeoutId = 0;
+    beginUiFpsBurst();
+  }, Math.max(0, UI_FPS_INTERVAL_MS - UI_FPS_BURST_MS));
+}
+
+function uiFpsBurstTick(now) {
   uiFpsRafId = 0;
   if (!uiFpsRunning) return;
   if (!uiFpsShouldRun()) {
-    // Stay paused until visibility resumes (listener restarts the loop).
-    uiFpsRunning = false;
+    stopUiFpsProbe();
     return;
   }
-  uiFpsFrames += 1;
-  if (!uiFpsLastSample) uiFpsLastSample = now || performance.now();
   const t = now || performance.now();
-  if (t - uiFpsLastSample >= 1000) {
-    const fps = Math.round((uiFpsFrames * 1000) / (t - uiFpsLastSample));
+  uiFpsFrames += 1;
+  if (!uiFpsBurstStart) uiFpsBurstStart = t;
+  const elapsed = t - uiFpsBurstStart;
+  if (elapsed >= UI_FPS_BURST_MS) {
+    const fps = Math.round((uiFpsFrames * 1000) / elapsed);
     uiFpsFrames = 0;
-    uiFpsLastSample = t;
-    if (fps > 0 && fps !== focusedFps) {
-      focusedFps = fps;
-      // One DOM write/s, only when the label would change.
-      if (el.statFps) {
-        const next = `FPS ${focusedFps}`;
-        if (el.statFps.textContent !== next) el.statFps.textContent = next;
-      }
-    } else if (fps > 0) {
-      focusedFps = fps;
-    }
+    uiFpsBurstStart = 0;
+    writeUiFpsLabel(fps);
+    scheduleNextUiFpsBurst();
+    return;
   }
-  uiFpsRafId = requestAnimationFrame(uiFpsTick);
+  uiFpsRafId = requestAnimationFrame(uiFpsBurstTick);
+}
+
+function beginUiFpsBurst() {
+  if (!uiFpsRunning) return;
+  if (!uiFpsShouldRun()) {
+    stopUiFpsProbe();
+    return;
+  }
+  uiFpsFrames = 0;
+  uiFpsBurstStart = 0;
+  clearUiFpsRaf();
+  uiFpsRafId = requestAnimationFrame(uiFpsBurstTick);
 }
 
 function startUiFpsProbe() {
@@ -2634,28 +2682,17 @@ function startUiFpsProbe() {
   if (!uiFpsShouldRun()) return;
   uiFpsRunning = true;
   uiFpsFrames = 0;
-  uiFpsLastSample = 0;
-  if (uiFpsRafId) {
-    try {
-      cancelAnimationFrame(uiFpsRafId);
-    } catch {
-      /* ignore */
-    }
-    uiFpsRafId = 0;
-  }
-  uiFpsRafId = requestAnimationFrame(uiFpsTick);
+  uiFpsBurstStart = 0;
+  clearUiFpsTimeout();
+  beginUiFpsBurst();
 }
 
 function stopUiFpsProbe() {
   uiFpsRunning = false;
-  if (uiFpsRafId) {
-    try {
-      cancelAnimationFrame(uiFpsRafId);
-    } catch {
-      /* ignore */
-    }
-    uiFpsRafId = 0;
-  }
+  clearUiFpsRaf();
+  clearUiFpsTimeout();
+  uiFpsFrames = 0;
+  uiFpsBurstStart = 0;
 }
 
 function scheduleStatusBarUpdate() {

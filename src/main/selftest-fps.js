@@ -3,7 +3,8 @@
 /**
  * Selftest: indicador de FPS na barra de status (MULTIHEIZ_SELFTEST=fps).
  * Após o lançamento, #stat-fps mostra um número (não "—") em ~3 s.
- * Com a janela minimizada/oculta o loop rAF para; ao restaurar, volta o número.
+ * Amostragem em rajadas curtas (rAF ~250 ms, depois setTimeout); pausa quando
+ * oculto/minimizado e retoma ao restaurar.
  */
 
 const http = require('node:http');
@@ -107,10 +108,10 @@ async function runFpsSelftest(ctx) {
     'FPS number within 3s',
     seen
   );
-  assert(seen.running, 'rAF loop running while visible', seen);
+  assert(seen.running, 'FPS sampling armed while visible', seen);
   console.log('PASS: status bar FPS', seen.text);
 
-  // Minimize → counter stops (no rAF loop). window:visibility from main pauses it.
+  // Minimize → sampling stops (no rAF / no pending sample). window:visibility pauses it.
   try {
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
   } catch {
@@ -129,10 +130,10 @@ async function runFpsSelftest(ctx) {
     await sleep(400);
     hiddenProbe = await probe();
   }
-  assert(!hiddenProbe.running, 'FPS rAF paused when minimized/hidden', hiddenProbe);
+  assert(!hiddenProbe.running, 'FPS sampling paused when minimized/hidden', hiddenProbe);
   console.log('PASS: FPS probe paused when hidden', hiddenProbe);
 
-  // Restore → number again.
+  // Restore → sampling resumes and number appears again.
   try {
     mainWindow.show();
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -157,7 +158,7 @@ async function runFpsSelftest(ctx) {
     await sleep(150);
   }
   assert(
-    restored && restored.running && restored.fps > 0,
+    restored && restored.running && restored.fps > 0 && /FPS\s+\d+/.test(restored.text || ''),
     'FPS number after restore',
     restored
   );
