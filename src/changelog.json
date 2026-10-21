@@ -148,6 +148,30 @@
         {
           "tag": "Correção",
           "text": "Popovers migrados para o overlay voltam a ter as ações antigas: no monitor de memória, Suspender/Reativar por janela, totais/metas, tooltip e foco ao clicar; no menu de extensões, Adicionar extensão e tooltips; setas/Enter no seletor de Layout; valores de memória atualizam com o popover aberto."
+        },
+        {
+          "tag": "Correção",
+          "text": "Alternar Aparência, DNS criptografado ou o bloqueador em Configurações deixa de travar a interface: o motor de anúncios só recompila quando as listas/regras mudam (ligar/desligar reutiliza o cache) e a compilação pesada roda fora do processo principal."
+        },
+        {
+          "tag": "Correção",
+          "text": "Rótulo de passkeys: em Linux e macOS diz \"do sistema\" (não \"do Windows\"); no Windows mantém \"do Windows\"."
+        },
+        {
+          "tag": "Correção",
+          "text": "CSP da interface permite favicons em http: e data: (só imagens); scripts e estilos continuam restritos."
+        },
+        {
+          "tag": "Correção",
+          "text": "Popovers (memória e demais) fecham ao clicar fora, inclusive num painel, sem engolir o clique da página; cliques dentro (ex.: Suspender) e Esc funcionam como esperado."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "selftest:gis usa mock local por padrão (opener, redirecionamento, reescrita Glif); sites reais só com MULTIHEIZ_SELFTEST_REAL_SITES=1."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "selftests de proxy e IA pulam asserções de safeStorage quando a criptografia do sistema não está disponível (ex.: Linux sem keyring), com mensagem SKIP e saída 0."
         }
       ]
     },
