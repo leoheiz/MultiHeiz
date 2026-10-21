@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.locale.1.9.0.schema.json
+PackageIdentifier: leoheiz.MultiHeiz
+PackageVersion: 1.3.0
+PackageLocale: en-US
+Publisher: Leo (leoheiz)
+PublisherUrl: https://github.com/leoheiz
+PublisherSupportUrl: https://github.com/leoheiz/MultiHeiz/issues
+Author: Leo (leoheiz)
+PackageName: MultiHeiz
+PackageUrl: https://github.com/leoheiz/MultiHeiz
+License: MIT
+LicenseUrl: https://github.com/leoheiz/MultiHeiz/blob/main/LICENSE
+Copyright: Copyright (c) Leo (leoheiz)
+ShortDescription: Multi-window browser with independent panels and sessions
+Description: MultiHeiz is an Electron-based multi-window browser with independent panels and sessions, ad blocker, workspaces, and modules (notes, reminders, spreadsheet).
+Tags:
+  - browser
+  - electron
+  - multi-window
+  - productivity
+ReleaseNotesUrl: https://github.com/leoheiz/MultiHeiz/releases/tag/v1.3.0
+ManifestType: locale
+ManifestVersion: 1.9.0
