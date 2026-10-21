@@ -31,7 +31,7 @@ function cleanupHost() {
           'MultiHeizSelftest',
           '/f',
         ],
-        { encoding: 'utf8', windowsHide: true, stdio: 'ignore' }
+        { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] }
       );
     } catch {
       /* absent is fine */
@@ -110,7 +110,7 @@ async function main() {
             '/v',
             'MultiHeizSelftest',
           ],
-          { encoding: 'utf8', windowsHide: true }
+          { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
         );
         console.error('FAIL: MultiHeizSelftest Run value still present after test');
         process.exit(1);

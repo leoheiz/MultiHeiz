@@ -32,11 +32,20 @@
 !macro customInit
   ; Remove broken Start Menu / Desktop shortcuts left from old installs (target gone).
   ; Only touches our SHORTCUT_NAME — never other apps. Safe for installertest variant.
-  ; Use absolute paths (do not change SetShellVarContext — initMultiUser already set it).
-  !insertmacro multiheizRemoveStaleShortcut "$APPDATA\Microsoft\Windows\Start Menu\Programs\${SHORTCUT_NAME}.lnk"
-  !insertmacro multiheizRemoveStaleShortcut "$PROFILE\Desktop\${SHORTCUT_NAME}.lnk"
-  !insertmacro multiheizRemoveStaleShortcut "$PROGRAMDATA\Microsoft\Windows\Start Menu\Programs\${SHORTCUT_NAME}.lnk"
-  !insertmacro multiheizRemoveStaleShortcut "$PUBLIC\Desktop\${SHORTCUT_NAME}.lnk"
+  ; Use $SMPROGRAMS/$DESKTOP (avoid "$PROGRAMDATA\...\Start Menu\..." — NSIS treats
+  ; the space as ending the path and warns "unknown variable ...\Start").
+  SetShellVarContext current
+  !insertmacro multiheizRemoveStaleShortcut "$SMPROGRAMS\${SHORTCUT_NAME}.lnk"
+  !insertmacro multiheizRemoveStaleShortcut "$DESKTOP\${SHORTCUT_NAME}.lnk"
+  SetShellVarContext all
+  !insertmacro multiheizRemoveStaleShortcut "$SMPROGRAMS\${SHORTCUT_NAME}.lnk"
+  !insertmacro multiheizRemoveStaleShortcut "$DESKTOP\${SHORTCUT_NAME}.lnk"
+  ; Restore shell context to match install mode chosen by initMultiUser.
+  ${If} $installMode == "all"
+    SetShellVarContext all
+  ${Else}
+    SetShellVarContext current
+  ${EndIf}
 !macroend
 
 !macro customInstall

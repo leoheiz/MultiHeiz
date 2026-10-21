@@ -221,7 +221,7 @@ $installPs1 = Join-Path $Root 'install.ps1'
 try {
   Uninstall-TestVariant
 
-  Write-Step 'install.ps1 — first install (test variant)'
+  Write-Step 'install.ps1 - first install (test variant)'
   & powershell -NoProfile -ExecutionPolicy Bypass -File $installPs1 `
     -ReleaseJsonUrl "${prefix}releases/latest" `
     -AssetPattern 'MultiHeizInstallerTest-*-setup.exe' `
@@ -231,16 +231,16 @@ try {
   Assert ($null -ne $ukey) 'MultiHeizInstallerTest not in HKCU after install'
   Write-Host "  Installed OK: $ukey"
 
-  Write-Step 'install.ps1 — same version → no-op'
+  Write-Step 'install.ps1 - same version no-op'
   $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $installPs1 `
     -ReleaseJsonUrl "${prefix}releases/latest" `
     -AssetPattern 'MultiHeizInstallerTest-*-setup.exe' `
     -ProductName 'MultiHeizInstallerTest' 2>&1 | Out-String
   Write-Host $out
   Assert ($LASTEXITCODE -eq 0) "second install.ps1 exit $LASTEXITCODE"
-  Assert ($out -match 'já está instalado|Nada a fazer') "expected no-op message, got: $out"
+  Assert ($out -match 'instalado|Nada a fazer|already') ('expected no-op message, got: ' + $out)
 
-  Write-Step 'install.ps1 — tampered SHA256 must abort'
+  Write-Step 'install.ps1 - tampered SHA256 must abort'
   $code = 0
   $errOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $installPs1 `
     -ReleaseJsonUrl "${prefix}releases/latest-bad" `
@@ -250,7 +250,7 @@ try {
   $code = $LASTEXITCODE
   Write-Host $errOut
   Assert ($code -ne 0) 'tampered SHA must fail'
-  Assert ($errOut -match 'SHA256|não confere|ERRO') "expected SHA error, got: $errOut"
+  Assert ($errOut -match 'SHA256|confere|ERRO|mismatch') ('expected SHA error, got: ' + $errOut)
   Assert ($null -ne (Get-TestUninstallKey)) 'test install should remain after failed tampered run'
 
   Write-Step 'Uninstall test variant'
