@@ -9,8 +9,9 @@ const FREE_COLS = 12;
 const FREE_ROWS = 8;
 const FREE_MIN_W = 2;
 const FREE_MIN_H = 2;
-/** px inset on content edges so resize handles stay above WebContentsView (v1.4.1) */
-const HANDLE_INSET = 7;
+/** px inset on content edges so resize handles stay above WebContentsView (v1.4.1).
+ * Must be ≥ largest handle thickness (.se is 14px) so the whole handle receives mice. */
+const HANDLE_INSET = 14;
 /** Focus frame drawn in HTML around the native view (inset view bounds) */
 const FOCUS_FRAME = 2;
 /** Auto-collapse sidebar below this window width (CSS px) */
@@ -463,12 +464,82 @@ function canIncrementalApply(prev, next) {
   if (!prev || !next) return false;
   if (prev.activeWorkspaceId !== next.activeWorkspaceId) return false;
   if (normalizeLayout(prev.layout) !== normalizeLayout(next.layout)) return false;
+  // Lock/unlock must refresh resize handles / insets — not a chrome-only patch.
+  const prevLocked = prev.ui?.layoutLocked !== false;
+  const nextLocked = next.ui?.layoutLocked !== false;
+  if (prevLocked !== nextLocked) return false;
   if ((prev.page || 0) !== (next.page || 0)) return false;
   if ((prev.maximizedAccountId || null) !== (next.maximizedAccountId || null)) return false;
   const idsPrev = (prev.accounts || []).map((a) => a.id).join('\0');
   const idsNext = (next.accounts || []).map((a) => a.id).join('\0');
   if (idsPrev !== idsNext) return false;
   return true;
+}
+
+/**
+ * Ensure Livre edit-mode chrome (grid + resize handles) matches isLivreEditMode().
+ * Safe to call after first paint, lock/unlock, layout change, workspace switch, resize.
+ */
+function syncLivreEditChrome() {
+  if (!el.grid) return;
+  const isLivre = state.layout === 'livre' && !state.maximizedAccountId;
+  const edit = isLivreEditMode();
+  el.grid.classList.toggle('livre-mode', isLivre);
+  el.grid.classList.toggle('show-grid', edit);
+  updateLockButton();
+
+  for (const slot of el.grid.querySelectorAll('.panel-slot[data-account-id]')) {
+    const accountId = slot.getAttribute('data-account-id');
+    if (!accountId) continue;
+
+    // Move cursor on header
+    const header = slot.querySelector('.panel-header');
+    if (header) {
+      if (edit) {
+        header.style.cursor = 'grab';
+        if (!header.dataset.livreMoveBound) {
+          header.dataset.livreMoveBound = '1';
+          const onHeaderDown = (e) => {
+            if (!isLivreEditMode()) return;
+            if (e.target.closest('button') || e.target.closest('input')) return;
+            if (tileDrag) return;
+            startTileDrag(accountId, e, 'move');
+          };
+          header.addEventListener('pointerdown', onHeaderDown);
+          header.addEventListener('mousedown', onHeaderDown);
+        }
+      } else {
+        header.style.cursor = '';
+      }
+    }
+
+    for (const dir of ['e', 's', 'se']) {
+      let h = slot.querySelector(`.resize-handle.${dir}`);
+      if (edit) {
+        if (!h) {
+          h = document.createElement('div');
+          h.className = `resize-handle ${dir}`;
+          h.dataset.role = `resize-${dir}`;
+          slot.appendChild(h);
+        }
+        if (!h.dataset.livreResizeBound) {
+          h.dataset.livreResizeBound = '1';
+          const onHandleDown = (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            if (!isLivreEditMode()) return;
+            if (tileDrag) return;
+            startTileDrag(accountId, e, dir);
+          };
+          h.addEventListener('pointerdown', onHandleDown);
+          h.addEventListener('mousedown', onHandleDown);
+        }
+      } else if (h) {
+        h.remove();
+      }
+    }
+  }
+  scheduleSync();
 }
 
 /**
@@ -494,6 +565,7 @@ function renderIncrementalChrome() {
       if (volBtn.title != null) volBtn.title = muted ? 'Sem som' : `Volume ${pct}%`;
     }
   }
+  syncLivreEditChrome();
   updateMemBadges();
   updateStatusBar();
 }
@@ -1725,6 +1797,8 @@ function renderGrid() {
   }
 
   applyOverlaySnapshotsToDom();
+  // Ensure handles/insets are active on first paint and after any full grid rebuild.
+  syncLivreEditChrome();
 }
 
 function panelMetrics(accountId) {
@@ -1970,7 +2044,9 @@ function buildPanelSlot(acc, tile) {
 
   if (isLivreEditMode()) {
     header.style.cursor = 'grab';
+    header.dataset.livreMoveBound = '1';
     const onHeaderDown = (e) => {
+      if (!isLivreEditMode()) return;
       if (e.target.closest('button') || e.target.closest('input')) return;
       if (tileDrag) return;
       startTileDrag(acc.id, e, 'move');
@@ -2013,9 +2089,11 @@ function buildPanelSlot(acc, tile) {
       const h = document.createElement('div');
       h.className = `resize-handle ${dir}`;
       h.dataset.role = `resize-${dir}`;
+      h.dataset.livreResizeBound = '1';
       const onHandleDown = (e) => {
         e.stopPropagation();
         e.preventDefault();
+        if (!isLivreEditMode()) return;
         if (tileDrag) return;
         startTileDrag(acc.id, e, dir);
       };
@@ -3574,11 +3652,13 @@ if (el.btnSidebarPin) {
 
 el.btnLayoutLock.addEventListener('click', async () => {
   applyState(await window.multiheiz.updateUi({ layoutLocked: !isLayoutLocked() }));
+  syncLivreEditChrome();
 });
 
 if (el.btnBannerLock) {
   el.btnBannerLock.addEventListener('click', async () => {
     applyState(await window.multiheiz.updateUi({ layoutLocked: true }));
+    syncLivreEditChrome();
   });
 }
 
@@ -3753,6 +3833,7 @@ el.layoutSelect.addEventListener('change', async () => {
   if (activePopoverId === 'layout-select') hideLightPopover('layout-change');
   const chosen = normalizeLayout(el.layoutSelect.value);
   applyState(await window.multiheiz.setLayout(chosen));
+  syncLivreEditChrome();
 });
 
 el.btnPrev.addEventListener('click', async () => {
@@ -3930,7 +4011,8 @@ window.addEventListener('resize', () => {
     sidebarForceExpanded = false;
   }
   updateSidebarCollapseClasses();
-  scheduleSync();
+  if (state.layout === 'livre') syncLivreEditChrome();
+  else scheduleSync();
 });
 
 if (typeof ResizeObserver === 'function') {
@@ -5135,7 +5217,17 @@ window.__multiheizUi = {
   },
   setLayoutLocked: async (locked) => {
     applyState(await window.multiheiz.updateUi({ layoutLocked: !!locked }));
+    syncLivreEditChrome();
     return !!state.ui.layoutLocked;
+  },
+  syncLivreEditChrome: () => {
+    syncLivreEditChrome();
+    return {
+      livreEdit: isLivreEditMode(),
+      handles: el.grid
+        ? el.grid.querySelectorAll('.resize-handle').length
+        : 0,
+    };
   },
   /** Selftest: current Layout <select> value (never empty; invalid → auto). */
   getLayoutSelectValue: () => {

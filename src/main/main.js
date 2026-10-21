@@ -251,6 +251,7 @@ const SELFTEST_BADGES = selftestMode === 'badges';
 const SELFTEST_LANGUAGETOOL = selftestMode === 'languagetool';
 const SELFTEST_AI = selftestMode === 'ai';
 const SELFTEST_FPS = selftestMode === 'fps';
+const SELFTEST_LAYOUT_HANDLES_STARTUP = selftestMode === 'layout-handles-startup';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -309,7 +310,8 @@ const ANY_SELFTEST =
   SELFTEST_BADGES ||
   SELFTEST_LANGUAGETOOL ||
   SELFTEST_AI ||
-  SELFTEST_FPS;
+  SELFTEST_FPS ||
+  SELFTEST_LAYOUT_HANDLES_STARTUP;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -652,7 +654,8 @@ function createWindow() {
     SELFTEST_LANGUAGETOOL ||
     SELFTEST_AI ||
     SELFTEST_ADBLOCK_STARTUP ||
-    SELFTEST_FPS
+    SELFTEST_FPS ||
+    SELFTEST_LAYOUT_HANDLES_STARTUP
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -750,6 +753,7 @@ function createWindow() {
       SELFTEST_ADBLOCK ||
       SELFTEST_ADBLOCK_STARTUP ||
       SELFTEST_FPS ||
+      SELFTEST_LAYOUT_HANDLES_STARTUP ||
       SELFTEST_EXT ||
       SELFTEST_UA ||
       SELFTEST_PERF ||
@@ -1071,6 +1075,30 @@ function createWindow() {
         try {
           const { runFpsSelftest } = require('./selftest-fps');
           runFpsSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_LAYOUT_HANDLES_STARTUP) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runLayoutHandlesStartupSelftest } = require('./selftest-layout-handles-startup');
+          runLayoutHandlesStartupSelftest({
             mainWindow,
             panels,
             getState,

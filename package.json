@@ -61,6 +61,7 @@
     "selftest:sheet": "node tools/selftest-sheet.js",
     "selftest:volume": "node tools/selftest-volume.js",
     "selftest:layout-workspace": "node tools/selftest-layout-workspace.js",
+    "selftest:layout-handles-startup": "node tools/selftest-layout-handles-startup.js",
     "selftest:popover-overlay": "node tools/selftest-popover-overlay.js",
     "selftest:popover-actions": "node tools/selftest-popover-actions.js",
     "selftest:languagetool": "node tools/selftest-languagetool.js",
