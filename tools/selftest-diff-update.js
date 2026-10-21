@@ -173,87 +173,113 @@ async function main() {
   assert(fakeAu.autoInstallOnAppQuit === false, 'no install on quit in selftest');
   console.log('PASS: MULTIHEIZ_UPDATE_URL generic feed (selftest-only) + no auto-install');
 
-  // Artifact check: installertest output
-  let arts = findInstallerTestArtifacts(path.join(root, 'dist-installertest'));
-  if (!arts || !arts.hasBlockmap || !arts.latestPath) {
-    console.log('INFO: dist-installertest incomplete — building TEST-ONLY NSIS (may take several minutes)…');
-    const r = spawnSync(
-      'npx',
-      ['--yes', 'electron-builder', '--win', 'nsis', '--config', 'electron-builder.installertest.yml'],
-      { cwd: root, stdio: 'inherit', shell: true, env: process.env }
+  // Artifact check: installertest NSIS output (Windows-only — needs wine on Linux)
+  if (process.platform === 'win32') {
+    let arts = findInstallerTestArtifacts(path.join(root, 'dist-installertest'));
+    if (!arts || !arts.hasBlockmap || !arts.latestPath) {
+      console.log('INFO: dist-installertest incomplete — building TEST-ONLY NSIS (may take several minutes)…');
+      const r = spawnSync(
+        'npx',
+        ['--yes', 'electron-builder', '--win', 'nsis', '--config', 'electron-builder.installertest.yml'],
+        { cwd: root, stdio: 'inherit', shell: true, env: process.env }
+      );
+      assert(r.status === 0, 'electron-builder installertest failed: ' + r.status);
+      arts = findInstallerTestArtifacts(path.join(root, 'dist-installertest'));
+    }
+    assert(arts && arts.setup, 'InstallerTest setup.exe missing');
+    assert(arts.hasBlockmap, 'missing ' + arts.blockmap);
+    assert(fs.statSync(arts.blockmapPath).size > 100, 'blockmap too small');
+    assert(arts.latestPath && fs.existsSync(arts.latestPath), 'latest.yml missing');
+    const latestText = fs.readFileSync(arts.latestPath, 'utf8');
+    const parsed = parseLatestYml(latestText);
+    assert(parsed.version, 'latest.yml version');
+    assert(parsed.path || parsed.url, 'latest.yml path/url');
+    const named = parsed.path || parsed.url;
+    assert(
+      named === arts.setup || named.endsWith(arts.setup),
+      'latest.yml must reference setup: ' + named + ' vs ' + arts.setup
     );
-    assert(r.status === 0, 'electron-builder installertest failed: ' + r.status);
-    arts = findInstallerTestArtifacts(path.join(root, 'dist-installertest'));
-  }
-  assert(arts && arts.setup, 'InstallerTest setup.exe missing');
-  assert(arts.hasBlockmap, 'missing ' + arts.blockmap);
-  assert(fs.statSync(arts.blockmapPath).size > 100, 'blockmap too small');
-  assert(arts.latestPath && fs.existsSync(arts.latestPath), 'latest.yml missing');
-  const latestText = fs.readFileSync(arts.latestPath, 'utf8');
-  const parsed = parseLatestYml(latestText);
-  assert(parsed.version, 'latest.yml version');
-  assert(parsed.path || parsed.url, 'latest.yml path/url');
-  const named = parsed.path || parsed.url;
-  assert(
-    named === arts.setup || named.endsWith(arts.setup),
-    'latest.yml must reference setup: ' + named + ' vs ' + arts.setup
-  );
-  // electron-updater appends .blockmap to the file URL — sibling file must exist
-  assert(
-    fs.existsSync(path.join(arts.dir, named + '.blockmap')) || arts.hasBlockmap,
-    'blockmap sibling for ' + named
-  );
-  console.log('PASS: latest.yml references', named, '+ blockmap present (', fs.statSync(arts.blockmapPath).size, 'bytes)');
+    // electron-updater appends .blockmap to the file URL — sibling file must exist
+    assert(
+      fs.existsSync(path.join(arts.dir, named + '.blockmap')) || arts.hasBlockmap,
+      'blockmap sibling for ' + named
+    );
+    console.log(
+      'PASS: latest.yml references',
+      named,
+      '+ blockmap present (',
+      fs.statSync(arts.blockmapPath).size,
+      'bytes)'
+    );
 
-  // Local generic server smoke: serve latest.yml + blockmap head
-  await new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      const u = req.url || '/';
-      if (u === '/' || u === '/latest.yml') {
-        res.writeHead(200, { 'Content-Type': 'text/yaml' });
-        res.end(latestText);
-        return;
-      }
-      if (u.endsWith('.blockmap')) {
-        res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
-        res.end(fs.readFileSync(arts.blockmapPath));
-        return;
-      }
-      if (u.includes('setup.exe') && !u.endsWith('.blockmap')) {
-        // only headers / tiny body for smoke — full e2e uses real file
-        res.writeHead(200, {
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': String(parsed.size || 1),
-        });
-        res.end(Buffer.alloc(1));
-        return;
-      }
-      res.writeHead(404);
-      res.end('no');
+    // Local generic server smoke: serve latest.yml + blockmap head
+    await new Promise((resolve, reject) => {
+      const server = http.createServer((req, res) => {
+        const u = req.url || '/';
+        if (u === '/' || u === '/latest.yml') {
+          res.writeHead(200, { 'Content-Type': 'text/yaml' });
+          res.end(latestText);
+          return;
+        }
+        if (u.endsWith('.blockmap')) {
+          res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+          res.end(fs.readFileSync(arts.blockmapPath));
+          return;
+        }
+        if (u.includes('setup.exe') && !u.endsWith('.blockmap')) {
+          // only headers / tiny body for smoke — full e2e uses real file
+          res.writeHead(200, {
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': String(parsed.size || 1),
+          });
+          res.end(Buffer.alloc(1));
+          return;
+        }
+        res.writeHead(404);
+        res.end('no');
+      });
+      server.listen(0, '127.0.0.1', async () => {
+        try {
+          const port = server.address().port;
+          const base = 'http://127.0.0.1:' + port + '/';
+          const r = await new Promise((res, rej) => {
+            http
+              .get(base + 'latest.yml', (resp) => {
+                let d = '';
+                resp.on('data', (c) => (d += c));
+                resp.on('end', () => res({ status: resp.statusCode, body: d }));
+              })
+              .on('error', rej);
+          });
+          assert(r.status === 200 && /version:/.test(r.body), 'local latest.yml served');
+          console.log('PASS: local generic update server serves latest.yml');
+          server.close();
+          resolve();
+        } catch (err) {
+          server.close();
+          reject(err);
+        }
+      });
     });
-    server.listen(0, '127.0.0.1', async () => {
-      try {
-        const port = server.address().port;
-        const base = 'http://127.0.0.1:' + port + '/';
-        const r = await new Promise((res, rej) => {
-          http
-            .get(base + 'latest.yml', (resp) => {
-              let d = '';
-              resp.on('data', (c) => (d += c));
-              resp.on('end', () => res({ status: resp.statusCode, body: d }));
-            })
-            .on('error', rej);
-        });
-        assert(r.status === 200 && /version:/.test(r.body), 'local latest.yml served');
-        console.log('PASS: local generic update server serves latest.yml');
-        server.close();
-        resolve();
-      } catch (err) {
-        server.close();
-        reject(err);
-      }
-    });
-  });
+  } else {
+    console.log('SKIP: NSIS installertest build (Windows-only)');
+    // Cheap Linux-side static checks (no AppImage build): publish config → latest-linux.yml
+    const linuxTargets = (pkg.build && pkg.build.linux && pkg.build.linux.target) || [];
+    assert(
+      linuxTargets.includes('AppImage'),
+      'linux.target must include AppImage (emits latest-linux.yml with publish)'
+    );
+    assert(
+      Array.isArray(pkg.build.publish) && pkg.build.publish.length > 0,
+      'build.publish required so electron-builder emits latest-linux.yml for AppImage'
+    );
+    assert(artsCollected.includes('latest-linux.yml'), 'collectArtifacts must pick up latest-linux.yml');
+    assert(
+      /latest-linux\\.yml/.test(shaSrc) || /latest-linux\.yml/.test(shaSrc),
+      'sha256sums includes latest-linux.yml'
+    );
+    console.log('PASS: Linux AppImage + publish → latest-linux.yml (static; collectArtifacts + sha256sums)');
+  }
 
   // Full A→B e2e (expensive): optional
   const wantE2e =
