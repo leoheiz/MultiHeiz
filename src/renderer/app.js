@@ -140,6 +140,25 @@ let syncTimer = null;
 let toastTimer = null;
 let statusTimer = null;
 let editingUrlFor = null;
+/** Coalesce status-bar DOM writes (máx. ~1/s). */
+let statusBarRaf = 0;
+let statusBarLastPaint = 0;
+const STATUS_BAR_MIN_MS = 1000;
+/** @type {Set<string>} */
+const pendingNavPaint = new Set();
+let navPaintRaf = 0;
+/**
+ * Modo legado (só medição): MULTIHEIZ_UI_LAG_LEGACY=1 no main expõe via env no check.
+ * No renderer, __mhUiLagLegacy pode ser forçado pelo selftest.
+ */
+function uiLagLegacyMode() {
+  try {
+    if (window.__mhUiLagLegacy === true) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
 
 /** @type {Set<string>} */
 const openOverlays = new Set();
@@ -2437,10 +2456,33 @@ function updateMemBadges() {
   el.btnMemTotal.textContent = typeof total === 'number' ? `${total} MB` : '— MB';
   const metric = metricName(latestMetrics);
   el.btnMemTotal.title = `Total do app: ${total} MB (${metric})\n${breakdownText(latestMetrics)}\nCPU ${latestMetrics.totalCpu}% (clique para monitor)`;
-  updateStatusBar();
+  scheduleStatusBarUpdate();
 }
 
-function updateStatusBar() {
+/** Atualiza só o texto .sidebar-meta (métricas) sem recriar a barra lateral. */
+function updateSidebarMetricsIncremental() {
+  if (!el.sidebarList || !latestMetrics) return;
+  for (const item of el.sidebarList.querySelectorAll('.sidebar-item')) {
+    const id = item.dataset.accountId;
+    if (!id) continue;
+    const acc = (state.accounts || []).find((a) => a.id === id);
+    if (!acc) continue;
+    const meta = item.querySelector('.sidebar-meta');
+    if (!meta) continue;
+    const m = panelMetrics(id);
+    const st = windowStatus(acc);
+    const stLabel =
+      st === 'ativa' ? 'ativa' : st === 'segundo' ? 'em segundo plano' : st === 'suspensa' ? 'suspensa' : 'mudo';
+    const blocked = adblockPageCounts.get(id) || 0;
+    const blockBit = blocked > 0 ? ` · blk ${blocked}` : '';
+    meta.textContent = m
+      ? `${stLabel} · ${m.ramMb ?? 0} MB · ${m.cpu ?? 0}%${blockBit}`
+      : `${stLabel}${blockBit}`;
+  }
+}
+
+function paintStatusBarNow() {
+  statusBarLastPaint = Date.now();
   if (latestMetrics) {
     el.statCpu.textContent = `CPU ${latestMetrics.totalCpu ?? 0}%`;
     el.statRam.textContent = `RAM ${latestMetrics.totalRamMb ?? 0} MB`;
@@ -2449,6 +2491,60 @@ function updateStatusBar() {
   el.statFps.textContent = focusedFps ? `FPS ${focusedFps}` : 'FPS —';
   el.statUptime.textContent = `Uptime ${formatUptime(Date.now() - appStartedAt)}`;
   el.statVersion.textContent = `v${appVersion}`;
+}
+
+function scheduleStatusBarUpdate() {
+  if (uiLagLegacyMode()) {
+    paintStatusBarNow();
+    return;
+  }
+  if (statusBarRaf) return;
+  const elapsed = Date.now() - statusBarLastPaint;
+  const delay = Math.max(0, STATUS_BAR_MIN_MS - elapsed);
+  statusBarRaf = window.setTimeout(() => {
+    statusBarRaf = 0;
+    if (document.hidden) return;
+    paintStatusBarNow();
+  }, delay);
+}
+
+function updateStatusBar() {
+  scheduleStatusBarUpdate();
+}
+
+function scheduleNavPaint(accountId) {
+  pendingNavPaint.add(accountId);
+  if (navPaintRaf) return;
+  navPaintRaf = requestAnimationFrame(() => {
+    navPaintRaf = 0;
+    const ids = [...pendingNavPaint];
+    pendingNavPaint.clear();
+    for (const id of ids) paintPanelNavIncremental(id);
+  });
+}
+
+function paintPanelNavIncremental(accountId) {
+  const payload = navState.get(accountId);
+  if (!payload) return;
+  const slot = el.grid.querySelector(`.panel-slot[data-account-id="${accountId}"]`);
+  if (!slot) return;
+  const titleEl = slot.querySelector('.panel-title');
+  const domainEl = slot.querySelector('.panel-domain');
+  if (titleEl && editingUrlFor !== accountId) {
+    titleEl.textContent = payload.title || titleEl.textContent;
+  }
+  if (domainEl && payload.domain) domainEl.textContent = payload.domain;
+  const buttons = slot.querySelectorAll('.panel-header-actions .btn.icon');
+  if (buttons[0]) buttons[0].disabled = !payload.canGoBack;
+  if (buttons[1]) buttons[1].disabled = !payload.canGoForward;
+  const muteBtn =
+    slot.querySelector('[data-role="panel-volume"]') ||
+    [...slot.querySelectorAll('.btn.icon')].find(
+      (b) => b.title === 'Mudo' || b.title === 'Volume / Mudo'
+    );
+  if (muteBtn) muteBtn.innerHTML = svg(payload.muted ? ICO.mute : ICO.unmute);
+  const loadSt = slot.querySelector('.panel-load-status');
+  if (loadSt) loadSt.classList.add('hidden');
 }
 
 /**
@@ -3994,7 +4090,11 @@ window.multiheiz.onEvent((payload) => {
   if (payload.type === 'memory:metrics' && payload.metrics) {
     latestMetrics = payload.metrics;
     updateMemBadges();
-    renderSidebar();
+    if (uiLagLegacyMode()) {
+      renderSidebar();
+    } else {
+      updateSidebarMetricsIncremental();
+    }
     // Same event the chrome used for badges — keep overlay values live while open.
     refreshMemPopoverUi();
     return;
@@ -4161,15 +4261,25 @@ window.multiheiz.onEvent((payload) => {
 
   if (payload.type === 'panel:favicon') {
     if (payload.favicon) favicons.set(payload.accountId, payload.favicon);
-    const imgs = document.querySelectorAll(
-      `.panel-fav, .sidebar-fav`
-    );
-    /* refresh sidebar/panel favicons lightly */
-    renderSidebar();
-    const slotFav = el.grid.querySelector(
-      `.panel-slot[data-account-id="${payload.accountId}"] .panel-fav`
-    );
-    if (slotFav && payload.favicon) slotFav.src = payload.favicon;
+    if (uiLagLegacyMode()) {
+      renderSidebar();
+    } else {
+      const id = payload.accountId;
+      const favUrl = payload.favicon || '';
+      if (favUrl) {
+        const sideFav = el.sidebarList
+          ? el.sidebarList.querySelector(`.sidebar-item[data-account-id="${id}"] .sidebar-fav`)
+          : null;
+        if (sideFav) {
+          sideFav.src = favUrl;
+          sideFav.style.opacity = '';
+        }
+        const slotFav = el.grid.querySelector(
+          `.panel-slot[data-account-id="${id}"] .panel-fav`
+        );
+        if (slotFav) slotFav.src = favUrl;
+      }
+    }
     return;
   }
   if (payload.type === 'panel:unread' && payload.accountId) {
@@ -4178,13 +4288,19 @@ window.multiheiz.onEvent((payload) => {
     const dot = !count && !!payload.dot;
     if (!count && !dot) unreadByAccount.delete(payload.accountId);
     else unreadByAccount.set(payload.accountId, { count, dot });
-    renderSidebar();
+    // Badge muda estrutura — re-render só deste item via sidebar completa é caro;
+    // para unread usamos renderSidebar throttled via rAF idle-ish.
+    if (uiLagLegacyMode()) {
+      renderSidebar();
+    } else {
+      scheduleSidebarUnreadPaint();
+    }
     return;
   }
   if (payload.type === 'panel:fps') {
     if (payload.accountId === focusedAccountId) {
       focusedFps = payload.fps | 0;
-      updateStatusBar();
+      scheduleStatusBarUpdate();
     }
     return;
   }
@@ -4220,25 +4336,10 @@ window.multiheiz.onEvent((payload) => {
       canGoForward: !!payload.canGoForward,
       muted: !!payload.muted,
     });
-    const slot = el.grid.querySelector(`.panel-slot[data-account-id="${payload.accountId}"]`);
-    if (slot) {
-      const titleEl = slot.querySelector('.panel-title');
-      const domainEl = slot.querySelector('.panel-domain');
-      if (titleEl && editingUrlFor !== payload.accountId) {
-        titleEl.textContent = payload.title || titleEl.textContent;
-      }
-      if (domainEl && payload.domain) domainEl.textContent = payload.domain;
-      const buttons = slot.querySelectorAll('.panel-header-actions .btn.icon');
-      if (buttons[0]) buttons[0].disabled = !payload.canGoBack;
-      if (buttons[1]) buttons[1].disabled = !payload.canGoForward;
-      const muteBtn =
-        slot.querySelector('[data-role="panel-volume"]') ||
-        [...slot.querySelectorAll('.btn.icon')].find(
-          (b) => b.title === 'Mudo' || b.title === 'Volume / Mudo'
-        );
-      if (muteBtn) muteBtn.innerHTML = svg(payload.muted ? ICO.mute : ICO.unmute);
-      const loadSt = slot.querySelector('.panel-load-status');
-      if (loadSt) loadSt.classList.add('hidden');
+    if (uiLagLegacyMode()) {
+      paintPanelNavIncremental(payload.accountId);
+    } else {
+      scheduleNavPaint(payload.accountId);
     }
     if (volumePopover && volumePopover.accountId === payload.accountId) refreshVolumePopoverUi();
   }
@@ -4275,12 +4376,22 @@ function statusBarShouldRun() {
 
 function tickStatusBar() {
   if (document.hidden) return;
-  updateStatusBar();
+  scheduleStatusBarUpdate();
+}
+
+/** Unread badge: no máx. 1 re-render de sidebar por frame de animação. */
+let unreadSidebarRaf = 0;
+function scheduleSidebarUnreadPaint() {
+  if (unreadSidebarRaf) return;
+  unreadSidebarRaf = requestAnimationFrame(() => {
+    unreadSidebarRaf = 0;
+    renderSidebar();
+  });
 }
 
 statusTimer = setInterval(tickStatusBar, 2000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) updateStatusBar();
+  if (!document.hidden) scheduleStatusBarUpdate();
 });
 void statusBarShouldRun;
 

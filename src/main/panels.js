@@ -141,6 +141,11 @@ let mutationLogEnabled = false;
 /** @type {Map<string, number>} */
 const panelFps = new Map();
 
+/** Coalesce panel:nav emits (title/SPA in-page) — evita inundar o renderer da UI. */
+/** @type {Map<string, ReturnType<typeof setTimeout>>} */
+const navNotifyTimers = new Map();
+const NAV_NOTIFY_THROTTLE_MS = 250;
+
 /** Staggered create/load queue (workspace switch / startup). */
 /** @type {string[]} */
 let loadQueue = [];
@@ -1158,7 +1163,7 @@ function createPanel(accountId) {
     rememberUrl(accountId, url);
     recordHistory(accountId, url);
     touchAccount(accountId);
-    notifyNav(accountId);
+    notifyNav(accountId, { immediate: true });
     try {
       let title = '';
       try {
@@ -1199,7 +1204,7 @@ function createPanel(accountId) {
     }
   });
   view.webContents.on('did-finish-load', () => {
-    notifyNav(accountId);
+    notifyNav(accountId, { immediate: true });
     signalLoadCommitted(accountId);
     try {
       const u = view.webContents.getURL();
@@ -1548,7 +1553,32 @@ function goForward(wc) {
   }
 }
 
-function notifyNav(accountId) {
+/**
+ * @param {string} accountId
+ * @param {{ immediate?: boolean }} [opts] immediate=true em did-navigate / finish-load
+ */
+function notifyNav(accountId, opts = {}) {
+  const immediate = !!(opts && opts.immediate);
+  if (!immediate) {
+    if (navNotifyTimers.has(accountId)) return;
+    navNotifyTimers.set(
+      accountId,
+      setTimeout(() => {
+        navNotifyTimers.delete(accountId);
+        notifyNavNow(accountId);
+      }, NAV_NOTIFY_THROTTLE_MS)
+    );
+    return;
+  }
+  const pending = navNotifyTimers.get(accountId);
+  if (pending) {
+    clearTimeout(pending);
+    navNotifyTimers.delete(accountId);
+  }
+  notifyNavNow(accountId);
+}
+
+function notifyNavNow(accountId) {
   const entry = panels.get(accountId);
   if (!entry) return;
   const wc = entry.view.webContents;

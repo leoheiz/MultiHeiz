@@ -1295,23 +1295,32 @@ try {
   /* ignore */
 }
 
-let frames = 0;
-let lastReport = Date.now();
-
-function tick() {
-  frames += 1;
-  const now = Date.now();
-  if (now - lastReport >= 1000) {
-    const fps = Math.round((frames * 1000) / (now - lastReport));
-    frames = 0;
-    lastReport = now;
-    try {
-      ipcRenderer.send('panel:fps', { fps });
-    } catch {
-      /* ignore */
+// Sonda FPS (rAF contínuo): só sob MULTIHEIZ_SELFTEST / MULTIHEIZ_PROFILE.
+// Em uso normal engolia o thread do painel e gerava IPC ~1/s → status bar na UI.
+(function startFpsProbeIfProfiling() {
+  let enabled = false;
+  try {
+    enabled = !!(process.env.MULTIHEIZ_SELFTEST || process.env.MULTIHEIZ_PROFILE);
+  } catch {
+    enabled = false;
+  }
+  if (!enabled) return;
+  let frames = 0;
+  let lastReport = Date.now();
+  function tick() {
+    frames += 1;
+    const now = Date.now();
+    if (now - lastReport >= 1000) {
+      const fps = Math.round((frames * 1000) / (now - lastReport));
+      frames = 0;
+      lastReport = now;
+      try {
+        ipcRenderer.send('panel:fps', { fps });
+      } catch {
+        /* ignore */
+      }
     }
+    requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
-}
-
-requestAnimationFrame(tick);
+})();

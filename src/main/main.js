@@ -233,6 +233,7 @@ const SELFTEST_PERMISSIONS = selftestMode === 'permissions';
 const SELFTEST_CATALOG = selftestMode === 'catalog';
 const SELFTEST_CUSTOM_SITE = selftestMode === 'custom-site';
 const SELFTEST_EDIT_START_URL = selftestMode === 'edit-start-url';
+const SELFTEST_UI_INPUT_LAG = selftestMode === 'ui-input-lag';
 const SELFTEST_SHOTS_TOOLS = selftestMode === 'shots-tools';
 const SELFTEST_NOTES = selftestMode === 'notes';
 const SELFTEST_REMINDERS = selftestMode === 'reminders';
@@ -288,6 +289,7 @@ const ANY_SELFTEST =
   SELFTEST_CATALOG ||
   SELFTEST_CUSTOM_SITE ||
   SELFTEST_EDIT_START_URL ||
+  SELFTEST_UI_INPUT_LAG ||
   SELFTEST_SHOTS_TOOLS ||
   SELFTEST_SHOTS_SIDEBAR2 ||
   SELFTEST_NOTES ||
@@ -316,7 +318,13 @@ if (SELFTEST_PERMISSIONS) {
 }
 
 // Volume selftest: permite tom/Oscillator sem gesto do usuário.
-if (SELFTEST_VOLUME || SELFTEST_LAG_AUDIT || SELFTEST_POPOVER_OVERLAY || SELFTEST_POPOVER_ACTIONS) {
+if (
+  SELFTEST_VOLUME ||
+  SELFTEST_LAG_AUDIT ||
+  SELFTEST_UI_INPUT_LAG ||
+  SELFTEST_POPOVER_OVERLAY ||
+  SELFTEST_POPOVER_ACTIONS
+) {
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 }
 
@@ -623,6 +631,7 @@ function createWindow() {
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
     SELFTEST_EDIT_START_URL ||
+    SELFTEST_UI_INPUT_LAG ||
     SELFTEST_SHOTS_TOOLS ||
     SELFTEST_SHOTS_SIDEBAR2 ||
     SELFTEST_NOTES ||
@@ -654,6 +663,7 @@ function createWindow() {
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
     SELFTEST_EDIT_START_URL ||
+    SELFTEST_UI_INPUT_LAG ||
     SELFTEST_SHOTS_TOOLS ||
     SELFTEST_SHOTS_SIDEBAR2 ||
     SELFTEST_NOTES ||
@@ -729,6 +739,7 @@ function createWindow() {
       SELFTEST_CATALOG ||
       SELFTEST_CUSTOM_SITE ||
       SELFTEST_EDIT_START_URL ||
+      SELFTEST_UI_INPUT_LAG ||
       SELFTEST_SHOTS_SIDEBAR2 ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
@@ -1738,6 +1749,30 @@ function createWindow() {
         try {
           const { runEditStartUrlSelftest } = require('./selftest-edit-start-url');
           runEditStartUrlSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_UI_INPUT_LAG) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runUiInputLagSelftest } = require('./selftest-ui-input-lag');
+          runUiInputLagSelftest({
             mainWindow,
             panels,
             getState,
