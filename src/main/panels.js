@@ -629,7 +629,15 @@ function chromeUserAgent() {
 }
 
 function isOauthOrLoginUrl(url) {
-  return isKnownIdentityProviderUrl(url);
+  if (isKnownIdentityProviderUrl(url)) return true;
+  // Selftest: mock GIS/OAuth em http://127.0.0.1/…/mock-accounts/… (nunca em produção).
+  if (
+    process.env.MULTIHEIZ_SELFTEST &&
+    /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/mock-accounts\//i.test(String(url || ''))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**

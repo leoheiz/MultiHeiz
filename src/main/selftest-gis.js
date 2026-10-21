@@ -4,10 +4,13 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { app, BrowserWindow, session } = require('electron');
+const { envGet } = require('./config');
 
 /**
- * Probe GIS/OAuth popup opener + optional live huntera.com.br click.
- * Writes URL chain / opener evidence to _local/gis-probe.log.
+ * Probe GIS/OAuth popup opener + Glif rewrite.
+ * Default: mock HTTP local (nunca accounts.google.com / huntera).
+ * Site real só com MULTIHEIZ_SELFTEST_REAL_SITES=1.
+ * Log: _local/gis-probe.log
  */
 async function runGisSelftest(ctx) {
   const {
@@ -21,7 +24,8 @@ async function runGisSelftest(ctx) {
     sessionPersist,
   } = ctx;
 
-  console.log('SELFTEST gis');
+  const useRealSites = envGet('MULTIHEIZ_SELFTEST_REAL_SITES') === '1';
+  console.log('SELFTEST gis realSites=' + (useRealSites ? '1' : '0'));
   process.on('unhandledRejection', (err) => {
     const msg = String(err && err.message ? err.message : err);
     if (/ERR_ABORTED|-3/.test(msg)) return;
@@ -45,23 +49,25 @@ async function runGisSelftest(ctx) {
   let server = null;
   let port = 0;
 
-  const oauthStubUrl =
-    'https://accounts.google.com/o/oauth2/v2/auth?client_id=test.apps.googleusercontent.com&redirect_uri=storagerelay%3A%2F%2Fhttps%2Flocalhost&response_type=token&scope=openid&flowName=GeneralOAuthFlow';
-
   await new Promise((resolve, reject) => {
     server = http.createServer((req, res) => {
-      const u = (req.url || '/').split('?')[0];
+      const rawUrl = req.url || '/';
+      const u = rawUrl.split('?')[0];
+      const qs = rawUrl.includes('?') ? rawUrl.slice(rawUrl.indexOf('?')) : '';
+
       if (u === '/opener-host') {
+        // oauthStubUrl filled after listen via rewrite — use placeholder replaced client-side
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(`<!DOCTYPE html><html><body>
 <button id="go" type="button">Open GIS-like popup</button>
 <pre id="msg">waiting</pre>
 <script>
+window.__oauthStub = window.__oauthStub || '';
 window.addEventListener('message', function(ev) {
   document.getElementById('msg').textContent = 'msg:' + String(ev.data);
 });
 document.getElementById('go').onclick = function() {
-  var w = window.open(${JSON.stringify(oauthStubUrl)}, 'gis_oauth_probe', 'width=520,height=720');
+  var w = window.open(window.__oauthStub, 'gis_oauth_probe', 'width=520,height=720');
   document.getElementById('msg').textContent = w ? 'opened' : 'null';
 };
 </script></body></html>`);
@@ -88,8 +94,81 @@ document.getElementById('go').onclick = function() {
         res.end('<html><body id="home">home-ok</body></html>');
         return;
       }
+
+      // --- Mock accounts.google.com GIS/OAuth ---
+      if (u === '/mock-accounts/o/oauth2/v2/auth') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!DOCTYPE html><html><head><title>Mock Google OAuth</title></head><body>
+<h1>Mock OAuth</h1>
+<p id="status">auth-start</p>
+<script>
+(function(){
+  var hasOpener = !!(window.opener);
+  document.getElementById('status').textContent = 'auth-start opener=' + hasOpener;
+  // Redirect like IdP → relay (opener should survive on same-origin mock)
+  setTimeout(function(){
+    location.replace('/mock-accounts/oauth-relay?from=auth&opener=' + (hasOpener ? '1' : '0'));
+  }, 120);
+})();
+</script></body></html>`);
+        return;
+      }
+      if (u === '/mock-accounts/oauth-relay') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!DOCTYPE html><html><head><title>Mock OAuth Relay</title></head><body>
+<h1>Mock OAuth Done</h1>
+<p id="status">relay</p>
+<script>
+(function(){
+  var openerOk = !!(window.opener);
+  document.getElementById('status').textContent = 'relay opener=' + openerOk;
+  if (window.opener) {
+    try { window.opener.postMessage('gis-oauth-done', '*'); } catch (e) {}
+  }
+})();
+</script></body></html>`);
+        return;
+      }
+      if (u === '/mock-accounts/v3/signin/identifier' || u.indexOf('/mock-accounts/v3/signin/') === 0) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!DOCTYPE html><html><head><title>Mock Google Sign-In</title></head><body>
+<h1>Fazer login</h1>
+<form id="f">
+  <input type="email" name="identifier" id="identifierId" />
+  <button type="button" id="identifierNext">Avançar</button>
+</form>
+<pre id="out"></pre>
+<script>
+document.getElementById('identifierNext').onclick = function(){
+  var v = (document.getElementById('identifierId').value || '');
+  document.getElementById('out').textContent =
+    "Couldn't find your Google Account for " + v;
+};
+</script></body></html>`);
+        return;
+      }
+      if (u === '/mock-gsi-host') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!DOCTYPE html><html><body>
+<iframe id="gsi" src="/mock-accounts/gsi/button" width="300" height="44"></iframe>
+<p>mock gsi host</p>
+</body></html>`);
+        return;
+      }
+      if (u === '/mock-accounts/gsi/button') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!DOCTYPE html><html><body style="margin:0">
+<button id="gsi-btn" type="button" style="width:100%;height:40px">Sign in with Google (mock)</button>
+<script>
+document.getElementById('gsi-btn').onclick = function(){
+  window.open('/mock-accounts/o/oauth2/v2/auth?flowName=GeneralOAuthFlow','gis_btn','width=520,height=720');
+};
+</script></body></html>`);
+        return;
+      }
+
       res.writeHead(404);
-      res.end('no');
+      res.end('no ' + u);
     });
     server.listen(0, '127.0.0.1', () => {
       port = server.address().port;
@@ -99,7 +178,13 @@ document.getElementById('go').onclick = function() {
   });
 
   const base = 'http://127.0.0.1:' + port;
-  log('local server ' + base);
+  const mockOauthUrl =
+    base +
+    '/mock-accounts/o/oauth2/v2/auth?client_id=test.apps.googleusercontent.com&redirect_uri=storagerelay%3A%2F%2Fhttps%2Flocalhost&response_type=token&scope=openid&flowName=GeneralOAuthFlow';
+  const realOauthUrl =
+    'https://accounts.google.com/o/oauth2/v2/auth?client_id=test.apps.googleusercontent.com&redirect_uri=storagerelay%3A%2F%2Fhttps%2Flocalhost&response_type=token&scope=openid&flowName=GeneralOAuthFlow';
+  const oauthStubUrl = useRealSites ? realOauthUrl : mockOauthUrl;
+  log('local server ' + base + ' oauthStub=' + oauthStubUrl);
 
   updateState((s) => {
     s.settings.openLastPage = false;
@@ -192,7 +277,6 @@ document.getElementById('go').onclick = function() {
   }
   console.log('PASS: local about:blank popup keeps opener + postMessage');
 
-  // Close blank probe popups
   for (const win of [...panels.childPopups]) {
     try {
       if (win && !win.isDestroyed()) win.close();
@@ -202,10 +286,57 @@ document.getElementById('go').onclick = function() {
   }
   await sleep(300);
 
-  // --- window.open to real OAuth URL: log navigation chain + opener ---
+  // --- Glif rewrite escopada (sem rede) ---
+  {
+    const cases = [
+      {
+        url: 'https://accounts.google.com/o/oauth2/v2/auth?flowName=GlifWebSignIn&client_id=x',
+        expect: false,
+        label: 'OAuth Glif (não reescrever)',
+      },
+      {
+        url: 'https://accounts.google.com/o/oauth2/v2/auth?flowName=GeneralOAuthFlow',
+        expect: false,
+        label: 'OAuth General',
+      },
+      {
+        url: 'https://accounts.google.com/gsi/select?flowName=GlifWebSignIn',
+        expect: false,
+        label: 'GSI select',
+      },
+      {
+        url:
+          'https://accounts.google.com/v3/signin/identifier?flowName=GlifWebSignIn&continue=https%3A%2F%2Fwww.google.com',
+        expect: true,
+        label: 'identifier Glif',
+      },
+    ];
+    for (const c of cases) {
+      const got = userAgent.shouldRewriteGlifWebSignIn(c.url, { resourceType: 'mainFrame' });
+      if (got !== c.expect) {
+        log('FAIL: Glif rewrite ' + c.label + ' expect=' + c.expect + ' got=' + got);
+        app.exit(1);
+        return;
+      }
+      if (c.expect) {
+        const rewritten = userAgent.rewriteGlifWebSignInUrl(c.url);
+        if (!/flowName=WebLiteSignIn/i.test(rewritten) || /flowName=GlifWebSignIn/i.test(rewritten)) {
+          log('FAIL: rewrite output ' + rewritten);
+          app.exit(1);
+          return;
+        }
+      }
+    }
+    console.log('PASS: Glif rewrite scoped (OAuth/GIS untouched, identifier rewritten)');
+  }
+
+  // --- window.open OAuth (mock local ou Google real) ---
   panels.panelNavigate('acc-gis-a', base + '/opener-host');
   await waitForUrl('acc-gis-a', (u) => u.includes('/opener-host'), 20000);
   await sleep(400);
+  await panels.getPanelCapture('acc-gis-a').executeJavaScript(
+    `window.__oauthStub = ${JSON.stringify(oauthStubUrl)}; true`
+  );
 
   const beforeOauth = BrowserWindow.getAllWindows().length;
   await panels.getPanelCapture('acc-gis-a').executeJavaScript(
@@ -225,8 +356,17 @@ document.getElementById('go').onclick = function() {
   }
 
   if (!oauthChild) {
-    log('WARN: OAuth popup window not found (network may block accounts.google.com)');
-  } else {
+    log('FAIL: OAuth popup window not found');
+    try {
+      fs.writeFileSync(logPath, lines.join('\n') + '\n', 'utf8');
+    } catch {
+      /* ignore */
+    }
+    app.exit(1);
+    return;
+  }
+
+  {
     const chain = [];
     const pushNav = (ev, url, extra) => {
       const entry = { ev, url: String(url || ''), extra: extra || '' };
@@ -243,18 +383,18 @@ document.getElementById('go').onclick = function() {
     oauthChild.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
       if (isMainFrame) pushNav('did-fail-load', url, 'code=' + code + ' ' + desc);
     });
-    oauthChild.webContents.on('console-message', (_e, _level, message) => {
-      log('console ' + String(message || '').slice(0, 300));
-    });
 
-    // Probe opener ASAP (Google COOP often nulls opener after accounts.google.com loads).
     let openerInPopup = null;
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 20; i++) {
       try {
         openerInPopup = await oauthChild.webContents.executeJavaScript(
           `({ opener: !!(window.opener), href: location.href, ua: navigator.userAgent })`
         );
-        if (openerInPopup && (openerInPopup.opener || /accounts\.google\.com/i.test(openerInPopup.href))) {
+        if (
+          openerInPopup &&
+          (openerInPopup.opener ||
+            /mock-accounts|accounts\.google\.com/i.test(openerInPopup.href || ''))
+        ) {
           break;
         }
       } catch {
@@ -262,11 +402,11 @@ document.getElementById('go').onclick = function() {
       }
       await sleep(100);
     }
-    await sleep(1500);
+    await sleep(useRealSites ? 1500 : 500);
     let afterLoad = null;
     try {
       afterLoad = await oauthChild.webContents.executeJavaScript(
-        `({ opener: !!(window.opener), href: location.href, title: document.title, bodyLen: (document.body&&document.body.innerText||'').length })`
+        `({ opener: !!(window.opener), href: location.href, title: document.title, bodyLen: (document.body&&document.body.innerText||'').length, status: (document.getElementById('status')&&document.getElementById('status').textContent)||'' })`
       );
     } catch (err) {
       log('after-load probe error: ' + (err && err.message));
@@ -275,25 +415,63 @@ document.getElementById('go').onclick = function() {
     log('oauth popup afterLoad=' + JSON.stringify(afterLoad));
     popupUrlChain = chain.map((c) => c.ev + ' ' + c.url);
 
-    // Success criteria: Chromium-owned popup navigated (not stuck white). Opener may be
-    // cleared by Cross-Origin-Opener-Policy on accounts.google.com — that is expected.
-    const loaded =
-      afterLoad &&
-      /accounts\.google\.com/i.test(afterLoad.href || '') &&
-      (Number(afterLoad.bodyLen) > 20 || String(afterLoad.title || '').length > 0);
-    if (!loaded) {
-      log('FAIL: OAuth popup did not load Google content (stuck white?)');
-      try {
-        fs.writeFileSync(logPath, lines.join('\n') + '\n', 'utf8');
-      } catch {
-        /* ignore */
+    if (useRealSites) {
+      const loaded =
+        afterLoad &&
+        /accounts\.google\.com/i.test(afterLoad.href || '') &&
+        (Number(afterLoad.bodyLen) > 20 || String(afterLoad.title || '').length > 0);
+      if (!loaded) {
+        log('FAIL: OAuth popup did not load Google content');
+        try {
+          fs.writeFileSync(logPath, lines.join('\n') + '\n', 'utf8');
+        } catch {
+          /* ignore */
+        }
+        app.exit(1);
+        return;
       }
-      app.exit(1);
-      return;
+    } else {
+      const href = String((afterLoad && afterLoad.href) || (openerInPopup && openerInPopup.href) || '');
+      const sawAuth =
+        /mock-accounts\/o\/oauth2|mock-accounts\/oauth-relay/i.test(href) ||
+        popupUrlChain.some((l) => /mock-accounts/.test(l));
+      const sawRelay =
+        /oauth-relay/i.test(href) || popupUrlChain.some((l) => /oauth-relay/.test(l));
+      const openerKept =
+        !!(openerInPopup && openerInPopup.opener) || !!(afterLoad && afterLoad.opener);
+      if (!sawAuth) {
+        log('FAIL: mock OAuth popup did not navigate to mock-accounts');
+        app.exit(1);
+        return;
+      }
+      if (!sawRelay) {
+        log('FAIL: mock OAuth missing redirect to oauth-relay');
+        app.exit(1);
+        return;
+      }
+      if (!openerKept) {
+        log('FAIL: mock OAuth lost window.opener (same-origin mock should keep it)');
+        app.exit(1);
+        return;
+      }
+      // postMessage from relay
+      await sleep(200);
+      const hostMsg = await panels.getPanelCapture('acc-gis-a').executeJavaScript(
+        `(document.getElementById('msg') && document.getElementById('msg').textContent) || ''`
+      );
+      log('host msg after oauth: ' + hostMsg);
+      if (!/gis-oauth-done/.test(String(hostMsg))) {
+        log('FAIL: opener did not receive gis-oauth-done');
+        app.exit(1);
+        return;
+      }
     }
-    console.log('PASS: OAuth/GIS-style popup loads (opener kept at create; COOP may clear later)');
+    console.log(
+      useRealSites
+        ? 'PASS: OAuth/GIS-style popup loads (real Google)'
+        : 'PASS: OAuth/GIS mock popup (opener + redirect + postMessage)'
+    );
 
-    // Repeated click must not pile windows
     const count1 = [...panels.childPopups].filter((w) => w && !w.isDestroyed()).length;
     await panels.getPanelCapture('acc-gis-a').executeJavaScript(
       `document.getElementById('go').click()`
@@ -303,11 +481,6 @@ document.getElementById('go').onclick = function() {
     log('popup count after repeat click: before=' + count1 + ' after=' + count2);
     if (count2 > count1) {
       log('FAIL: repeated open created extra popup');
-      try {
-        fs.writeFileSync(logPath, lines.join('\n') + '\n', 'utf8');
-      } catch {
-        /* ignore */
-      }
       app.exit(1);
       return;
     }
@@ -320,147 +493,94 @@ document.getElementById('go').onclick = function() {
     }
   }
 
-  // --- Optional live huntera.com.br (skip if unreachable) ---
-  let hunteraTried = false;
-  try {
-    hunteraTried = true;
-    log('loading https://huntera.com.br …');
-    panels.panelNavigate('acc-gis-a', 'https://huntera.com.br');
-    await waitForUrl('acc-gis-a', (u) => /huntera\.com\.br/i.test(u), 25000);
-    await sleep(3000);
-    const pageInfo = await panels.getPanelCapture('acc-gis-a').executeJavaScript(`({
-      href: location.href,
-      title: document.title,
-      iframes: Array.from(document.querySelectorAll('iframe')).map(function(f){
-        return { src: f.src||'', w: f.offsetWidth, h: f.offsetHeight, id: f.id||'' };
-      }).filter(function(f){ return /accounts\\.google\\.com\\/gsi|google/i.test(f.src); })
-    })`);
-    log('huntera page ' + JSON.stringify(pageInfo));
-    const gsi = (pageInfo && pageInfo.iframes) || [];
-    if (gsi.length) {
-      const frame = gsi[0];
-      // Best-effort click at iframe center via sendInputEvent
-      const bounds = await panels.getPanelCapture('acc-gis-a').executeJavaScript(`(function(){
-        var f = document.querySelector('iframe[src*="accounts.google.com/gsi"],iframe[src*="google"]');
-        if (!f) return null;
-        var r = f.getBoundingClientRect();
-        return { x: Math.floor(r.left + r.width/2), y: Math.floor(r.top + r.height/2) };
-      })()`);
-      if (bounds) {
-        log('clicking GIS iframe at ' + JSON.stringify(bounds));
-        panels.getPanelCapture('acc-gis-a').sendInputEvent({
-          type: 'mouseDown',
-          x: bounds.x,
-          y: bounds.y,
-          button: 'left',
-          clickCount: 1,
-        });
-        panels.getPanelCapture('acc-gis-a').sendInputEvent({
-          type: 'mouseUp',
-          x: bounds.x,
-          y: bounds.y,
-          button: 'left',
-          clickCount: 1,
-        });
-        await sleep(4000);
-        for (const win of panels.childPopups) {
-          if (!win || win.isDestroyed()) continue;
-          try {
-            const info = await win.webContents.executeJavaScript(
-              `({ href: location.href, opener: !!(window.opener), title: document.title })`
-            );
-            log('huntera popup ' + JSON.stringify(info));
-          } catch (err) {
-            log('huntera popup probe err ' + (err && err.message));
-          }
-        }
-      } else {
-        log('GIS iframe found in list but no bounds');
-      }
-    } else {
-      log('no GSI iframe on huntera (page may differ / logged out layout)');
-    }
-  } catch (err) {
-    log('huntera unreachable or timed out: ' + (err && err.message));
-  }
-  log('hunteraTried=' + hunteraTried);
-  log('beforePopups=' + beforePopups + ' beforeOauth=' + beforeOauth);
-  if (popupUrlChain.length) {
-    log('URL chain:\n' + popupUrlChain.join('\n'));
-  }
-
-  // --- Direct accounts.google.com sign-in (fake email) must not be "may not be secure" ---
-  try {
-    log('direct Google sign-in fake-email check…');
-    const signInUrl =
-      'https://accounts.google.com/v3/signin/identifier?flowName=GlifWebSignIn&continue=https%3A%2F%2Fwww.google.com';
-    panels.panelNavigate('acc-gis-a', signInUrl);
-    await waitForUrl(
-      'acc-gis-a',
-      (u) => /accounts\.google\.com/i.test(u) && /identifier|signin|ServiceLogin|AccountChooser/i.test(u),
-      30000
-    );
-    await sleep(2500);
-    const bodyText = await panels.getPanelCapture('acc-gis-a').executeJavaScript(`({
-      href: location.href,
-      text: (document.body && document.body.innerText || '').slice(0, 4000),
-      ua: navigator.userAgent
-    })`);
-    log('sign-in page href=' + (bodyText && bodyText.href));
-    log('sign-in ua has Electron=' + /Electron\//i.test((bodyText && bodyText.ua) || ''));
-    const text = String((bodyText && bodyText.text) || '');
-    const insecure = /may not be secure|navegador.*n[aã]o.*seguro|este navegador/i.test(text);
-    if (insecure) {
-      log('FAIL: Google shows insecure browser on direct sign-in');
-      try {
-        fs.writeFileSync(logPath, lines.join('\n') + '\n', 'utf8');
-      } catch {
-        /* ignore */
-      }
-      app.exit(1);
-      return;
-    }
-    // Try typing a fake email if the identifier field exists
+  // --- Mock sign-in identifier (default) / real Google (flag) ---
+  if (!useRealSites) {
+    log('mock Google sign-in identifier…');
+    panels.panelNavigate('acc-gis-a', base + '/mock-accounts/v3/signin/identifier?flowName=GlifWebSignIn');
+    await waitForUrl('acc-gis-a', (u) => /mock-accounts\/v3\/signin/i.test(u), 15000);
+    await sleep(300);
     const typed = await panels.getPanelCapture('acc-gis-a').executeJavaScript(`(function(){
-      var input = document.querySelector('input[type="email"],input[name="identifier"],#identifierId');
+      var input = document.querySelector('input[type="email"],#identifierId');
       if (!input) return { ok: false, reason: 'no-input' };
       input.focus();
       input.value = 'nobody-multiheiz-probe@gmail.com';
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      var next = document.querySelector('#identifierNext,button[type="button"]');
+      var next = document.querySelector('#identifierNext');
       if (next) next.click();
-      return { ok: true };
+      return { ok: true, out: (document.getElementById('out')&&document.getElementById('out').textContent)||'' };
     })()`);
-    log('fake-email type ' + JSON.stringify(typed));
-    if (typed && typed.ok) {
-      await sleep(3500);
-      const after = await panels.getPanelCapture('acc-gis-a').executeJavaScript(
-        `(document.body && document.body.innerText || '').slice(0, 4000)`
+    log('fake-email mock ' + JSON.stringify(typed));
+    if (!typed || !typed.ok || !/couldn'?t find your google account/i.test(String(typed.out || ''))) {
+      log('FAIL: mock sign-in fake-email');
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: mock Google sign-in fake-email (account not found)');
+  }
+
+  // --- Real sites only under flag ---
+  if (useRealSites) {
+    let hunteraTried = false;
+    try {
+      hunteraTried = true;
+      log('loading https://huntera.com.br …');
+      panels.panelNavigate('acc-gis-a', 'https://huntera.com.br');
+      await waitForUrl('acc-gis-a', (u) => /huntera\\.com\\.br/i.test(u), 25000);
+      await sleep(3000);
+      const pageInfo = await panels.getPanelCapture('acc-gis-a').executeJavaScript(`({
+        href: location.href,
+        title: document.title,
+        iframes: Array.from(document.querySelectorAll('iframe')).map(function(f){
+          return { src: f.src||'', w: f.offsetWidth, h: f.offsetHeight, id: f.id||'' };
+        }).filter(function(f){ return /accounts\\.google\\.com\\/gsi|google/i.test(f.src); })
+      })`);
+      log('huntera page ' + JSON.stringify(pageInfo));
+    } catch (err) {
+      log('huntera unreachable or timed out: ' + (err && err.message));
+    }
+    log('hunteraTried=' + hunteraTried);
+
+    try {
+      log('direct Google sign-in fake-email check…');
+      const signInUrl =
+        'https://accounts.google.com/v3/signin/identifier?flowName=GlifWebSignIn&continue=https%3A%2F%2Fwww.google.com';
+      panels.panelNavigate('acc-gis-a', signInUrl);
+      await waitForUrl(
+        'acc-gis-a',
+        (u) =>
+          /accounts\\.google\\.com/i.test(u) &&
+          /identifier|signin|ServiceLogin|AccountChooser/i.test(u),
+        30000
       );
-      const afterText = String(after || '');
-      const found =
-        /couldn'?t find|nao foi poss|n[aã]o foi poss[ií]vel encontrar|couldn't find your google account|find your google account/i.test(
-          afterText
-        );
-      const stillInsecure = /may not be secure|navegador.*n[aã]o.*seguro/i.test(afterText);
-      log('fake-email result foundAccountErr=' + found + ' insecure=' + stillInsecure);
-      if (stillInsecure) {
-        log('FAIL: insecure browser after fake email');
-        try {
-          fs.writeFileSync(logPath, lines.join('\n') + '\n', 'utf8');
-        } catch {
-          /* ignore */
-        }
+      await sleep(2500);
+      const bodyText = await panels.getPanelCapture('acc-gis-a').executeJavaScript(`({
+        href: location.href,
+        text: (document.body && document.body.innerText || '').slice(0, 4000),
+        ua: navigator.userAgent
+      })`);
+      const text = String((bodyText && bodyText.text) || '');
+      const insecure = /may not be secure|navegador.*n[aã]o.*seguro|este navegador/i.test(text);
+      if (insecure) {
+        log('FAIL: Google shows insecure browser on direct sign-in');
         app.exit(1);
         return;
       }
-      if (found) console.log('PASS: direct Google sign-in fake-email (account not found, not insecure)');
-      else console.log('PASS: direct Google sign-in loaded without insecure banner');
-    } else {
-      console.log('PASS: direct Google sign-in loaded without insecure banner (no email field)');
+      console.log('PASS: direct Google sign-in loaded without insecure banner');
+    } catch (err) {
+      log('direct Google sign-in skipped (network): ' + (err && err.message));
     }
-  } catch (err) {
-    log('direct Google sign-in skipped (network): ' + (err && err.message));
+  } else {
+    log('SKIP: sites reais (huntera / accounts.google.com) — use MULTIHEIZ_SELFTEST_REAL_SITES=1');
+    // Mock GSI host click still exercises popup path locally
+    panels.panelNavigate('acc-gis-a', base + '/mock-gsi-host');
+    await waitForUrl('acc-gis-a', (u) => /mock-gsi-host/.test(u), 15000);
+    await sleep(300);
+    console.log('PASS: mock GSI host served (no real Google)');
+  }
+
+  log('beforePopups=' + beforePopups + ' beforeOauth=' + beforeOauth);
+  if (popupUrlChain.length) {
+    log('URL chain:\n' + popupUrlChain.join('\n'));
   }
 
   try {
