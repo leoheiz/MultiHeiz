@@ -142,7 +142,14 @@ if ($machine.Count -gt 0 -and -not $AllUsers) {
 }
 
 $release = Get-ReleaseJson
-$tag = [string]$release.tag_name
+if ($null -eq $release -or ($release -is [string])) {
+  Fail "Resposta de release invalida (nao-JSON). Verifique -ReleaseJsonUrl / API."
+}
+$tag = ''
+try { $tag = [string]$release.tag_name } catch { $tag = '' }
+if (-not $tag) {
+  try { $tag = [string]$release.Tag_name } catch { $tag = '' }
+}
 $remoteVer = ($tag -replace '^v', '')
 if (-not $remoteVer) { Fail 'Nao foi possivel determinar a versao do release.' }
 Write-Info "Release remoto: $remoteVer"

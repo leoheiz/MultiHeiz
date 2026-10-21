@@ -152,20 +152,6 @@ Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $assetsDir $setup
 Set-Content -LiteralPath (Join-Path $assetsDir 'SHA256SUMS.txt') -Value "$setupHash  $setupName`n" -Encoding ascii
 Set-Content -LiteralPath (Join-Path $assetsDir 'SHA256SUMS-BAD.txt') -Value $(('0' * 64) + "  $setupName`n") -Encoding ascii
 
-# Start mock on ephemeral port (node prints MOCK_READY port=N)
-$mockProc = Start-Process -FilePath 'node' -ArgumentList @(
-  (Join-Path $Root 'tools\mock-github-release-server.js'),
-  '--port', '0',
-  '--root', $serveRoot,
-  '--latest', (Join-Path $serveRoot 'latest.json'),
-  '--bad-latest', (Join-Path $serveRoot 'latest-bad.json')
-) -WorkingDirectory $Root -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $serveRoot 'mock-out.txt') -RedirectStandardError (Join-Path $serveRoot 'mock-err.txt')
-
-# Write JSON after we know the port — start with placeholder, restart approach:
-# Simpler: pick a fixed free port first.
-Stop-Process -Id $mockProc.Id -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 200
-
 $port = 0
 for ($try = 18000; $try -lt 18200; $try++) {
   try {
@@ -178,25 +164,30 @@ for ($try = 18000; $try -lt 18200; $try++) {
 Assert ($port -gt 0) 'no free port for mock server'
 $prefix = "http://127.0.0.1:$port/"
 
-$releaseObj = [ordered]@{
-  tag_name = "v$ver"
-  name = "MultiHeiz $ver"
-  assets = @(
-    [ordered]@{ name = $setupName; browser_download_url = "${prefix}assets/$setupName" },
-    [ordered]@{ name = 'SHA256SUMS.txt'; browser_download_url = "${prefix}assets/SHA256SUMS.txt" }
-  )
+# Write JSON as raw UTF-8 (no BOM) — PS 5.1 ConvertTo-Json + BOM can confuse clients.
+$latestJson = @"
+{
+  "tag_name": "v$ver",
+  "name": "MultiHeiz $ver",
+  "assets": [
+    {"name": "$setupName", "browser_download_url": "${prefix}assets/$setupName"},
+    {"name": "SHA256SUMS.txt", "browser_download_url": "${prefix}assets/SHA256SUMS.txt"}
+  ]
 }
-($releaseObj | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $serveRoot 'latest.json') -Encoding utf8
-
-$badObj = [ordered]@{
-  tag_name = "v$ver"
-  name = "MultiHeiz $ver"
-  assets = @(
-    [ordered]@{ name = $setupName; browser_download_url = "${prefix}assets/$setupName" },
-    [ordered]@{ name = 'SHA256SUMS.txt'; browser_download_url = "${prefix}assets/SHA256SUMS-BAD.txt" }
-  )
+"@
+$badJson = @"
+{
+  "tag_name": "v$ver",
+  "name": "MultiHeiz $ver",
+  "assets": [
+    {"name": "$setupName", "browser_download_url": "${prefix}assets/$setupName"},
+    {"name": "SHA256SUMS.txt", "browser_download_url": "${prefix}assets/SHA256SUMS-BAD.txt"}
+  ]
 }
-($badObj | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath (Join-Path $serveRoot 'latest-bad.json') -Encoding utf8
+"@
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText((Join-Path $serveRoot 'latest.json'), $latestJson.Trim() + "`n", $utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $serveRoot 'latest-bad.json'), $badJson.Trim() + "`n", $utf8NoBom)
 
 Write-Step "Mock GitHub API on $prefix"
 $mockOut = Join-Path $serveRoot 'mock-out.txt'
@@ -282,3 +273,4 @@ Write-Host '  Real install unchanged'
 Write-Host ''
 Write-Host 'PASS: test:install-ps1'
 exit 0
+
