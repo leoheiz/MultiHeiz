@@ -139,6 +139,26 @@ function Get-TestUninstallKey {
   return $null
 }
 
+# Installertest Run name = PRODUCT_NAME (never "MultiHeiz" / Leo's real entry).
+$TestRunName = 'MultiHeizInstallerTest'
+$RunKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+
+function Get-HkcuRunValue([string]$name) {
+  try {
+    if (-not (Test-Path -LiteralPath $RunKeyPath)) { return $null }
+    $item = Get-Item -LiteralPath $RunKeyPath -ErrorAction Stop
+    $v = $item.GetValue($name)
+    if ($null -eq $v) { return $null }
+    return [string]$v
+  } catch { return $null }
+}
+
+function Remove-TestAutostartRun {
+  try {
+    Remove-ItemProperty -LiteralPath $RunKeyPath -Name $TestRunName -Force -ErrorAction SilentlyContinue
+  } catch { }
+}
+
 Write-Step 'Snapshot real MultiHeiz install (must stay unchanged)'
 $before = Snapshot-RealInstall
 if ($before.exeExists) {
@@ -262,6 +282,19 @@ Assert ($null -ne $uProps.EstimatedSize -and [int]$uProps.EstimatedSize -gt 0) "
 
 # Real MultiHeiz shortcuts must be unchanged (checked via snapshot later)
 
+Write-Step 'Silent install without /AUTOSTART must NOT create HKCU Run'
+$runBeforeSilent = Get-HkcuRunValue $TestRunName
+# Leftover from a crashed prior run — remove so we assert cleanly (never touch MultiHeiz).
+if ($null -ne $runBeforeSilent) {
+  Write-Host "  Cleaning leftover test Run value before assert"
+  Remove-TestAutostartRun
+}
+$runNoFlag = Get-HkcuRunValue $TestRunName
+Assert ($null -eq $runNoFlag) "silent install without /AUTOSTART created Run '$TestRunName': $runNoFlag"
+# Never create/touch real MultiHeiz Run
+$realRun = Get-HkcuRunValue 'MultiHeiz'
+Write-Host "  Run MultiHeizInstallerTest absent OK (Leo MultiHeiz Run present=$($null -ne $realRun); left untouched)"
+
 Write-Step 'Silent uninstall (must KEEP userData - no /DELETEDATA)'
 # NSIS uninstaller copies itself; use Start-Process with /S and _?= so Wait works
 $uArgs = @('/S', '/currentuser', "_?=$installDir")
@@ -280,6 +313,44 @@ Assert ($null -eq $ukeyAfter) 'HKCU uninstall key still present'
 Assert (Test-Path -LiteralPath $marker) "userData marker was deleted in silent mode (must keep): $marker"
 Write-Host '  Files/shortcut/registry removed; userData kept OK'
 
+Write-Step 'Silent install WITH /AUTOSTART creates correct HKCU Run'
+$installDir2 = Join-Path $env:TEMP ('mh-inst-test-as-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $installDir2 | Out-Null
+Remove-TestAutostartRun
+try {
+  $p2 = Start-Process -FilePath $setup.FullName -ArgumentList @('/S', '/currentuser', '/AUTOSTART', "/D=$installDir2") -PassThru -Wait -WindowStyle Hidden
+  Assert ($p2.ExitCode -eq 0 -or $null -eq $p2.ExitCode) "installer+/AUTOSTART exit $($p2.ExitCode)"
+  $exe2 = Join-Path $installDir2 'MultiHeizInstallerTest.exe'
+  $uninst2 = Join-Path $installDir2 'Uninstall MultiHeizInstallerTest.exe'
+  $deadline = (Get-Date).AddSeconds(60)
+  while ((Get-Date) -lt $deadline) {
+    if ((Test-Path -LiteralPath $exe2) -and (Test-Path -LiteralPath $uninst2)) { break }
+    Start-Sleep -Milliseconds 500
+  }
+  Assert (Test-Path -LiteralPath $exe2) "installed exe missing after /AUTOSTART: $exe2"
+  $runVal = Get-HkcuRunValue $TestRunName
+  Assert ($null -ne $runVal) "Run '$TestRunName' missing after /AUTOSTART"
+  # Electron setLoginItemSettings: quoted exe path, no args
+  $expectedRun = '"' + $exe2 + '"'
+  Assert ($runVal -eq $expectedRun) "Run value mismatch:`n  got: $runVal`n  want: $expectedRun"
+  Write-Host "  Run $TestRunName = $runVal OK"
+
+  Write-Step 'Uninstall removes only our Run value'
+  $uArgs2 = @('/S', '/currentuser', "_?=$installDir2")
+  $up2 = Start-Process -FilePath $uninst2 -ArgumentList $uArgs2 -PassThru -Wait -WindowStyle Hidden
+  Write-Host "  Uninstaller exit=$($up2.ExitCode)"
+  Start-Sleep -Seconds 2
+  Assert (-not (Test-Path -LiteralPath $exe2)) "exe still present after /AUTOSTART uninstall: $exe2"
+  $runAfter = Get-HkcuRunValue $TestRunName
+  Assert ($null -eq $runAfter) "Run '$TestRunName' still present after uninstall: $runAfter"
+  Write-Host '  Run value removed OK'
+} finally {
+  Remove-TestAutostartRun
+  if (Test-Path -LiteralPath $installDir2) {
+    Remove-Item -LiteralPath $installDir2 -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
 # Cleanup test userData we created
 if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force }
 if ($weCreatedAppData -and (Test-Path -LiteralPath $testAppData)) {
@@ -289,6 +360,7 @@ Remove-Item -LiteralPath $fakeUserData -Recurse -Force -ErrorAction SilentlyCont
 if (Test-Path -LiteralPath $installDir) {
   Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
 }
+Remove-TestAutostartRun
 
 Write-Step 'Re-check real MultiHeiz install snapshot'
 $after = Snapshot-RealInstall

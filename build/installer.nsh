@@ -7,8 +7,36 @@
 ;   (per-machine if only HKLM, per-user if only HKCU). We warn if the user picks
 ;   per-user while a per-machine install exists, and remove stale product shortcuts
 ;   whose targets no longer exist.
+; - Finish page: unchecked "Iniciar o … com o sistema" (MUI_FINISHPAGE_SHOWREADME
+;   repurposed). Writes the same HKCU Run value as Electron setLoginItemSettings
+;   (name=${PRODUCT_NAME}, data=quoted $INSTDIR\${APP_EXECUTABLE_FILENAME}).
+;   Silent: only with explicit /AUTOSTART. Uninstall removes only our Run value.
 ; Uses ${PRODUCT_NAME} / ${PRODUCT_FILENAME} / ${SHORTCUT_NAME} so the installertest
 ; variant stays isolated.
+
+; Same Run entry Electron writes for packaged openAtLogin (quoted exe, no args).
+; Use ${PRODUCT_FILENAME}.exe (not ${APP_EXECUTABLE_FILENAME}): our include is parsed
+; before common.nsh defines APP_EXECUTABLE_FILENAME (= ${PRODUCT_FILENAME}.exe).
+!macro multiheizWriteAutostartRun
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}" '"$INSTDIR\${PRODUCT_FILENAME}.exe"'
+!macroend
+
+!macro multiheizRemoveAutostartRun
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}"
+!macroend
+
+; Finish-page checkbox (unchecked by default). Defines are read by assistedInstaller
+; before MUI_PAGE_FINISH — no customFinishPage needed.
+!ifndef BUILD_UNINSTALLER
+  Function multiheizFinishAutostart
+    !insertmacro multiheizWriteAutostartRun
+  FunctionEnd
+
+  !define MUI_FINISHPAGE_SHOWREADME ""
+  !define MUI_FINISHPAGE_SHOWREADME_TEXT "Iniciar o ${PRODUCT_NAME} com o sistema"
+  !define MUI_FINISHPAGE_SHOWREADME_FUNCTION multiheizFinishAutostart
+  !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
+!endif
 
 ; id must be a simple token (no dots) — ${__LINE__} inside macros is invalid as a label.
 !macro multiheizRemoveStaleShortcut lnkPath id
@@ -63,6 +91,17 @@
         "Já existe uma instalação de ${PRODUCT_NAME} para todos os usuários.$\r$\n$\r$\nInstalar só para o usuário atual pode criar atalhos e entradas duplicadas.$\r$\nRecomenda-se escolher «Todos os usuários» para atualizar a instalação existente."
     multiheiz_skip_dual_note:
   ${EndIf}
+
+  ; Silent: enable autostart only with explicit /AUTOSTART (finish checkbox is skipped).
+  IfSilent 0 multiheiz_autostart_done
+    ClearErrors
+    ${GetParameters} $R0
+    ${GetOptions} $R0 "/AUTOSTART" $R1
+    ${IfNot} ${Errors}
+      !insertmacro multiheizWriteAutostartRun
+      DetailPrint "Autostart Run ${PRODUCT_NAME} (/AUTOSTART)"
+    ${EndIf}
+  multiheiz_autostart_done:
 !macroend
 
 !macro customUnInstall
@@ -72,6 +111,9 @@
     Pop $0
     DetailPrint "Firewall rule remove (exit $0)"
   ${EndIf}
+
+  ; Remove only our HKCU Run value (PRODUCT_NAME — never another product's).
+  !insertmacro multiheizRemoveAutostartRun
 
   ; Ask about user data (default = No / keep). Skip prompt when silent.
   StrCpy $0 "0"
