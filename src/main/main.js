@@ -250,6 +250,7 @@ const SELFTEST_PERF = selftestMode === 'perf';
 const SELFTEST_BADGES = selftestMode === 'badges';
 const SELFTEST_LANGUAGETOOL = selftestMode === 'languagetool';
 const SELFTEST_AI = selftestMode === 'ai';
+const SELFTEST_FPS = selftestMode === 'fps';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -307,7 +308,8 @@ const ANY_SELFTEST =
   SELFTEST_PERF ||
   SELFTEST_BADGES ||
   SELFTEST_LANGUAGETOOL ||
-  SELFTEST_AI;
+  SELFTEST_AI ||
+  SELFTEST_FPS;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -649,7 +651,8 @@ function createWindow() {
     SELFTEST_BADGES ||
     SELFTEST_LANGUAGETOOL ||
     SELFTEST_AI ||
-    SELFTEST_ADBLOCK_STARTUP
+    SELFTEST_ADBLOCK_STARTUP ||
+    SELFTEST_FPS
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -746,6 +749,7 @@ function createWindow() {
       SELFTEST_SHOTS_SIDEBAR2 ||
       SELFTEST_ADBLOCK ||
       SELFTEST_ADBLOCK_STARTUP ||
+      SELFTEST_FPS ||
       SELFTEST_EXT ||
       SELFTEST_UA ||
       SELFTEST_PERF ||
@@ -892,6 +896,32 @@ function createWindow() {
     notifyDisplayOrChromeChange();
     emitToRenderer({ type: 'window:fullscreen', fullscreen: false });
   });
+  // Pause lightweight UI FPS probe while minimized/hidden (renderer also uses visibilityState).
+  const emitWindowVisibility = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    let minimized = false;
+    let visible = true;
+    try {
+      minimized = !!mainWindow.isMinimized();
+    } catch {
+      /* ignore */
+    }
+    try {
+      visible = !!mainWindow.isVisible();
+    } catch {
+      /* ignore */
+    }
+    emitToRenderer({
+      type: 'window:visibility',
+      minimized,
+      visible,
+      hidden: minimized || !visible,
+    });
+  };
+  mainWindow.on('minimize', emitWindowVisibility);
+  mainWindow.on('restore', emitWindowVisibility);
+  mainWindow.on('hide', emitWindowVisibility);
+  mainWindow.on('show', emitWindowVisibility);
 
   // F11 / Esc when focus is on the main UI (not a panel WebContentsView)
   mainWindow.webContents.on('before-input-event', (e, input) => {
@@ -1029,6 +1059,30 @@ function createWindow() {
             waitForUrl,
             rendererEval,
             adblock,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_FPS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runFpsSelftest } = require('./selftest-fps');
+          runFpsSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);

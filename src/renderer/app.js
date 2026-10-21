@@ -2488,9 +2488,96 @@ function paintStatusBarNow() {
     el.statRam.textContent = `RAM ${latestMetrics.totalRamMb ?? 0} MB`;
     el.statRam.title = breakdownText(latestMetrics);
   }
-  el.statFps.textContent = focusedFps ? `FPS ${focusedFps}` : 'FPS —';
+  const fpsLabel = focusedFps > 0 ? `FPS ${focusedFps}` : 'FPS —';
+  if (el.statFps.textContent !== fpsLabel) {
+    el.statFps.textContent = fpsLabel;
+  }
   el.statUptime.textContent = `Uptime ${formatUptime(Date.now() - appStartedAt)}`;
   el.statVersion.textContent = `v${appVersion}`;
+}
+
+/**
+ * Lightweight UI FPS probe: rAF counter sampled ~1/s into the status bar.
+ * No per-frame DOM/IPC. Paused while the window is hidden/minimized/occluded.
+ */
+let uiFpsFrames = 0;
+let uiFpsLastSample = 0;
+/** @type {number} */
+let uiFpsRafId = 0;
+let uiFpsRunning = false;
+
+function uiFpsShouldRun() {
+  try {
+    if (typeof document.visibilityState === 'string' && document.visibilityState !== 'visible') {
+      return false;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (document.hidden) return false;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+function uiFpsTick(now) {
+  uiFpsRafId = 0;
+  if (!uiFpsRunning) return;
+  if (!uiFpsShouldRun()) {
+    // Stay paused until visibility resumes (listener restarts the loop).
+    uiFpsRunning = false;
+    return;
+  }
+  uiFpsFrames += 1;
+  if (!uiFpsLastSample) uiFpsLastSample = now || performance.now();
+  const t = now || performance.now();
+  if (t - uiFpsLastSample >= 1000) {
+    const fps = Math.round((uiFpsFrames * 1000) / (t - uiFpsLastSample));
+    uiFpsFrames = 0;
+    uiFpsLastSample = t;
+    if (fps > 0 && fps !== focusedFps) {
+      focusedFps = fps;
+      // One DOM write/s, only when the label would change.
+      if (el.statFps) {
+        const next = `FPS ${focusedFps}`;
+        if (el.statFps.textContent !== next) el.statFps.textContent = next;
+      }
+    } else if (fps > 0) {
+      focusedFps = fps;
+    }
+  }
+  uiFpsRafId = requestAnimationFrame(uiFpsTick);
+}
+
+function startUiFpsProbe() {
+  if (uiFpsRunning) return;
+  if (!uiFpsShouldRun()) return;
+  uiFpsRunning = true;
+  uiFpsFrames = 0;
+  uiFpsLastSample = 0;
+  if (uiFpsRafId) {
+    try {
+      cancelAnimationFrame(uiFpsRafId);
+    } catch {
+      /* ignore */
+    }
+    uiFpsRafId = 0;
+  }
+  uiFpsRafId = requestAnimationFrame(uiFpsTick);
+}
+
+function stopUiFpsProbe() {
+  uiFpsRunning = false;
+  if (uiFpsRafId) {
+    try {
+      cancelAnimationFrame(uiFpsRafId);
+    } catch {
+      /* ignore */
+    }
+    uiFpsRafId = 0;
+  }
 }
 
 function scheduleStatusBarUpdate() {
@@ -4298,10 +4385,16 @@ window.multiheiz.onEvent((payload) => {
     return;
   }
   if (payload.type === 'panel:fps') {
+    // Optional panel probe (SELFTEST/PROFILE only) — UI FPS probe is the status-bar source.
     if (payload.accountId === focusedAccountId) {
       focusedFps = payload.fps | 0;
       scheduleStatusBarUpdate();
     }
+    return;
+  }
+  if (payload.type === 'window:visibility') {
+    if (payload.hidden) stopUiFpsProbe();
+    else startUiFpsProbe();
     return;
   }
   if (payload.type === 'toast' && payload.message) {
@@ -4391,8 +4484,21 @@ function scheduleSidebarUnreadPaint() {
 
 statusTimer = setInterval(tickStatusBar, 2000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) scheduleStatusBarUpdate();
+  if (uiFpsShouldRun()) {
+    startUiFpsProbe();
+    scheduleStatusBarUpdate();
+  } else {
+    stopUiFpsProbe();
+  }
 });
+window.addEventListener('blur', () => {
+  // Occluded / background: pause if the document is no longer visible.
+  if (!uiFpsShouldRun()) stopUiFpsProbe();
+});
+window.addEventListener('focus', () => {
+  if (uiFpsShouldRun()) startUiFpsProbe();
+});
+startUiFpsProbe();
 void statusBarShouldRun;
 
 /** Exposed for selftests */
@@ -4543,6 +4649,15 @@ window.__multiheizUi = {
   closeMenus,
   isLivreEditMode,
   HANDLE_INSET,
+  /** Selftest: UI FPS probe (status bar), not panel preload IPC. */
+  getFpsProbe: () => ({
+    fps: focusedFps | 0,
+    running: !!uiFpsRunning,
+    text: el.statFps ? String(el.statFps.textContent || '') : '',
+    visible: uiFpsShouldRun(),
+  }),
+  startUiFpsProbe,
+  stopUiFpsProbe,
   getChromeInsets: () => {
     const topbarEl = el.topbar;
     const statusEl = document.getElementById('statusbar');
