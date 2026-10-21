@@ -73,6 +73,9 @@ function collectArtifacts(ver) {
     if (lower.endsWith('.deb') && name.includes(ver)) {
       wanted.push(name);
     }
+    if (name === 'SHA256SUMS.txt') {
+      wanted.push(name);
+    }
   }
 
   return [...new Set(wanted)];
@@ -146,6 +149,14 @@ function copyRootPortable(ver) {
 
 function main() {
   console.log('[release] versão:', version);
+
+  // Generate SHA256SUMS.txt for whatever is currently in dist/
+  try {
+    const { main: writeSums } = require('./sha256sums');
+    writeSums();
+  } catch (err) {
+    console.warn('[release] sha256sums:', err && err.message ? err.message : err);
+  }
 
   const artifacts = collectArtifacts(version);
   if (!artifacts.length) {
