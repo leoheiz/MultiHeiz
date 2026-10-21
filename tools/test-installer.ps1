@@ -29,11 +29,24 @@ $RealStartMenuAlt = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Pro
 
 function Write-Step([string]$msg) { Write-Host "==> $msg" }
 function Fail([string]$msg) { Write-Host "FAIL: $msg" -ForegroundColor Red; exit 1 }
-function Assert([bool]$cond, [string]$msg) { if (-not $cond) { Fail $msg } }
+function Assert($cond, [string]$msg) {
+  $ok = $false
+  if ($cond -is [bool]) { $ok = $cond }
+  elseif ($null -eq $cond) { $ok = $false }
+  else { $ok = [bool]$cond }
+  if (-not $ok) { Fail $msg }
+}
 
 function Get-FileHashSafe([string]$path) {
   if (-not (Test-Path -LiteralPath $path)) { return $null }
-  return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $fs = [System.IO.File]::OpenRead($path)
+    try {
+      $bytes = $sha.ComputeHash($fs)
+      return ([BitConverter]::ToString($bytes) -replace '-', '')
+    } finally { $fs.Dispose() }
+  } finally { $sha.Dispose() }
 }
 
 function Snapshot-RealInstall {
@@ -105,11 +118,11 @@ function Get-TestUninstallKey {
   # electron-builder GUID from appId com.leo.multiheiz.installertest
   $base = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
   if (-not (Test-Path $base)) { return $null }
-  Get-ChildItem $base -ErrorAction SilentlyContinue | ForEach-Object {
+  foreach ($item in @(Get-ChildItem $base -ErrorAction SilentlyContinue)) {
     try {
-      $p = Get-ItemProperty $_.PSPath -ErrorAction Stop
-      if ($p.DisplayName -like '*MultiHeizInstallerTest*') { return $_.PSPath }
-      if ($p.InstallLocation -and $p.InstallLocation -like '*MultiHeizInstallerTest*') { return $_.PSPath }
+      $p = Get-ItemProperty -LiteralPath $item.PSPath -ErrorAction Stop
+      if ($p.DisplayName -like '*MultiHeizInstallerTest*') { return $item.PSPath }
+      if ($p.InstallLocation -and $p.InstallLocation -like '*MultiHeizInstallerTest*') { return $item.PSPath }
     } catch { }
   }
   return $null
@@ -126,14 +139,14 @@ if ($null -ne $before.reg) {
   Write-Host "  HKLM uninstall: $($before.reg.DisplayName) $($before.reg.DisplayVersion)"
 }
 
-# Abort if a real per-user MultiHeiz exists at default location AND we'd collide —
+# Abort if a real per-user MultiHeiz exists at default location AND we'd collide -
 # we always use a different productName, so default LOCALAPPDATA\Programs\MultiHeiz is fine to leave alone.
 $realPerUser = Join-Path $env:LOCALAPPDATA 'Programs\MultiHeiz'
 if (Test-Path -LiteralPath (Join-Path $realPerUser 'MultiHeiz.exe')) {
   Write-Host "  Note: per-user MultiHeiz at $realPerUser (will not touch; test uses MultiHeizInstallerTest)"
 }
 
-Write-Step 'Decision: use TEST-ONLY installer (different appId) — real setup never executed'
+Write-Step 'Decision: use TEST-ONLY installer (different appId) - real setup never executed'
 # Reason: same appId GUID as Leo's per-machine install; installSection may interact with
 # uninstall registry. Safer to never run the production setup against this PC.
 
@@ -160,7 +173,7 @@ Set-Content -Path (Join-Path $fakeUserData 'keep-me.txt') -Value 'should survive
 
 # Place a marker under the product userData name so silent uninstall must KEEP it
 # (installer.nsh only deletes on Yes / /DELETEDATA). We use a throwaway copy under
-# APPDATA\MultiHeizInstallerTest created by us — not Leo's MultiHeiz folder.
+# APPDATA\MultiHeizInstallerTest created by us - not Leo's MultiHeiz folder.
 $testAppData = Join-Path $env:APPDATA 'MultiHeizInstallerTest'
 $weCreatedAppData = -not (Test-Path -LiteralPath $testAppData)
 if ($weCreatedAppData) {
@@ -202,19 +215,20 @@ Assert ($lnk.IconLocation -like "*MultiHeizInstallerTest*") "shortcut icon shoul
 
 $ukey = Get-TestUninstallKey
 Assert ($null -ne $ukey) 'HKCU uninstall key for MultiHeizInstallerTest not found'
-Assert ($ukey -like 'HKCU:*') "uninstall key must be HKCU, got $ukey"
-Write-Host "  Uninstall registry: $ukey"
+$ukeyStr = [string]$ukey
+$isHkcu = $ukeyStr -match 'HKCU:|HKEY_CURRENT_USER'
+Assert $isHkcu "uninstall key must be HKCU, got $ukeyStr"
+Assert (-not ($ukeyStr -match 'HKEY_LOCAL_MACHINE|HKLM:')) "uninstall key must NOT be HKLM: $ukeyStr"
+Write-Host "  Uninstall registry: $ukeyStr"
 
 # Real MultiHeiz shortcuts must be unchanged (checked via snapshot later)
 
-Write-Step 'Silent uninstall (must KEEP userData — no /DELETEDATA)'
+Write-Step 'Silent uninstall (must KEEP userData - no /DELETEDATA)'
 # Prefer QuietUninstallString with _?= for wait
-$uProps = Get-ItemProperty $ukey
-$uStr = $uProps.QuietUninstallString
-if (-not $uStr) { $uStr = "`"$uninst`" /currentuser /S" }
-Write-Host "  Running: $uStr"
-# NSIS uninstaller copies itself; use Start-Process with /S and _?=
+$uProps = Get-ItemProperty -LiteralPath $ukeyStr.Trim()
+# NSIS uninstaller copies itself; use Start-Process with /S and _?= so Wait works
 $uArgs = @('/S', '/currentuser', "_?=$installDir")
+Write-Host "  Running: $uninst $($uArgs -join ' ')"
 $up = Start-Process -FilePath $uninst -ArgumentList $uArgs -PassThru -Wait -WindowStyle Hidden
 Write-Host "  Uninstaller exit=$($up.ExitCode)"
 
@@ -246,7 +260,7 @@ $prodSetup = Join-Path $Root 'dist\MultiHeiz-1.3.0-setup.exe'
 if (Test-Path -LiteralPath $prodSetup) {
   $len = (Get-Item -LiteralPath $prodSetup).Length
   Assert ($len -gt 1MB) "production setup too small: $len"
-  Write-Host "  Found production setup ($len bytes) — NOT executed (safety)"
+  Write-Host "  Found production setup ($len bytes) - NOT executed (safety)"
 } else {
   Write-Host '  Production setup not built yet (run npm run dist:win separately)'
 }
