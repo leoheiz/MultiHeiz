@@ -297,6 +297,7 @@ const SELFTEST_FPS = selftestMode === 'fps';
 const SELFTEST_LAYOUT_HANDLES_STARTUP = selftestMode === 'layout-handles-startup';
 const SELFTEST_SOCKETS = selftestMode === 'sockets';
 const SELFTEST_AUTOSTART = selftestMode === 'autostart';
+const SELFTEST_DIFF_UPDATE = selftestMode === 'diff-update';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -358,7 +359,8 @@ const ANY_SELFTEST =
   SELFTEST_FPS ||
   SELFTEST_LAYOUT_HANDLES_STARTUP ||
   SELFTEST_SOCKETS ||
-  SELFTEST_AUTOSTART;
+  SELFTEST_AUTOSTART ||
+  SELFTEST_DIFF_UPDATE;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -1248,6 +1250,25 @@ function createWindow() {
           failSelftest(err);
         }
       }, 800);
+    });
+  } else if (SELFTEST_DIFF_UPDATE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          // Included in asar (not selftest-*.js) for packaged InstallerTest e2e.
+          const { runDiffUpdateCheck } = require('./diff-update-check');
+          runDiffUpdateCheck({
+            updater,
+            sleep,
+          })
+            .then(() => {
+              app.exit(0);
+            })
+            .catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 1200);
     });
   } else if (SELFTEST_ADBLOCK_PACKAGED) {
     mainWindow.webContents.once('did-finish-load', () => {

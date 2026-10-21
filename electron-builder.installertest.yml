@@ -37,6 +37,7 @@ nsis:
   uninstallerIcon: build/icon.ico
   installerHeaderIcon: build/icon.ico
   deleteAppDataOnUninstall: false
+  differentialPackage: true
   include: installer.nsh
   artifactName: MultiHeizInstallerTest-${version}-setup.${ext}
 portable: null

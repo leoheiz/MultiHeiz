@@ -2582,6 +2582,16 @@
       /Win/i.test(navigator.platform || '') &&
       !!(st.notWritable || (st.status === 'error' && st.downloadPath));
     if (btnFolder) btnFolder.classList.toggle('hidden', !showFolder);
+    const hintEl = document.getElementById('updates-portable-hint');
+    if (hintEl) {
+      if (st.portableHint) {
+        hintEl.textContent = st.portableHint;
+        hintEl.classList.remove('hidden');
+      } else {
+        hintEl.textContent = '';
+        hintEl.classList.add('hidden');
+      }
+    }
     // btn-open-releases permanece sempre visível
   }
 
@@ -2600,6 +2610,16 @@
         const ch = await window.multiheiz.updatesGetChannel();
         const chEl = document.getElementById('settings-update-channel');
         if (chEl && ch) chEl.textContent = ch.channelLabel || ch.channel || '—';
+        const hintEl = document.getElementById('updates-portable-hint');
+        if (hintEl && ch) {
+          if (ch.portableHint) {
+            hintEl.textContent = ch.portableHint;
+            hintEl.classList.remove('hidden');
+          } else {
+            hintEl.textContent = '';
+            hintEl.classList.add('hidden');
+          }
+        }
       }
     } catch {
       /* ignore */

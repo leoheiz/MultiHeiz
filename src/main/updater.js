@@ -23,6 +23,10 @@ const CHANNEL_LABELS = {
   dev: 'Desenvolvimento',
 };
 
+/** Nota UI: portátil não tem atualização diferencial automática (só re-download completo). */
+const PORTABLE_UPDATE_HINT =
+  'O instalador (setup) é recomendado para atualizações automáticas. A versão portátil baixa o executável completo (sem atualização diferencial).';
+
 /** Label for Linux unpackaged / extracted / non-dpkg installs (never ".deb"). */
 const LINUX_UNKNOWN_LABEL = 'Linux (não instalado / dev)';
 
@@ -226,6 +230,8 @@ function getStatus() {
     channel,
     channelLabel: channelLabel(channel),
     currentVersion: app.getVersion(),
+    portableHint: channel === 'portable' ? PORTABLE_UPDATE_HINT : null,
+    setupRecommendedForAutoUpdate: channel === 'portable',
   };
   base.buttons = computeUpdateActionButtons(base);
   return base;
@@ -312,6 +318,60 @@ function getAutoUpdater() {
 
 function forcePackagedForTest() {
   return process.env.MULTIHEIZ_FORCE_PACKAGED === '1';
+}
+
+function isSelftestEnv() {
+  return !!process.env.MULTIHEIZ_SELFTEST;
+}
+
+/**
+ * Test-only generic feed override (MULTIHEIZ_UPDATE_URL).
+ * Allowed only when MULTIHEIZ_SELFTEST is set — never in production.
+ * Points electron-updater at a local generic provider (latest.yml + blockmap).
+ * @param {import('electron-updater').AppUpdater} autoUpdater
+ * @returns {{ ok: boolean, url?: string, skipped?: boolean, error?: string }}
+ */
+function configureUpdateFeedForSelftest(autoUpdater) {
+  if (!isSelftestEnv()) {
+    return { ok: true, skipped: true };
+  }
+  const raw = String(process.env.MULTIHEIZ_UPDATE_URL || '').trim();
+  if (!raw) return { ok: true, skipped: true };
+  let href;
+  try {
+    href = portable.assertAllowedUpdateUrl(raw, { forFeed: true });
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || String(err) };
+  }
+  const url = href.replace(/\/?$/, '/');
+  try {
+    autoUpdater.setFeedURL({ provider: 'generic', url });
+    logger.info('updates:selftest feed', { url });
+    return { ok: true, url };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || String(err) };
+  }
+}
+
+/**
+ * Configure electron-updater for NSIS/AppImage (differential via blockmap when available).
+ * Keeps sha512 verification from latest.yml (electron-updater default).
+ * @param {import('electron-updater').AppUpdater} autoUpdater
+ */
+function prepareAutoUpdater(autoUpdater) {
+  const selftest = isSelftestEnv();
+  // Selftest / MULTIHEIZ_UPDATE_NO_INSTALL: download only, never quit-install.
+  const noInstall =
+    selftest ||
+    process.env.MULTIHEIZ_UPDATE_NO_INSTALL === '1' ||
+    process.env.MULTIHEIZ_UPDATE_NO_INSTALL === 'true';
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = !noInstall;
+  const feed = configureUpdateFeedForSelftest(autoUpdater);
+  if (!feed.ok) {
+    throw new Error(feed.error || 'Falha ao configurar feed de teste');
+  }
+  return feed;
 }
 
 /**
@@ -489,8 +549,7 @@ async function checkForUpdates(opts) {
 
   try {
     const autoUpdater = getAutoUpdater();
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    prepareAutoUpdater(autoUpdater);
     if (!handlersBound) {
       bindAutoUpdaterEvents(autoUpdater);
       handlersBound = true;
@@ -879,6 +938,8 @@ function initUpdater(ctx) {
       channel: ch,
       channelLabel: channelLabel(ch),
       currentVersion: app.getVersion(),
+      portableHint: ch === 'portable' ? PORTABLE_UPDATE_HINT : null,
+      setupRecommendedForAutoUpdate: ch === 'portable',
     };
   });
   ipcMain.handle('updates:get-auto-check', () => ({
@@ -964,9 +1025,13 @@ module.exports = {
   compareSemver,
   checkViaGithubApi,
   resetStatusForTest,
+  configureUpdateFeedForSelftest,
+  prepareAutoUpdater,
+  getAutoUpdater,
   channelLabel,
   CHANNEL_LABELS,
   LINUX_UNKNOWN_LABEL,
+  PORTABLE_UPDATE_HINT,
   GITHUB_OWNER,
   GITHUB_REPO,
   RELEASES_URL,

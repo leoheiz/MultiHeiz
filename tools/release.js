@@ -50,18 +50,24 @@ function copyFile(src, dest) {
   console.log('[release] copiado:', path.relative(ROOT, src), '->', path.relative(ROOT, dest));
 }
 
-function collectArtifacts(ver) {
-  if (!fs.existsSync(DIST)) {
+function collectArtifacts(ver, distDir) {
+  const dist = distDir || DIST;
+  if (!fs.existsSync(dist)) {
     console.warn('[release] dist/ inexistente — nada a copiar');
     return [];
   }
 
-  const names = fs.readdirSync(DIST);
+  const names = fs.readdirSync(dist);
   const wanted = [];
 
   const winPortable = 'MultiHeiz-' + ver + '-portable.exe';
   const winSetup = 'MultiHeiz-' + ver + '-setup.exe';
   for (const name of [winPortable, winSetup]) {
+    if (names.includes(name)) wanted.push(name);
+  }
+
+  // electron-updater: latest.yml + blockmaps (differential NSIS / AppImage)
+  for (const name of ['latest.yml', 'latest-linux.yml']) {
     if (names.includes(name)) wanted.push(name);
   }
 
@@ -72,6 +78,12 @@ function collectArtifacts(ver) {
     }
     if (lower.endsWith('.deb') && name.includes(ver)) {
       wanted.push(name);
+    }
+    if (lower.endsWith('.blockmap')) {
+      // setup.exe.blockmap, AppImage.blockmap, portable blockmap if present
+      if (name.includes(ver) || /MultiHeiz/i.test(name)) {
+        wanted.push(name);
+      }
     }
     if (name === 'SHA256SUMS.txt') {
       wanted.push(name);
@@ -175,9 +187,19 @@ function main() {
   process.exit(0);
 }
 
-try {
-  main();
-} catch (err) {
-  console.error('[release] erro:', err.message || err);
-  process.exit(1);
+if (require.main === module) {
+  try {
+    main();
+  } catch (err) {
+    console.error('[release] erro:', err.message || err);
+    process.exit(1);
+  }
 }
+
+module.exports = {
+  collectArtifacts,
+  pruneOldReleases,
+  copyRootPortable,
+  parseSemver,
+  compareSemverDesc,
+};

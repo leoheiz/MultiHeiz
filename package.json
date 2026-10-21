@@ -32,6 +32,7 @@
     "selftest:ext": "node tools/selftest-ext.js",
     "selftest:store": "node tools/selftest-store.js",
     "selftest:updater": "node tools/selftest-updater.js",
+    "selftest:diff-update": "node tools/selftest-diff-update.js",
     "selftest:v110": "node tools/selftest-v110.js",
     "selftest:v120": "node tools/selftest-v120.js",
     "selftest:security": "node tools/selftest-security.js",
@@ -177,6 +178,7 @@
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
       "deleteAppDataOnUninstall": false,
+      "differentialPackage": true,
       "include": "installer.nsh",
       "artifactName": "MultiHeiz-${version}-setup.${ext}"
     },
