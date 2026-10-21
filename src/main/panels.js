@@ -50,6 +50,40 @@ function noteOverlaySpy(op, detail) {
   overlaySelftestSpies.push({ at: Date.now(), op, detail: detail || undefined });
 }
 
+/**
+ * WebRTC IP handling — avoids Chromium binding host-candidate UDP on every
+ * LAN interface (Windows Firewall prompt when opening X/Meet/etc.).
+ * Prefer default_public_interface_only (STUN/TURN still work) over
+ * disable_non_proxied_udp (would break direct UDP calls).
+ * Env MULTIHEIZ_WEBRTC_IP_POLICY overrides; MULTIHEIZ_SOCKETS_MEASURE skips
+ * the production default so check:sockets can compare variants.
+ * @param {import('electron').WebContents} wc
+ */
+function applyWebRtcIpHandlingPolicy(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  try {
+    const measure = process.env.MULTIHEIZ_SOCKETS_MEASURE === '1';
+    const override = process.env.MULTIHEIZ_WEBRTC_IP_POLICY || '';
+    let policy = override;
+    if (!policy && !measure) {
+      policy = 'default_public_interface_only';
+    }
+    if (!policy) return;
+    if (typeof wc.setWebRTCIPHandlingPolicy === 'function') {
+      wc.setWebRTCIPHandlingPolicy(
+        /** @type {'default'|'default_public_interface_only'|'default_public_and_private_interfaces'|'disable_non_proxied_udp'} */ (
+          policy
+        )
+      );
+    }
+  } catch (err) {
+    console.warn(
+      '[panels] setWebRTCIPHandlingPolicy',
+      err && err.message ? err.message : err
+    );
+  }
+}
+
 /** Contas com áudio tocando (indicador na UI). */
 /** @type {Set<string>} */
 const audibleAccounts = new Set();
@@ -762,6 +796,7 @@ function wireLoginPopupWindow(accountId, child, ses, initialUrl) {
   } catch {
     /* ignore */
   }
+  applyWebRtcIpHandlingPolicy(child.webContents);
 
   const applyUaForUrl = (navUrl) => {
     try {
@@ -1095,6 +1130,7 @@ function createPanel(accountId) {
   });
 
   adblock.bindWebContents(accountId, view.webContents);
+  applyWebRtcIpHandlingPolicy(view.webContents);
 
   try {
     const popoverOverlay = require('./popover-overlay');

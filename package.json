@@ -74,6 +74,7 @@
     "check:adblock-real": "node tools/check-adblock-real.js",
     "check:encoding": "node tools/check-encoding.js",
     "check:lag-audit": "node tools/lag-audit.js",
+    "check:sockets": "node tools/check-sockets.js",
     "check:perf": "node tools/check-perf.js",
     "check:security-review": "node tools/check-security.js",
     "check:release": "node tools/check-release.js",
@@ -155,6 +156,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "MultiHeiz",
+      "include": "installer.nsh",
       "artifactName": "MultiHeiz-${version}-setup.${ext}"
     },
     "portable": {

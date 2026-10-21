@@ -144,10 +144,49 @@ process.on('uncaughtException', (err) => {
  */
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-if (process.platform === 'win32') {
-  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IntensiveWakeUpThrottling');
-} else {
-  app.commandLine.appendSwitch('disable-features', 'IntensiveWakeUpThrottling');
+/*
+ * Chromium keeps a single disable-features value — later appendSwitch calls
+ * overwrite earlier ones. Merge everything into ONE switch.
+ * WebRtcHideLocalIpsWithMdns: Chromium mDNS responder binds UDP 5353 on 0.0.0.0
+ * and triggers Windows Firewall "allow access" (seen when opening X/WebRTC pages).
+ * MediaRouter / Dial / Cast: SSDP/mDNS discovery listeners — not used by MultiHeiz.
+ */
+{
+  const disableFeatures = [];
+  if (process.platform === 'win32') {
+    disableFeatures.push('CalculateNativeWinOcclusion');
+  }
+  disableFeatures.push('IntensiveWakeUpThrottling');
+  // Production default: kill mDNS/Cast discovery listeners (measure mode can override).
+  const measureSockets = envGet('MULTIHEIZ_SOCKETS_MEASURE') === '1';
+  if (!measureSockets) {
+    disableFeatures.push(
+      'WebRtcHideLocalIpsWithMdns',
+      'MediaRouter',
+      'DialMediaRouteProvider',
+      'CastMediaRouteProvider'
+    );
+  }
+  const extra = envGet('MULTIHEIZ_SOCKETS_DISABLE_EXTRA') || '';
+  if (extra) {
+    for (const part of String(extra).split(',')) {
+      const t = part.trim();
+      if (t && !disableFeatures.includes(t)) disableFeatures.push(t);
+    }
+  }
+  app.commandLine.appendSwitch('disable-features', disableFeatures.join(','));
+  // Align Chromium early with panel setWebRTCIPHandlingPolicy (STUN/TURN ok).
+  if (!measureSockets && !envGet('MULTIHEIZ_WEBRTC_IP_POLICY')) {
+    app.commandLine.appendSwitch(
+      'force-webrtc-ip-handling-policy',
+      'default_public_interface_only'
+    );
+  } else if (envGet('MULTIHEIZ_WEBRTC_IP_POLICY')) {
+    app.commandLine.appendSwitch(
+      'force-webrtc-ip-handling-policy',
+      envGet('MULTIHEIZ_WEBRTC_IP_POLICY')
+    );
+  }
 }
 
 /*
@@ -252,6 +291,7 @@ const SELFTEST_LANGUAGETOOL = selftestMode === 'languagetool';
 const SELFTEST_AI = selftestMode === 'ai';
 const SELFTEST_FPS = selftestMode === 'fps';
 const SELFTEST_LAYOUT_HANDLES_STARTUP = selftestMode === 'layout-handles-startup';
+const SELFTEST_SOCKETS = selftestMode === 'sockets';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -311,7 +351,8 @@ const ANY_SELFTEST =
   SELFTEST_LANGUAGETOOL ||
   SELFTEST_AI ||
   SELFTEST_FPS ||
-  SELFTEST_LAYOUT_HANDLES_STARTUP;
+  SELFTEST_LAYOUT_HANDLES_STARTUP ||
+  SELFTEST_SOCKETS;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -319,7 +360,7 @@ if (SELFTEST_CUSTOM_SITE) {
 }
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
-if (SELFTEST_PERMISSIONS) {
+if (SELFTEST_PERMISSIONS || SELFTEST_SOCKETS) {
   app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 }
 
@@ -655,7 +696,8 @@ function createWindow() {
     SELFTEST_AI ||
     SELFTEST_ADBLOCK_STARTUP ||
     SELFTEST_FPS ||
-    SELFTEST_LAYOUT_HANDLES_STARTUP
+    SELFTEST_LAYOUT_HANDLES_STARTUP ||
+    SELFTEST_SOCKETS
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -1111,6 +1153,32 @@ function createWindow() {
             waitForUrl,
             rendererEval,
             waitForLayoutSettle,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_SOCKETS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runSocketsSelftest } = require('./selftest-sockets');
+          runSocketsSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+            permissions,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
