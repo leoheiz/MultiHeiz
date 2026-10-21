@@ -72,19 +72,51 @@ function partitionUsageMap(accounts) {
   return map;
 }
 
+/** Cache usage map — recompute only when account→partition membership changes. */
+let enrichCacheKey = '';
+/** @type {Map<string, number>|null} */
+let enrichCacheUsage = null;
+
+/**
+ * Fingerprint of account→partition mapping (not full account state).
+ * @param {Array<{ id?: string, partitionId?: string }>|null|undefined} accounts
+ */
+function partitionMembershipKey(accounts) {
+  let key = '';
+  for (const a of accounts || []) {
+    if (!a || !a.id) continue;
+    key += a.id + '=' + resolvePartitionId(a) + ';';
+  }
+  return key;
+}
+
 /**
  * Enriquece contas públicas com partitionId resolvido e sessionShareCount.
+ * Contagem só é recalculada quando a associação conta↔partição muda.
  * @param {Array<object>} accounts
  * @returns {Array<object>}
  */
 function enrichAccountsSessionShare(accounts) {
-  const usage = partitionUsageMap(accounts);
-  return (accounts || []).map((a) => {
+  const list = accounts || [];
+  const key = partitionMembershipKey(list);
+  let usage = enrichCacheUsage;
+  if (!usage || key !== enrichCacheKey) {
+    usage = partitionUsageMap(list);
+    enrichCacheKey = key;
+    enrichCacheUsage = usage;
+  }
+  return list.map((a) => {
     if (!a || typeof a !== 'object') return a;
     const partitionId = resolvePartitionId(a);
     const sessionShareCount = usage.get(partitionId) || 1;
     return { ...a, partitionId, sessionShareCount };
   });
+}
+
+/** Call from tests when forcing a fresh recount. */
+function invalidateSessionShareCache() {
+  enrichCacheKey = '';
+  enrichCacheUsage = null;
 }
 
 /** Tipos de sessão da área de trabalho (labels pt-BR na UI). */
@@ -126,6 +158,7 @@ module.exports = {
   countPartitionUsers,
   partitionUsageMap,
   enrichAccountsSessionShare,
+  invalidateSessionShareCache,
   SESSION_TYPE_INDEPENDENT,
   SESSION_TYPE_CONVENTIONAL,
   normalizeWorkspaceSessionType,

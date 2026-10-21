@@ -110,18 +110,19 @@ function buildLinuxDesktop({ execPath, openAsHidden }) {
   ].join('\n');
 }
 
-/**
- * @returns {{
- *   supported: boolean,
- *   enabled: boolean,
- *   openAsHidden: boolean,
- *   disabledReason: string|null,
- *   path: string|null,
- *   name: string,
- *   platform: string
- * }}
- */
-function getStatus() {
+/** Cached OS autostart status — getLoginItemSettings is expensive; publicState is hot. */
+/** @type {ReturnType<typeof readStatusFresh>|null} */
+let statusCache = null;
+/** @type {number} */
+let statusCacheAt = 0;
+const STATUS_CACHE_MS = 60_000;
+
+function invalidateStatusCache() {
+  statusCache = null;
+  statusCacheAt = 0;
+}
+
+function readStatusFresh() {
   const launch = resolveLaunch();
   const platform = process.platform;
   if (!launch.ok) {
@@ -210,6 +211,27 @@ function getStatus() {
 }
 
 /**
+ * @returns {{
+ *   supported: boolean,
+ *   enabled: boolean,
+ *   openAsHidden: boolean,
+ *   disabledReason: string|null,
+ *   path: string|null,
+ *   name: string,
+ *   platform: string
+ * }}
+ */
+function getStatus() {
+  const now = Date.now();
+  if (statusCache && now - statusCacheAt < STATUS_CACHE_MS) {
+    return statusCache;
+  }
+  statusCache = readStatusFresh();
+  statusCacheAt = now;
+  return statusCache;
+}
+
+/**
  * @param {{ openAtLogin?: boolean, openAsHidden?: boolean }} opts
  * @returns {{ ok: boolean, error?: string, status: ReturnType<typeof getStatus> }}
  */
@@ -219,6 +241,7 @@ function setAutostart(opts) {
   const launch = resolveLaunch();
 
   if (!launch.ok) {
+    invalidateStatusCache();
     return { ok: false, error: launch.reason || 'Indisponível', status: getStatus() };
   }
 
@@ -235,12 +258,14 @@ function setAutostart(opts) {
         openAsHidden,
       });
     } catch (err) {
+      invalidateStatusCache();
       return {
         ok: false,
         error: err && err.message ? err.message : String(err),
         status: getStatus(),
       };
     }
+    invalidateStatusCache();
     return { ok: true, status: getStatus() };
   }
 
@@ -249,14 +274,17 @@ function setAutostart(opts) {
     try {
       if (!openAtLogin) {
         if (fs.existsSync(file)) fs.unlinkSync(file);
+        invalidateStatusCache();
         return { ok: true, status: getStatus() };
       }
       fs.mkdirSync(path.dirname(file), { recursive: true });
       // Selftest may inject MULTIHEIZ_AUTOSTART_EXEC to avoid writing a real /opt path.
       const execPath = process.env.MULTIHEIZ_AUTOSTART_EXEC || launch.path;
       fs.writeFileSync(file, buildLinuxDesktop({ execPath, openAsHidden }), 'utf8');
+      invalidateStatusCache();
       return { ok: true, status: getStatus() };
     } catch (err) {
+      invalidateStatusCache();
       return {
         ok: false,
         error: err && err.message ? err.message : String(err),
@@ -265,6 +293,7 @@ function setAutostart(opts) {
     }
   }
 
+  invalidateStatusCache();
   return { ok: false, error: 'Não suportado', status: getStatus() };
 }
 
@@ -284,6 +313,7 @@ function cleanupSelftest() {
   } catch {
     /* ignore */
   }
+  invalidateStatusCache();
 }
 
 /** Windows: read HKCU Run value for our name (selftest verification). */
@@ -320,4 +350,5 @@ module.exports = {
   wantsStartHidden,
   linuxAutostartPath,
   isSelftestMode,
+  invalidateStatusCache,
 };

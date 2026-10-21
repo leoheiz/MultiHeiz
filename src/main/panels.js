@@ -51,6 +51,10 @@ function noteOverlaySpy(op, detail) {
   overlaySelftestSpies.push({ at: Date.now(), op, detail: detail || undefined });
 }
 
+/** Apply WebRTC IP policy once per WebContents (not per navigation). */
+/** @type {WeakSet<import('electron').WebContents>} */
+const webRtcPolicyApplied = new WeakSet();
+
 /**
  * WebRTC IP handling — avoids Chromium binding host-candidate UDP on every
  * LAN interface (Windows Firewall prompt when opening X/Meet/etc.).
@@ -58,10 +62,12 @@ function noteOverlaySpy(op, detail) {
  * disable_non_proxied_udp (would break direct UDP calls).
  * Env MULTIHEIZ_WEBRTC_IP_POLICY overrides; MULTIHEIZ_SOCKETS_MEASURE skips
  * the production default so check:sockets can compare variants.
+ * Called only when creating a panel/popup — never on did-navigate.
  * @param {import('electron').WebContents} wc
  */
 function applyWebRtcIpHandlingPolicy(wc) {
   if (!wc || wc.isDestroyed()) return;
+  if (webRtcPolicyApplied.has(wc)) return;
   try {
     const measure = process.env.MULTIHEIZ_SOCKETS_MEASURE === '1';
     const override = process.env.MULTIHEIZ_WEBRTC_IP_POLICY || '';
@@ -76,6 +82,7 @@ function applyWebRtcIpHandlingPolicy(wc) {
           policy
         )
       );
+      webRtcPolicyApplied.add(wc);
     }
   } catch (err) {
     console.warn(

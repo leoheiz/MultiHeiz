@@ -1295,12 +1295,15 @@ try {
   /* ignore */
 }
 
-// Sonda FPS (rAF contínuo): só sob MULTIHEIZ_SELFTEST / MULTIHEIZ_PROFILE.
-// Em uso normal engolia o thread do painel e gerava IPC ~1/s → status bar na UI.
+// Sonda FPS (rAF contínuo): só PROFILE ou selftest:fps.
+// NÃO ligar em todo MULTIHEIZ_SELFTEST — em check:perf / idle isso mantém rAF
+// 60 Hz em painéis quietos e infla cpuAvgPct. A barra de status usa a sonda UI
+// (rajadas curtas em app.js). Em uso normal continua desligada.
 (function startFpsProbeIfProfiling() {
   let enabled = false;
   try {
-    enabled = !!(process.env.MULTIHEIZ_SELFTEST || process.env.MULTIHEIZ_PROFILE);
+    const st = String(process.env.MULTIHEIZ_SELFTEST || '');
+    enabled = !!(process.env.MULTIHEIZ_PROFILE || st === 'fps');
   } catch {
     enabled = false;
   }

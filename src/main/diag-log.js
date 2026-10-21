@@ -3,9 +3,13 @@
 /**
  * Rotating diagnostic error log (main + renderer console errors).
  * Max ~256 KB × 2 files under userData/logs (diag-errors.log + .1).
+ *
+ * Idle-safe: buffer + debounce, async appends only, errors-only from
+ * console-message (never warnings/info on the hot path), rate-limited.
  */
 
 const fs = require('node:fs');
+const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { app } = require('electron');
 
@@ -16,10 +20,17 @@ const FILE_PREV = 'diag-errors.log.1';
 let writeQueue = [];
 /** @type {ReturnType<typeof setTimeout> | null} */
 let flushTimer = null;
-const FLUSH_MS = 200;
+const FLUSH_MS = 400;
+/** @type {Promise<void>} */
+let flushInFlight = Promise.resolve();
 
 /** @type {number} */
 let crashCount = 0;
+
+/** Rate-limit renderer console errors (hot path). */
+let rendererLogWindowStart = 0;
+let rendererLogWindowCount = 0;
+const RENDERER_LOG_MAX_PER_SEC = 8;
 
 function logsDir() {
   return path.join(app.getPath('userData'), 'logs');
@@ -33,19 +44,23 @@ function prevPath() {
   return path.join(logsDir(), FILE_PREV);
 }
 
-function rotateIfNeeded() {
+async function rotateIfNeededAsync() {
   try {
     const file = currentPath();
-    if (!fs.existsSync(file)) return;
-    const st = fs.statSync(file);
+    let st;
+    try {
+      st = await fsp.stat(file);
+    } catch {
+      return;
+    }
     if (st.size < MAX_BYTES) return;
     const prev = prevPath();
     try {
-      if (fs.existsSync(prev)) fs.unlinkSync(prev);
+      await fsp.unlink(prev);
     } catch {
       /* ignore */
     }
-    fs.renameSync(file, prev);
+    await fsp.rename(file, prev);
   } catch {
     /* ignore */
   }
@@ -54,14 +69,55 @@ function rotateIfNeeded() {
 function flushQueue() {
   flushTimer = null;
   if (!writeQueue.length) return;
-  try {
-    const dir = logsDir();
-    fs.mkdirSync(dir, { recursive: true });
-    rotateIfNeeded();
-    const chunk = writeQueue.splice(0, writeQueue.length).join('');
-    fs.appendFileSync(currentPath(), chunk, 'utf8');
-  } catch {
-    writeQueue.length = 0;
+  const chunk = writeQueue.splice(0, writeQueue.length).join('');
+  flushInFlight = flushInFlight
+    .then(async () => {
+      try {
+        const dir = logsDir();
+        await fsp.mkdir(dir, { recursive: true });
+        await rotateIfNeededAsync();
+        await fsp.appendFile(currentPath(), chunk, 'utf8');
+      } catch {
+        /* drop on I/O failure — never block the event loop with sync fs */
+      }
+    })
+    .catch(() => {});
+}
+
+/**
+ * Sync flush for tests / report generation (awaits pending async write).
+ */
+function flushQueueSync() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (writeQueue.length) {
+    try {
+      const dir = logsDir();
+      fs.mkdirSync(dir, { recursive: true });
+      try {
+        const file = currentPath();
+        if (fs.existsSync(file)) {
+          const st = fs.statSync(file);
+          if (st.size >= MAX_BYTES) {
+            const prev = prevPath();
+            try {
+              if (fs.existsSync(prev)) fs.unlinkSync(prev);
+            } catch {
+              /* ignore */
+            }
+            fs.renameSync(file, prev);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      const chunk = writeQueue.splice(0, writeQueue.length).join('');
+      fs.appendFileSync(currentPath(), chunk, 'utf8');
+    } catch {
+      writeQueue.length = 0;
+    }
   }
 }
 
@@ -92,7 +148,19 @@ function recordMainError(message, meta) {
   append('main', message, meta);
 }
 
+function allowRendererLog() {
+  const now = Date.now();
+  if (now - rendererLogWindowStart >= 1000) {
+    rendererLogWindowStart = now;
+    rendererLogWindowCount = 0;
+  }
+  if (rendererLogWindowCount >= RENDERER_LOG_MAX_PER_SEC) return false;
+  rendererLogWindowCount += 1;
+  return true;
+}
+
 function recordRendererError(message, meta) {
+  if (!allowRendererLog()) return;
   append('renderer', message, meta);
 }
 
@@ -114,7 +182,7 @@ function setCrashCountForTest(n) {
  * @returns {string[]}
  */
 function readRecent(maxLines = 80) {
-  flushQueue();
+  flushQueueSync();
   const lines = [];
   try {
     const files = [currentPath(), prevPath()].filter((f) => fs.existsSync(f));
@@ -157,6 +225,7 @@ function installProcessHandlers() {
 
 /**
  * Attach render-process-gone / child-process-gone + console-message on a BrowserWindow.
+ * console-message: errors only (level >= 3) — warnings are a hot path under Chromium.
  * @param {import('electron').BrowserWindow} win
  */
 function attachWindow(win) {
@@ -168,14 +237,13 @@ function attachWindow(win) {
     });
   });
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
-    // Electron: 0=debug 1=info 2=warning 3=error
-    if (level >= 2) {
-      recordRendererError(String(message || ''), {
-        level,
-        line,
-        sourceId: sourceId ? String(sourceId).slice(0, 200) : undefined,
-      });
-    }
+    // Electron: 0=debug 1=info 2=warning 3=error — skip warnings (hot / noisy).
+    if (level < 3) return;
+    recordRendererError(String(message || ''), {
+      level,
+      line,
+      sourceId: sourceId ? String(sourceId).slice(0, 200) : undefined,
+    });
   });
 }
 
@@ -210,5 +278,5 @@ module.exports = {
   attachWindow,
   attachAppCrashHooks,
   logsDir,
-  flushQueue,
+  flushQueue: flushQueueSync,
 };
