@@ -3,7 +3,41 @@
 ;   Per-user (/currentuser) skips silently (netsh needs admin). Portable cannot add rules.
 ; - Uninstall: ask whether to delete %APPDATA%\<product> (default = keep).
 ;   Silent: keep data unless /DELETEDATA is passed. deleteAppDataOnUninstall stays false.
-; Uses ${PRODUCT_NAME} / ${PRODUCT_FILENAME} so the installertest variant stays isolated.
+; - Upgrade: electron-builder already defaults to the same mode as an existing install
+;   (per-machine if only HKLM, per-user if only HKCU). We warn if the user picks
+;   per-user while a per-machine install exists, and remove stale product shortcuts
+;   whose targets no longer exist.
+; Uses ${PRODUCT_NAME} / ${PRODUCT_FILENAME} / ${SHORTCUT_NAME} so the installertest
+; variant stays isolated.
+
+!macro multiheizRemoveStaleShortcut lnkPath
+  ; Delete ${lnkPath} only if it exists and its target path is missing.
+  IfFileExists "${lnkPath}" 0 multiheiz_stale_done_${__LINE__}
+    Push $R7
+    Push $R8
+    Push $R9
+    StrCpy $R9 "${lnkPath}"
+    ; Tiny PowerShell (no window): resolve .lnk target; remove if broken.
+    ; Paths may contain spaces — pass via env to avoid quoting hell.
+    System::Call 'Kernel32::SetEnvironmentVariable(t "MH_STALE_LNK", t "$R9")'
+    nsExec::ExecToLog 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "$$p=$$env:MH_STALE_LNK; if (-not $$p) { exit 0 }; $$s=(New-Object -ComObject WScript.Shell).CreateShortcut($$p); $$t=$$s.TargetPath; if ($$t -and -not (Test-Path -LiteralPath $$t)) { Remove-Item -LiteralPath $$p -Force -ErrorAction SilentlyContinue }"'
+    Pop $R8
+    System::Call 'Kernel32::SetEnvironmentVariable(t "MH_STALE_LNK", i 0)'
+    Pop $R9
+    Pop $R8
+    Pop $R7
+  multiheiz_stale_done_${__LINE__}:
+!macroend
+
+!macro customInit
+  ; Remove broken Start Menu / Desktop shortcuts left from old installs (target gone).
+  ; Only touches our SHORTCUT_NAME — never other apps. Safe for installertest variant.
+  ; Use absolute paths (do not change SetShellVarContext — initMultiUser already set it).
+  !insertmacro multiheizRemoveStaleShortcut "$APPDATA\Microsoft\Windows\Start Menu\Programs\${SHORTCUT_NAME}.lnk"
+  !insertmacro multiheizRemoveStaleShortcut "$PROFILE\Desktop\${SHORTCUT_NAME}.lnk"
+  !insertmacro multiheizRemoveStaleShortcut "$PROGRAMDATA\Microsoft\Windows\Start Menu\Programs\${SHORTCUT_NAME}.lnk"
+  !insertmacro multiheizRemoveStaleShortcut "$PUBLIC\Desktop\${SHORTCUT_NAME}.lnk"
+!macroend
 
 !macro customInstall
   ; Only attempt firewall rules when installing for all users (elevated).
@@ -16,6 +50,16 @@
     DetailPrint "Firewall rule ${PRODUCT_NAME} (exit $0)"
   ${Else}
     DetailPrint "Skipping firewall rule (per-user install; needs elevation)"
+  ${EndIf}
+
+  ; Non-silent note: per-user chosen while a per-machine install already exists.
+  ; (electron-builder already defaults the radio to "all users" when only HKLM exists.)
+  ${If} $installMode == "CurrentUser"
+  ${AndIf} $hasPerMachineInstallation == "1"
+    IfSilent multiheiz_skip_dual_note
+      MessageBox MB_ICONINFORMATION|MB_OK \
+        "Já existe uma instalação de ${PRODUCT_NAME} para todos os usuários.$\r$\n$\r$\nInstalar só para o usuário atual pode criar atalhos e entradas duplicadas.$\r$\nRecomenda-se escolher «Todos os usuários» para atualizar a instalação existente."
+    multiheiz_skip_dual_note:
   ${EndIf}
 !macroend
 

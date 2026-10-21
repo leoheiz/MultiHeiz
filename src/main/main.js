@@ -22,7 +22,7 @@ const {
 } = require('./state');
 const panels = require('./panels');
 const memory = require('./memory');
-const { APP_USER_MODEL_ID, APP_DISPLAY_NAME, envGet } = require('./config');
+const { APP_DISPLAY_NAME, envGet, resolveAppUserModelId } = require('./config');
 const { initV16 } = require('./v16-bridge');
 const adblock = require('./adblock');
 const extensions = require('./extensions');
@@ -58,7 +58,10 @@ try {
 
 try {
   if (process.platform === 'win32') {
-    app.setAppUserModelId(APP_USER_MODEL_ID);
+    // Packaged → com.leo.multiheiz; unpackaged/selftests → com.leo.multiheiz.dev
+    // (same AUMID as the installed app made Windows merge Start shortcuts and
+    // shadow MultiHeiz with Electron.lnk → node_modules/electron/dist/electron.exe).
+    app.setAppUserModelId(resolveAppUserModelId());
   }
 } catch {
   /* ignore */

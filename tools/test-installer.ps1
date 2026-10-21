@@ -114,6 +114,17 @@ function Read-Shortcut([string]$lnkPath) {
   }
 }
 
+function Get-LnkAumid([string]$lnkPath) {
+  $shell = New-Object -ComObject Shell.Application
+  $dir = Split-Path -Parent $lnkPath
+  $name = Split-Path -Leaf $lnkPath
+  $folder = $shell.NameSpace($dir)
+  if (-not $folder) { return $null }
+  $item = $folder.ParseName($name)
+  if (-not $item) { return $null }
+  return [string]$item.ExtendedProperty('System.AppUserModel.ID')
+}
+
 function Get-TestUninstallKey {
   # electron-builder GUID from appId com.leo.multiheiz.installertest
   $base = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
@@ -211,7 +222,27 @@ Assert (Test-Path -LiteralPath $smLnk) "Start Menu shortcut missing (expected Mu
 $lnk = Read-Shortcut $smLnk
 Write-Host "  Shortcut target=$($lnk.TargetPath) icon=$($lnk.IconLocation)"
 Assert ($lnk.TargetPath -eq $exe) "shortcut target mismatch: $($lnk.TargetPath) vs $exe"
-Assert ($lnk.IconLocation -like "*MultiHeizInstallerTest*") "shortcut icon should reference app: $($lnk.IconLocation)"
+Assert (
+  ($lnk.IconLocation -like "*MultiHeizInstallerTest*") -or
+  ($lnk.IconLocation -like "*$exe*") -or
+  ($lnk.IconLocation -eq "$exe,0")
+) "shortcut icon should reference app: $($lnk.IconLocation)"
+
+$expectedAumid = 'com.leo.multiheiz.installertest'
+$aumid = Get-LnkAumid $smLnk
+Write-Host "  Start Menu AUMID=$aumid (expected $expectedAumid)"
+Assert ($aumid -eq $expectedAumid) "Start Menu System.AppUserModel.ID mismatch: '$aumid' vs '$expectedAumid'"
+
+$deskLnk = Join-Path $env:USERPROFILE 'Desktop\MultiHeizInstallerTest.lnk'
+$deskLnkPublic = Join-Path $env:PUBLIC 'Desktop\MultiHeizInstallerTest.lnk'
+$deskFound = $null
+foreach ($d in @($deskLnk, $deskLnkPublic)) {
+  if (Test-Path -LiteralPath $d) { $deskFound = $d; break }
+}
+Assert ($null -ne $deskFound) "Desktop shortcut missing (tried $deskLnk / $deskLnkPublic)"
+$dLnk = Read-Shortcut $deskFound
+Write-Host "  Desktop shortcut: $deskFound target=$($dLnk.TargetPath)"
+Assert ($dLnk.TargetPath -eq $exe) "desktop shortcut target mismatch: $($dLnk.TargetPath) vs $exe"
 
 $ukey = Get-TestUninstallKey
 Assert ($null -ne $ukey) 'HKCU uninstall key for MultiHeizInstallerTest not found'
@@ -219,13 +250,19 @@ $ukeyStr = [string]$ukey
 $isHkcu = $ukeyStr -match 'HKCU:|HKEY_CURRENT_USER'
 Assert $isHkcu "uninstall key must be HKCU, got $ukeyStr"
 Assert (-not ($ukeyStr -match 'HKEY_LOCAL_MACHINE|HKLM:')) "uninstall key must NOT be HKLM: $ukeyStr"
+$uProps = Get-ItemProperty -LiteralPath $ukeyStr.Trim()
 Write-Host "  Uninstall registry: $ukeyStr"
+Write-Host "    DisplayName=$($uProps.DisplayName) DisplayVersion=$($uProps.DisplayVersion)"
+Write-Host "    DisplayIcon=$($uProps.DisplayIcon) Publisher=$($uProps.Publisher) EstimatedSize=$($uProps.EstimatedSize)"
+Assert ($uProps.DisplayName -like '*MultiHeizInstallerTest*') "DisplayName missing product: $($uProps.DisplayName)"
+Assert ([string]$uProps.DisplayIcon) "DisplayIcon missing"
+Assert ([string]$uProps.Publisher) "Publisher missing"
+Assert ([string]$uProps.DisplayVersion) "DisplayVersion missing"
+Assert ($null -ne $uProps.EstimatedSize -and [int]$uProps.EstimatedSize -gt 0) "EstimatedSize missing/zero: $($uProps.EstimatedSize)"
 
 # Real MultiHeiz shortcuts must be unchanged (checked via snapshot later)
 
 Write-Step 'Silent uninstall (must KEEP userData - no /DELETEDATA)'
-# Prefer QuietUninstallString with _?= for wait
-$uProps = Get-ItemProperty -LiteralPath $ukeyStr.Trim()
 # NSIS uninstaller copies itself; use Start-Process with /S and _?= so Wait works
 $uArgs = @('/S', '/currentuser', "_?=$installDir")
 Write-Host "  Running: $uninst $($uArgs -join ' ')"
@@ -235,6 +272,9 @@ Write-Host "  Uninstaller exit=$($up.ExitCode)"
 Start-Sleep -Seconds 2
 Assert (-not (Test-Path -LiteralPath $exe)) "exe still present after uninstall: $exe"
 Assert (-not (Test-Path -LiteralPath $smLnk)) "Start Menu shortcut still present: $smLnk"
+if ($deskFound) {
+  Assert (-not (Test-Path -LiteralPath $deskFound)) "Desktop shortcut still present: $deskFound"
+}
 $ukeyAfter = Get-TestUninstallKey
 Assert ($null -eq $ukeyAfter) 'HKCU uninstall key still present'
 Assert (Test-Path -LiteralPath $marker) "userData marker was deleted in silent mode (must keep): $marker"
