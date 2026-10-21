@@ -1,0 +1,41 @@
+# TEST-ONLY installer (different appId / productName) so silent install/uninstall
+# never touches Leo's real MultiHeiz (HKLM / Program Files / Start Menu "MultiHeiz").
+# Used by tools/test-installer.ps1 only. Do not publish.
+
+appId: com.leo.multiheiz.installertest
+productName: MultiHeizInstallerTest
+directories:
+  output: dist-installertest
+  buildResources: build
+files:
+  - src/**/*
+  - '!src/main/selftest-*.js'
+  - '!tools'
+  - '!tools/**/*'
+  - build/icon.png
+  - package.json
+asarUnpack:
+  - '**/src/main/adblock/cosmetic-preload.js'
+  - '**/src/main/adblock/engine-worker.js'
+  - '**/src/preload/panel-preload.js'
+  - '**/src/main/extensions/sw-shim-preload.js'
+  - '**/src/main/extensions/early-preload.js'
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: MultiHeizInstallerTest
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  deleteAppDataOnUninstall: false
+  include: installer.nsh
+  artifactName: MultiHeizInstallerTest-${version}-setup.${ext}
+portable: null

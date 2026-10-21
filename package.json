@@ -78,6 +78,7 @@
     "check:perf": "node tools/check-perf.js",
     "check:security-review": "node tools/check-security.js",
     "check:release": "node tools/check-release.js",
+    "test:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/test-installer.ps1",
     "clean": "node tools/clean-dist.js",
     "predist": "npm run check:encoding && npm run clean",
     "predist:win": "npm run check:encoding && npm run clean",
@@ -142,7 +143,15 @@
       "mimeTypes": [
         "x-scheme-handler/http",
         "x-scheme-handler/https"
-      ]
+      ],
+      "desktop": {
+        "entry": {
+          "Name": "MultiHeiz",
+          "Comment": "Navegador multi-janela com painéis e sessões independentes",
+          "Categories": "Network;WebBrowser;",
+          "StartupWMClass": "multiheiz"
+        }
+      }
     },
     "appImage": {
       "artifactName": "MultiHeiz-${version}.${ext}"
@@ -154,8 +163,16 @@
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
       "shortcutName": "MultiHeiz",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
       "include": "installer.nsh",
       "artifactName": "MultiHeiz-${version}-setup.${ext}"
     },
