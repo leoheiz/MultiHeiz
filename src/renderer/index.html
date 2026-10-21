@@ -171,7 +171,20 @@
         <h2 id="dlg-account-title">Nova janela</h2>
         <label>Nome <input name="name" required maxlength="64" /></label>
         <label>Cor <input name="color" type="color" value="#2bb8a6" /></label>
-        <label>URL inicial <input name="startUrl" type="url" placeholder="https://..." required /></label>
+        <label
+          >URL inicial
+          <input
+            name="startUrl"
+            id="account-start-url"
+            type="text"
+            inputmode="url"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="exemplo.com ou https://..."
+            maxlength="2048"
+          />
+        </label>
+        <p id="account-url-error" class="account-url-error" hidden role="alert">Endereço inválido</p>
         <label
           >Categoria
           <select name="workspaceId" id="account-ws-select"></select>

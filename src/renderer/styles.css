@@ -695,6 +695,12 @@ html[data-theme='claro'] .sidebar-item:hover {
   color: #e35d6a;
 }
 
+.account-url-error {
+  margin: -4px 0 8px;
+  font-size: 0.85rem;
+  color: #e35d6a;
+}
+
 .dlg-proxy-status.is-ok {
   color: #3dd68c;
 }

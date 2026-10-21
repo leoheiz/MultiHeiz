@@ -194,6 +194,8 @@ const el = {
   dlgAccount: document.getElementById('dlg-account'),
   formAccount: document.getElementById('form-account'),
   dlgAccountTitle: document.getElementById('dlg-account-title'),
+  accountStartUrl: document.getElementById('account-start-url'),
+  accountUrlError: document.getElementById('account-url-error'),
   accountWsSelect: document.getElementById('account-ws-select'),
   dlgWorkspace: document.getElementById('dlg-workspace'),
   formWorkspace: document.getElementById('form-workspace'),
@@ -2513,13 +2515,22 @@ function showToast(message, action) {
   const text = document.createElement('span');
   text.textContent = message;
   el.toast.appendChild(text);
-  if (action && action.label && action.path) {
+  if (action && action.label && (action.path || typeof action.onClick === 'function')) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn ghost tiny';
     btn.textContent = action.label;
     btn.addEventListener('click', () => {
-      if (window.multiheiz.openPath) window.multiheiz.openPath(action.path);
+      if (typeof action.onClick === 'function') {
+        try {
+          action.onClick();
+        } catch {
+          /* ignore */
+        }
+      } else if (action.path && window.multiheiz.openPath) {
+        window.multiheiz.openPath(action.path);
+      }
+      el.toast.classList.add('hidden');
     });
     el.toast.appendChild(btn);
   }
@@ -2528,6 +2539,105 @@ function showToast(message, action) {
   toastTimer = setTimeout(() => {
     el.toast.classList.add('hidden');
   }, 8000);
+}
+
+/**
+ * Valida e normaliza URL inicial (espelha url-policy no main).
+ * @param {string} raw
+ * @returns {{ ok: true, url: string } | { ok: false, error: string }}
+ */
+function validateAndNormalizeStartUrlUi(raw) {
+  const s = String(raw || '').trim();
+  if (!s || /\s/.test(s)) return { ok: false, error: 'Endereço inválido' };
+  if (/^(data|javascript|file):/i.test(s)) return { ok: false, error: 'Endereço inválido' };
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$/.exec(s);
+  // Dígito após ':' = porta (exemplo.test:8080), não scheme
+  const hasScheme = !!(schemeMatch && !/^\d/.test(schemeMatch[2]));
+  let candidate = hasScheme ? s : 'https://' + s;
+  let u;
+  try {
+    u = new URL(candidate);
+  } catch {
+    return { ok: false, error: 'Endereço inválido' };
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return { ok: false, error: 'Endereço inválido' };
+  }
+  const h = String(u.hostname || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, '');
+  if (!h) return { ok: false, error: 'Endereço inválido' };
+  let hostOk = false;
+  if (h === 'localhost') hostOk = true;
+  else if (/^(\d{1,3}\.){3}\d{1,3}$/.test(h)) {
+    hostOk = h.split('.').every((n) => {
+      const v = Number(n);
+      return v >= 0 && v <= 255;
+    });
+  } else if (h.includes(':')) {
+    hostOk = /^[0-9a-f:]+$/i.test(h);
+  } else if (h.includes('.')) {
+    const labels = h.split('.');
+    hostOk =
+      labels.length >= 2 &&
+      labels.every((label) => label && label.length <= 63 && /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i.test(label)) &&
+      /^[a-z]{2,}$/i.test(labels[labels.length - 1]);
+  }
+  if (!hostOk) return { ok: false, error: 'Endereço inválido' };
+  return { ok: true, url: u.href };
+}
+
+function setAccountUrlError(show) {
+  if (!el.accountUrlError) return;
+  if (show) {
+    el.accountUrlError.hidden = false;
+    el.accountUrlError.textContent = 'Endereço inválido';
+  } else {
+    el.accountUrlError.hidden = true;
+  }
+}
+
+function clearCatalogSearch() {
+  if (!el.catalogSearch) return;
+  el.catalogSearch.value = '';
+  try {
+    el.catalogSearch.blur();
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Compara origem+caminho (ignora query/hash) para decidir se ainda está na URL inicial antiga.
+ * @param {string} a
+ * @param {string} b
+ */
+function sameOriginPath(a, b) {
+  try {
+    const ua = new URL(String(a || ''));
+    const ub = new URL(String(b || ''));
+    return ua.origin === ub.origin && ua.pathname === ub.pathname;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Painel em branco / about:blank / erro de carga.
+ * @param {string} accountId
+ */
+function panelNeedsStartUrlReload(accountId) {
+  const nav = navState.get(accountId);
+  const url = String((nav && nav.url) || '').trim().toLowerCase();
+  if (!url || url === 'about:blank' || url === 'about:blank/') return true;
+  const slot = el.grid && el.grid.querySelector(`.panel-slot[data-account-id="${accountId}"]`);
+  const st = slot && slot.querySelector('.panel-load-status');
+  if (st && !st.classList.contains('hidden')) {
+    const status = st.dataset.status || '';
+    if (status === 'error' || status === 'retry') return true;
+  }
+  return false;
 }
 
 /** @type {Array<object>|null} */
@@ -2580,8 +2690,7 @@ function renderCatalogGrid(query) {
   customName.textContent = 'Site personalizado';
   custom.append(customIcon, customName);
   custom.addEventListener('click', () => {
-    closeCatalogPicker();
-    openAccountDialog(null);
+    openCustomSiteFromCatalog();
   });
   // Sempre mostra "Site personalizado" (mesmo com busca ativa, se bater ou busca vazia)
   const customVisible =
@@ -2618,11 +2727,11 @@ function renderCatalogGrid(query) {
 
 async function openCatalogPicker() {
   if (!el.dlgCatalog) {
-    openAccountDialog(null);
+    openAccountDialog(null, { focusUrl: true, customSite: true });
     return;
   }
   await ensureCatalogApps();
-  if (el.catalogSearch) el.catalogSearch.value = '';
+  clearCatalogSearch();
   renderCatalogGrid('');
   pushOverlay('dlg-catalog');
   el.dlgCatalog.showModal();
@@ -2636,7 +2745,28 @@ async function openCatalogPicker() {
 }
 
 function closeCatalogPicker() {
+  clearCatalogSearch();
   if (el.dlgCatalog && el.dlgCatalog.open) el.dlgCatalog.close();
+}
+
+/** Abre o formulário de site personalizado após fechar o seletor (foco na URL). */
+function openCustomSiteFromCatalog() {
+  const openForm = () => openAccountDialog(null, { focusUrl: true, customSite: true });
+  if (el.dlgCatalog && el.dlgCatalog.open) {
+    const onClose = () => {
+      el.dlgCatalog.removeEventListener('close', onClose);
+      // Próximo frame: garante que a busca do catálogo não retenha o foco
+      requestAnimationFrame(() => {
+        clearCatalogSearch();
+        openForm();
+      });
+    };
+    el.dlgCatalog.addEventListener('close', onClose);
+    closeCatalogPicker();
+    return;
+  }
+  clearCatalogSearch();
+  openForm();
 }
 
 async function pickCatalogApp(app) {
@@ -2658,13 +2788,21 @@ async function pickCatalogApp(app) {
   }
 }
 
-function openAccountDialog(account) {
+/**
+ * @param {Account|null} account
+ * @param {{ focusUrl?: boolean, customSite?: boolean }} [opts]
+ */
+function openAccountDialog(account, opts = {}) {
   editingAccountId = account ? account.id : null;
+  const customSite = !account && !!opts.customSite;
   el.dlgAccountTitle.textContent = account ? 'Editar janela' : 'Nova janela';
   const form = el.formAccount;
   form.name.value = account ? account.name : '';
   form.color.value = account ? account.color : '#2bb8a6';
-  form.startUrl.value = account ? account.startUrl : 'https://www.google.com';
+  // Site personalizado: campo vazio (evita resto de https://www… e gravação parcial)
+  if (customSite) form.startUrl.value = '';
+  else form.startUrl.value = account ? account.startUrl : 'https://www.google.com';
+  setAccountUrlError(false);
   const keepAlive = !!(account && account.keepAliveInBackground);
   const pauseBg = !!(account && account.pauseInBackground);
   // Mutually exclusive — pause wins if both were somehow set
@@ -2685,6 +2823,20 @@ function openAccountDialog(account) {
   }
   pushOverlay('dlg-account');
   el.dlgAccount.showModal();
+  const focusUrl = !!opts.focusUrl || customSite;
+  requestAnimationFrame(() => {
+    clearCatalogSearch();
+    const target = focusUrl
+      ? form.startUrl || el.accountStartUrl
+      : form.name || form.querySelector('input[name="name"]');
+    if (!target) return;
+    try {
+      target.focus();
+      if (focusUrl && typeof target.select === 'function' && target.value) target.select();
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 function openWorkspaceDialog(ws) {
@@ -3008,9 +3160,51 @@ function proposeTiles(tiles) {
 el.btnAddAccount.addEventListener('click', () => void openCatalogPicker());
 if (el.catalogSearch) {
   el.catalogSearch.addEventListener('input', () => {
+    // Só filtra enquanto o seletor está aberto (não captura teclas do formulário)
+    if (!(el.dlgCatalog && el.dlgCatalog.open)) return;
     renderCatalogGrid(el.catalogSearch.value);
   });
+  // Impede que a busca do catálogo receba digitação com o formulário de conta aberto
+  el.catalogSearch.addEventListener('keydown', (e) => {
+    if (el.dlgAccount && el.dlgAccount.open) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+  el.catalogSearch.addEventListener('focus', () => {
+    if (el.dlgAccount && el.dlgAccount.open) {
+      try {
+        el.catalogSearch.blur();
+      } catch {
+        /* ignore */
+      }
+      const urlField = el.formAccount && el.formAccount.startUrl;
+      if (urlField) {
+        try {
+          urlField.focus();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  });
 }
+document.addEventListener(
+  'keydown',
+  (e) => {
+    // Escopo: typeahead do seletor só com o catálogo visível e sem formulário de conta
+    if (!(el.dlgCatalog && el.dlgCatalog.open)) return;
+    if (el.dlgAccount && el.dlgAccount.open) return;
+    if (!el.catalogSearch) return;
+    const t = e.target;
+    if (t && (t === el.catalogSearch || (t.closest && t.closest('#dlg-catalog')))) {
+      // Já dentro do seletor — deixa o input nativo cuidar
+      return;
+    }
+    // Sem listener global que redirecione teclas para a busca fora do seletor
+  },
+  true
+);
 if (el.btnCatalogClose) {
   el.btnCatalogClose.addEventListener('click', () => closeCatalogPicker());
 }
@@ -3401,25 +3595,70 @@ if (el.formAccount && el.formAccount.keepAliveInBackground && el.formAccount.pau
 
 el.formAccount.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const fd = new FormData(el.formAccount);
+  // Sempre lê o valor atual do campo no Submit/Enter — nunca estado intermediário/debounce
+  const rawUrl = String(
+    (el.formAccount.startUrl && el.formAccount.startUrl.value) || ''
+  ).trim();
+  const validated = validateAndNormalizeStartUrlUi(rawUrl);
+  if (!validated.ok) {
+    setAccountUrlError(true);
+    try {
+      el.formAccount.startUrl.focus();
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  setAccountUrlError(false);
   let keepAliveInBackground = el.formAccount.keepAliveInBackground.checked;
   let pauseInBackground = el.formAccount.pauseInBackground.checked;
   if (keepAliveInBackground && pauseInBackground) {
     keepAliveInBackground = false;
   }
+  const nameRaw = String((el.formAccount.name && el.formAccount.name.value) || '').trim();
   const data = {
-    name: String(fd.get('name') || '').trim(),
-    color: String(fd.get('color') || '#2bb8a6'),
-    startUrl: String(fd.get('startUrl') || '').trim(),
-    workspaceId: String(fd.get('workspaceId') || state.activeWorkspaceId),
+    name: nameRaw,
+    color: String((el.formAccount.color && el.formAccount.color.value) || '#2bb8a6'),
+    startUrl: validated.url,
+    workspaceId: String(
+      (el.formAccount.workspaceId && el.formAccount.workspaceId.value) || state.activeWorkspaceId
+    ),
     keepAliveInBackground,
     pauseInBackground,
   };
   if (editingAccountId) {
-    applyState(await window.multiheiz.updateAccount({ id: editingAccountId, ...data }));
+    const accountId = editingAccountId;
+    const prev = (state.accounts || []).find((a) => a.id === accountId);
+    const oldStart = prev ? String(prev.startUrl || '') : '';
+    const res = await window.multiheiz.updateAccount({ id: accountId, ...data });
+    if (res && res.ok === false) {
+      setAccountUrlError(true);
+      return;
+    }
+    applyState(res && res.state ? res.state : res);
+    const newStart = validated.url;
+    const shouldNavigate =
+      panelNeedsStartUrlReload(accountId) || sameOriginPath(navState.get(accountId)?.url, oldStart);
+    if (shouldNavigate) {
+      await window.multiheiz.panelNavigate(accountId, newStart);
+    } else if (oldStart && !sameOriginPath(oldStart, newStart)) {
+      const navUrl = navState.get(accountId)?.url || '';
+      if (navUrl && !sameOriginPath(navUrl, oldStart) && !panelNeedsStartUrlReload(accountId)) {
+        showToast('URL inicial atualizada', {
+          label: 'Abrir agora',
+          onClick: () => {
+            void window.multiheiz.panelNavigate(accountId, newStart);
+          },
+        });
+      }
+    }
   } else {
     const res = await window.multiheiz.createAccount(data);
-    applyState(res.state);
+    if (res && res.ok === false) {
+      setAccountUrlError(true);
+      return;
+    }
+    if (res && res.state) applyState(res.state);
   }
   el.dlgAccount.close();
 });
@@ -3623,7 +3862,7 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'ui:edit-account' && payload.accountId) {
     const acc = state.accounts.find((a) => a.id === payload.accountId);
-    if (acc) openAccountDialog(acc);
+    if (acc) openAccountDialog(acc, { focusUrl: !!payload.focusUrl });
     return;
   }
   if (payload.type === 'ui:confirm-remove-account' && payload.accountId) {
@@ -4050,9 +4289,34 @@ window.__multiheizUi = {
   workspaceDeleteConfirmMessage,
   openCatalogPicker: () => openCatalogPicker(),
   closeCatalogPicker: () => closeCatalogPicker(),
-  openAccountDialog: () => openAccountDialog(null),
+  openAccountDialog: (opts) => openAccountDialog(null, opts || { focusUrl: true, customSite: true }),
+  openAccountDialogFor: (accountId, opts) => {
+    const acc = (state.accounts || []).find((a) => a.id === accountId);
+    if (!acc) return { ok: false };
+    openAccountDialog(acc, opts || {});
+    return { ok: true };
+  },
   closeAccountDialog: () => {
     if (el.dlgAccount.open) el.dlgAccount.close();
+  },
+  isAccountDialogOpen: () => !!(el.dlgAccount && el.dlgAccount.open),
+  getAccountStartUrlValue: () =>
+    String((el.formAccount && el.formAccount.startUrl && el.formAccount.startUrl.value) || ''),
+  getAccountUrlErrorVisible: () => !!(el.accountUrlError && !el.accountUrlError.hidden),
+  getCatalogSearchValue: () => String((el.catalogSearch && el.catalogSearch.value) || ''),
+  submitAccountForm: () => {
+    if (!el.formAccount) return false;
+    el.formAccount.requestSubmit();
+    return true;
+  },
+  getActiveElementInfo: () => {
+    const a = document.activeElement;
+    if (!a) return { tag: '', id: '', name: '' };
+    return {
+      tag: String(a.tagName || '').toLowerCase(),
+      id: String(a.id || ''),
+      name: String(a.getAttribute('name') || ''),
+    };
   },
   getCatalogVisibleIds: () => {
     if (!el.catalogGrid) return [];
@@ -4082,8 +4346,7 @@ window.__multiheizUi = {
   },
   pickCatalogById: async (id) => {
     if (id === 'custom') {
-      closeCatalogPicker();
-      openAccountDialog(null);
+      openCustomSiteFromCatalog();
       return { ok: true, custom: true };
     }
     const apps = await ensureCatalogApps();

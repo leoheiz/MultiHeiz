@@ -38,7 +38,7 @@ const chromeFullscreen = require('./chrome-fullscreen');
 const sidebarCursor = require('./sidebar-cursor');
 const ipcGuard = require('./ipc-guard');
 const permissions = require('./permissions');
-const { sanitizeUserStartUrl } = require('./url-policy');
+const { sanitizeUserStartUrl, validateAndNormalizeStartUrl } = require('./url-policy');
 const catalog = require('./catalog');
 const proxy = require('./proxy');
 const doh = require('./doh');
@@ -231,6 +231,8 @@ const SELFTEST_DOH = selftestMode === 'doh';
 const SELFTEST_SETTINGS_PERF = selftestMode === 'settings-perf';
 const SELFTEST_PERMISSIONS = selftestMode === 'permissions';
 const SELFTEST_CATALOG = selftestMode === 'catalog';
+const SELFTEST_CUSTOM_SITE = selftestMode === 'custom-site';
+const SELFTEST_EDIT_START_URL = selftestMode === 'edit-start-url';
 const SELFTEST_SHOTS_TOOLS = selftestMode === 'shots-tools';
 const SELFTEST_NOTES = selftestMode === 'notes';
 const SELFTEST_REMINDERS = selftestMode === 'reminders';
@@ -284,6 +286,8 @@ const ANY_SELFTEST =
   SELFTEST_SETTINGS_PERF ||
   SELFTEST_PERMISSIONS ||
   SELFTEST_CATALOG ||
+  SELFTEST_CUSTOM_SITE ||
+  SELFTEST_EDIT_START_URL ||
   SELFTEST_SHOTS_TOOLS ||
   SELFTEST_SHOTS_SIDEBAR2 ||
   SELFTEST_NOTES ||
@@ -300,6 +304,11 @@ const ANY_SELFTEST =
   SELFTEST_BADGES ||
   SELFTEST_LANGUAGETOOL ||
   SELFTEST_AI;
+
+// Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
+if (SELFTEST_CUSTOM_SITE) {
+  app.commandLine.appendSwitch('host-resolver-rules', 'MAP exemplo.test 127.0.0.1');
+}
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
 if (SELFTEST_PERMISSIONS) {
@@ -612,6 +621,8 @@ function createWindow() {
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_PERMISSIONS ||
     SELFTEST_CATALOG ||
+    SELFTEST_CUSTOM_SITE ||
+    SELFTEST_EDIT_START_URL ||
     SELFTEST_SHOTS_TOOLS ||
     SELFTEST_SHOTS_SIDEBAR2 ||
     SELFTEST_NOTES ||
@@ -641,6 +652,8 @@ function createWindow() {
     SELFTEST_SIDEBAR ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_CATALOG ||
+    SELFTEST_CUSTOM_SITE ||
+    SELFTEST_EDIT_START_URL ||
     SELFTEST_SHOTS_TOOLS ||
     SELFTEST_SHOTS_SIDEBAR2 ||
     SELFTEST_NOTES ||
@@ -714,6 +727,8 @@ function createWindow() {
       SELFTEST_WORKSPACE_DELETE ||
       SELFTEST_LAYOUT_WORKSPACE ||
       SELFTEST_CATALOG ||
+      SELFTEST_CUSTOM_SITE ||
+      SELFTEST_EDIT_START_URL ||
       SELFTEST_SHOTS_SIDEBAR2 ||
       SELFTEST_ADBLOCK ||
       SELFTEST_EXT ||
@@ -1686,6 +1701,55 @@ function createWindow() {
             rendererEval,
             app,
             catalog,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_CUSTOM_SITE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runCustomSiteSelftest } = require('./selftest-custom-site');
+          runCustomSiteSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            app,
+            catalog,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_EDIT_START_URL) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runEditStartUrlSelftest } = require('./selftest-edit-start-url');
+          runEditStartUrlSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            app,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -2804,10 +2868,7 @@ function registerIpc() {
     const catalogApp = catalogId ? catalog.getAppById(catalogId) : null;
     let name = (data && data.name) || `Janela ${s.accounts.length + 1}`;
     let color = (data && data.color) || colors[s.accounts.length % colors.length];
-    let startUrl = sanitizeUserStartUrl(
-      (data && data.startUrl) || homepageFallback,
-      homepageFallback
-    );
+    let startUrl = homepageFallback;
     /** @type {string|undefined} */
     let catalogIcon;
     if (catalogApp) {
@@ -2820,6 +2881,18 @@ function registerIpc() {
       startUrl = catalogApp.url;
       catalogIcon = catalogApp.icon;
       // tweaks.userAgent: UA Chrome já é global — não aplica override por janela.
+    } else if (data && data.startUrl != null && String(data.startUrl).trim()) {
+      const validated = validateAndNormalizeStartUrl(data.startUrl);
+      if (!validated.ok) {
+        return { ok: false, error: validated.error || 'Endereço inválido' };
+      }
+      startUrl = validated.url;
+      // Selftest custom-site: servidor local é HTTP; host exemplo.test → 127.0.0.1
+      if (SELFTEST_CUSTOM_SITE && /^https:\/\/exemplo\.test(?::|\/|$)/i.test(startUrl)) {
+        startUrl = 'http://' + startUrl.slice('https://'.length);
+      }
+    } else {
+      startUrl = sanitizeUserStartUrl(homepageFallback, homepageFallback);
     }
     const account = {
       id,
@@ -2861,14 +2934,21 @@ function registerIpc() {
   });
 
   ipcMain.handle('account:update', (_e, { id, ...fields }) => {
+    /** @type {string|null} */
+    let normalizedStartUrl = null;
+    if (fields.startUrl != null) {
+      const validated = validateAndNormalizeStartUrl(fields.startUrl);
+      if (!validated.ok) {
+        return { ok: false, error: validated.error || 'Endereço inválido' };
+      }
+      normalizedStartUrl = validated.url;
+    }
     updateState((s) => {
       const a = s.accounts.find((x) => x.id === id);
       if (!a) return;
       if (fields.name != null) a.name = String(fields.name).trim() || a.name;
       if (fields.color != null) a.color = fields.color;
-      if (fields.startUrl != null) {
-        a.startUrl = sanitizeUserStartUrl(fields.startUrl, a.startUrl || 'https://www.google.com');
-      }
+      if (normalizedStartUrl != null) a.startUrl = normalizedStartUrl;
       if (fields.workspaceId != null) a.workspaceId = fields.workspaceId;
       if (typeof fields.muted === 'boolean') a.muted = fields.muted;
       if (typeof fields.pauseInBackground === 'boolean') {

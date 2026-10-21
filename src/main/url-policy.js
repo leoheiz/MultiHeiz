@@ -157,6 +157,89 @@ function isSelftestAllowedUrl(url) {
 }
 
 /**
+ * Host permitido para URL inicial digitada pelo usuário.
+ * Exige TLD (ex.: exemplo.com); rejeita "www" / "https://www".
+ * Exceções: localhost e IP (v4/v6).
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+function isValidUserStartHost(hostname) {
+  const h = String(hostname || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, '');
+  if (!h) return false;
+  if (h === 'localhost') return true;
+  // IPv4
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(h)) {
+    const parts = h.split('.').map((n) => Number(n));
+    return parts.every((n) => n >= 0 && n <= 255);
+  }
+  // IPv6 (URL.hostname sem colchetes)
+  if (h.includes(':')) {
+    return /^[0-9a-f:]+$/i.test(h);
+  }
+  // Domínio com pelo menos um ponto e TLD alfabético (≥2)
+  if (!h.includes('.')) return false;
+  const labels = h.split('.');
+  if (labels.length < 2) return false;
+  for (const label of labels) {
+    if (!label || label.length > 63) return false;
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/i.test(label)) return false;
+  }
+  const tld = labels[labels.length - 1];
+  if (!/^[a-z]{2,}$/i.test(tld)) return false;
+  return true;
+}
+
+/**
+ * Normaliza e valida URL inicial (site personalizado / editar URL).
+ * Aceita exemplo.com, www.exemplo.com/x, https://…, http://… (url-policy).
+ * @param {string} raw
+ * @returns {{ ok: true, url: string } | { ok: false, error: string }}
+ */
+/**
+ * Detecta scheme real vs host:porta (ex.: exemplo.test:8080/abc).
+ * @param {string} s
+ * @returns {boolean}
+ */
+function hasExplicitUrlScheme(s) {
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$/.exec(String(s || ''));
+  if (!m) return false;
+  // Dígito após ':' → porta, não scheme (exemplo.test:8080)
+  if (/^\d/.test(m[2])) return false;
+  return true;
+}
+
+function validateAndNormalizeStartUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s || /\s/.test(s)) {
+    return { ok: false, error: 'Endereço inválido' };
+  }
+  // data: só em selftest interno — nunca de digitação do usuário neste caminho
+  if (/^data:/i.test(s) || /^javascript:/i.test(s) || /^file:/i.test(s)) {
+    return { ok: false, error: 'Endereço inválido' };
+  }
+  let candidate = s;
+  if (!hasExplicitUrlScheme(s)) {
+    candidate = 'https://' + s;
+  }
+  let u;
+  try {
+    u = new URL(candidate);
+  } catch {
+    return { ok: false, error: 'Endereço inválido' };
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return { ok: false, error: 'Endereço inválido' };
+  }
+  if (!isValidUserStartHost(u.hostname)) {
+    return { ok: false, error: 'Endereço inválido' };
+  }
+  return { ok: true, url: u.href };
+}
+
+/**
  * Sanitize account startUrl / homepage from UI: http(s) or bare host; block file/data/javascript/…
  * Em selftest, data: continua permitido para probes.
  * @param {string} url
@@ -166,9 +249,11 @@ function isSelftestAllowedUrl(url) {
 function sanitizeUserStartUrl(url, fallback = 'https://www.google.com') {
   const raw = String(url || '').trim();
   if (!raw) return fallback;
-  if (isNavigableUrl(raw, { allowData: allowInternalDataUrls() })) return raw;
-  // Bare domain / path without scheme — keep; load path will resolve via omnibox rules
-  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)) return raw;
+  if (allowInternalDataUrls() && /^data:/i.test(raw) && isNavigableUrl(raw, { allowData: true })) {
+    return raw;
+  }
+  const validated = validateAndNormalizeStartUrl(raw);
+  if (validated.ok) return validated.url;
   return fallback;
 }
 
@@ -266,6 +351,8 @@ module.exports = {
   isNavigableUrl,
   allowInternalDataUrls,
   sanitizeUserStartUrl,
+  validateAndNormalizeStartUrl,
+  isValidUserStartHost,
   isKnownIdentityProviderUrl,
   isAboutBlank,
   isSelftestOfflineMode,
