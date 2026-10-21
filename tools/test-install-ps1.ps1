@@ -246,7 +246,7 @@ try {
     -ProductName 'MultiHeizInstallerTest' 2>&1 | Out-String
   Write-Host $out
   Assert ($LASTEXITCODE -eq 0) "second install.ps1 exit $LASTEXITCODE"
-  Assert ($out -match 'instalado|Nada a fazer|already') ('expected no-op message, got: ' + $out)
+  Assert ($out -match 'instalado|Nada a fazer|already|ja esta') ('expected no-op message, got: ' + $out)
 
   Write-Step 'install.ps1 - tampered SHA256 must abort'
   $code = 0

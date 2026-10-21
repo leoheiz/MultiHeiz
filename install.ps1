@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Install or update MultiHeiz from GitHub Releases (per-user by default).
@@ -136,15 +136,15 @@ $userHits = @($installed | Where-Object { $_.Scope -eq 'user' })
 
 if ($machine.Count -gt 0 -and -not $AllUsers) {
   $v = $machine[0].DisplayVersion
-  Write-Warn "Há uma instalação per-machine de $ProductName (versão $v)."
-  Write-Info "Para atualizar para todos os usuários, rode de novo com -AllUsers (pede elevação)."
-  Write-Info "Continuando com instalação/atualização per-user (pode gerar atalhos duplicados)."
+  Write-Warn "Ha uma instalacao per-machine de $ProductName (versao $v)."
+  Write-Info "Para atualizar para todos os usuarios, rode de novo com -AllUsers (pede elevacao)."
+  Write-Info "Continuando com instalacao/atualizacao per-user (pode gerar atalhos duplicados)."
 }
 
 $release = Get-ReleaseJson
 $tag = [string]$release.tag_name
 $remoteVer = ($tag -replace '^v', '')
-if (-not $remoteVer) { Fail 'Não foi possível determinar a versão do release.' }
+if (-not $remoteVer) { Fail 'Nao foi possivel determinar a versao do release.' }
 Write-Info "Release remoto: $remoteVer"
 
 $bestLocal = $null
@@ -156,19 +156,19 @@ foreach ($h in $installed) {
 if ($bestLocal -and -not $Force) {
   $cmp = Compare-Semver $bestLocal.DisplayVersion $remoteVer
   if ($cmp -eq 0) {
-    Write-Info "$ProductName $remoteVer já está instalado. Nada a fazer (use -Force para reinstalar)."
+    Write-Info "$ProductName $remoteVer ja esta instalado. Nada a fazer (use -Force para reinstalar)."
     exit 0
   }
   if ($cmp -gt 0) {
-    Write-Info "Versão local ($($bestLocal.DisplayVersion)) é mais nova que o release ($remoteVer). Nada a fazer (use -Force)."
+    Write-Info "Versao local ($($bestLocal.DisplayVersion)) e mais nova que o release ($remoteVer). Nada a fazer (use -Force)."
     exit 0
   }
-  Write-Info "Atualizando $($bestLocal.DisplayVersion) → $remoteVer"
+  Write-Info "Atualizando $($bestLocal.DisplayVersion) -> $remoteVer"
 }
 
 $setupAsset = Find-Asset $release $AssetPattern
 if (-not $setupAsset) {
-  Fail "Asset '$AssetPattern' não encontrado no release $tag"
+  Fail "Asset '$AssetPattern' nao encontrado no release $tag"
 }
 
 $tempDir = Join-Path $env:TEMP ('mh-install-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -187,15 +187,15 @@ try {
     $map = Parse-Sums (Get-Content -LiteralPath $sumsPath -Raw -Encoding UTF8)
     $expect = $map[$setupAsset.name]
     if (-not $expect) {
-      Fail "$SumsName não contém entrada para $($setupAsset.name)"
+      Fail "$SumsName nao contem entrada para $($setupAsset.name)"
     }
     $actual = Get-Sha256File $setupPath
     if ($actual -ne $expect) {
-      Fail "SHA256 não confere para $($setupAsset.name).`n  esperado: $expect`n  obtido:   $actual"
+      Fail "SHA256 nao confere para $($setupAsset.name).`n  esperado: $expect`n  obtido:   $actual"
     }
     Write-Info "SHA256 OK ($actual)"
   } else {
-    Write-Warn "Release sem $SumsName — pulando verificação de integridade."
+    Write-Warn "Release sem $SumsName - pulando verificacao de integridade."
   }
 
   $args = @('/S')
@@ -212,7 +212,7 @@ try {
     $p = Start-Process -FilePath $setupPath -ArgumentList $args -PassThru -Wait -WindowStyle Hidden
   }
   if ($null -ne $p.ExitCode -and $p.ExitCode -ne 0) {
-    Fail "Instalador saiu com código $($p.ExitCode)"
+    Fail "Instalador saiu com codigo $($p.ExitCode)"
   }
 
   Start-Sleep -Seconds 1
