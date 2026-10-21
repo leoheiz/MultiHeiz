@@ -48,6 +48,7 @@ const aiWrite = require('./ai-write');
 const settingsApply = require('./settings-apply');
 const popoverOverlay = require('./popover-overlay');
 const unread = require('./unread');
+const partition = require('./partition');
 const autostart = require('./autostart');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
@@ -2546,9 +2547,10 @@ function createWindow() {
 
 function publicState() {
   const s = getState();
-  const accounts = Array.isArray(s.accounts)
+  const accountsRaw = Array.isArray(s.accounts)
     ? s.accounts.map((a) => catalog.enrichAccountPublic(proxy.sanitizeAccountProxyForPublic(a)))
     : [];
+  const accounts = partition.enrichAccountsSessionShare(accountsRaw);
   // Always expose a valid select option (heal legacy object layouts etc.).
   const layout = normalizeLayout(s.layout);
   return {
@@ -2568,7 +2570,8 @@ function publicState() {
 
 /**
  * Same cleanup path as UI "remove window": destroy WebContentsView,
- * clear partition/session data, drop account + freeTiles refs.
+ * clear partition/session data (only if last user of that partition),
+ * drop account + freeTiles refs.
  * Used by account:remove and workspace:delete.
  * @param {string} id
  */
@@ -2595,6 +2598,59 @@ async function removeAccountById(id) {
   } finally {
     panels.unmarkAccountRemoving(id);
   }
+}
+
+/**
+ * Nova janela na mesma área, reutilizando a partição (cookies/storage) da origem.
+ * Abre na URL inicial da origem.
+ * @param {string} sourceAccountId
+ * @returns {{ ok: true, state: object, account: object } | { ok: false, error: string }}
+ */
+function openAccountWithSameSession(sourceAccountId) {
+  const s = getState();
+  const src = (s.accounts || []).find((a) => a && a.id === sourceAccountId);
+  if (!src) return { ok: false, error: 'Janela não encontrada.' };
+  const partitionId = partition.resolvePartitionId(src);
+  const workspaceId = src.workspaceId || s.activeWorkspaceId;
+  const id = makeId('acc');
+  const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
+  const name = catalog.uniqueNameInWorkspace(src.name || 'Janela', s.accounts, workspaceId);
+  const account = {
+    id,
+    name,
+    color: src.color || colors[s.accounts.length % colors.length],
+    startUrl: src.startUrl || (s.settings && s.settings.homepage) || 'https://www.google.com',
+    workspaceId,
+    partitionId,
+    muted: false,
+    volume: 100,
+    pauseInBackground: !!src.pauseInBackground,
+    keepAliveInBackground: !!src.keepAliveInBackground,
+    privateHistory: !!src.privateHistory,
+    adblockEnabled: src.adblockEnabled === false ? false : true,
+    showUnread: src.showUnread === false ? false : true,
+    lastUrl: null,
+    zoomFactor: 1,
+  };
+  if (src.catalogId) account.catalogId = src.catalogId;
+  if (src.catalogIcon) account.catalogIcon = src.catalogIcon;
+  updateState((st) => {
+    st.accounts.push(account);
+  });
+  try {
+    adblock.attachAllAccountSessions();
+  } catch {
+    /* ignore */
+  }
+  try {
+    extensions.loadForAccount(id).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+  const next = publicState();
+  const publicAccount = (next.accounts || []).find((a) => a.id === id) || account;
+  emitToRenderer({ type: 'state:changed', state: next });
+  return { ok: true, state: next, account: publicAccount };
 }
 
 function registerIpc() {
@@ -3262,6 +3318,13 @@ function registerIpc() {
       lastUrl: null,
       zoomFactor: 1,
     };
+    // Sessão compartilhada: partitionId explícito (persist:acc-<partitionId>).
+    // Sem campo = sessão própria (partitionId implícito = id).
+    if (data && data.partitionId != null && String(data.partitionId).trim()) {
+      account.partitionId = String(data.partitionId).trim();
+    } else {
+      account.partitionId = id;
+    }
     if (catalogApp) {
       account.catalogId = catalogApp.id;
       account.catalogIcon = catalogIcon;
@@ -3341,6 +3404,14 @@ function registerIpc() {
   ipcMain.handle('account:remove', async (_e, id) => {
     await removeAccountById(id);
     return publicState();
+  });
+
+  /**
+   * Abre nova janela na mesma área reutilizando a partição (cookies/storage).
+   * @param {string} sourceAccountId
+   */
+  ipcMain.handle('account:open-same-session', (_e, sourceAccountId) => {
+    return openAccountWithSameSession(sourceAccountId);
   });
 
   ipcMain.handle('layout:sync', (_e, slots) => {
@@ -5074,6 +5145,18 @@ function popupAccountMenu(opts) {
         const r = panels.openLoginInSystemBrowser(accountId);
         if (r && r.ok) {
           emitToRenderer({ type: 'toast', message: 'Abrindo no navegador padrão…' });
+        }
+      },
+    },
+    {
+      label: 'Abrir nova janela com a mesma sessão',
+      click: () => {
+        const r = openAccountWithSameSession(accountId);
+        if (r && r.ok === false) {
+          emitToRenderer({
+            type: 'toast',
+            message: r.error || 'Não foi possível abrir a janela',
+          });
         }
       },
     },

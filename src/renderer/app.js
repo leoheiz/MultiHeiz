@@ -292,6 +292,9 @@ const ICO = {
   table: 'M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18',
   bell: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9',
   stickyNote: 'M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3z',
+  // Lucide users — sessão compartilhada entre janelas
+  users:
+    'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
 };
 
 function settingsIconHtml() {
@@ -1903,6 +1906,22 @@ function buildPanelSlot(acc, tile) {
   siteInfoBtn.classList.add('panel-site-info');
 
   const mediaUse = mediaUseByPanel.get(acc.id) || { microphone: false, camera: false };
+  const shareCount =
+    typeof acc.sessionShareCount === 'number' ? acc.sessionShareCount : 1;
+  let shareInd = null;
+  if (shareCount > 1) {
+    shareInd = document.createElement('span');
+    shareInd.className = 'panel-session-share';
+    shareInd.dataset.role = 'panel-session-share';
+    shareInd.title = `Sessão compartilhada (${shareCount} janelas)`;
+    shareInd.setAttribute('aria-label', shareInd.title);
+    shareInd.innerHTML = svg(ICO.users);
+    const countSpan = document.createElement('span');
+    countSpan.className = 'panel-session-share-n';
+    countSpan.textContent = String(shareCount);
+    shareInd.appendChild(countSpan);
+  }
+
   const mediaInd = document.createElement('span');
   mediaInd.className = 'panel-media-use';
   mediaInd.dataset.role = 'panel-media-use';
@@ -2020,7 +2039,10 @@ function buildPanelSlot(acc, tile) {
 
   // Star + shield + puzzle on the left so header-actions stay compact (livre drag hit-tests ~35% into header)
   actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnMax, btnMore);
-  header.append(stripe, fav, siteInfoBtn, mediaInd, btnStar, btnShield, btnExt, titleBlock, actions);
+  const headerBits = [stripe, fav, siteInfoBtn, mediaInd];
+  if (shareInd) headerBits.push(shareInd);
+  headerBits.push(btnStar, btnShield, btnExt, titleBlock, actions);
+  header.append(...headerBits);
   header.dataset.role = 'panel-header';
 
   const zPct = zoomPctFor(acc.id);

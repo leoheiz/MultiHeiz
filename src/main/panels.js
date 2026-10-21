@@ -26,6 +26,7 @@ const contextMenu = require('./context-menu');
 const volumeControl = require('./volume-control');
 const popoverOverlay = require('./popover-overlay');
 const unread = require('./unread');
+const partition = require('./partition');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
@@ -659,8 +660,27 @@ function restoreViewsAfterOverlay() {
   setTimeout(() => clearOverlaySnapshots(), 32);
 }
 
+/**
+ * Partição Chromium da janela (`persist:acc-<partitionId>`).
+ * Se a conta compartilha sessão, partitionId pode apontar para outra janela.
+ * @param {string} accountId
+ * @returns {string}
+ */
 function partitionFor(accountId) {
-  return `persist:acc-${accountId}`;
+  const acc = getAccount(accountId);
+  if (acc) return partition.partitionForAccount(acc);
+  return partition.partitionString(accountId);
+}
+
+/**
+ * partitionId efetivo da janela (padrão = accountId).
+ * @param {string} accountId
+ * @returns {string}
+ */
+function resolvePartitionId(accountId) {
+  const acc = getAccount(accountId);
+  if (acc) return partition.resolvePartitionId(acc);
+  return String(accountId || '');
 }
 
 function chromeUserAgent() {
@@ -2526,25 +2546,50 @@ function applyThrottling() {
   for (const id of panels.keys()) applyThrottlingTo(id);
 }
 
-async function clearAccountSession(accountId) {
+/**
+ * Destrói o painel e, se for o último usuário da partição, limpa cookies/storage/cache.
+ * Partições compartilhadas só são limpas quando nenhuma outra janela as usa.
+ * @param {string} accountId
+ * @param {{ forceClear?: boolean }} [opts]
+ */
+async function clearAccountSession(accountId, opts = {}) {
   const alreadyMarked = isAccountRemoving(accountId);
   if (!alreadyMarked) markAccountRemoving(accountId);
   try {
+    const partId = resolvePartitionId(accountId);
+    const st = getState();
+    const others = partition.countPartitionUsers(partId, st.accounts, {
+      excludeAccountId: accountId,
+    });
+    const shouldClear = !!opts.forceClear || others === 0;
     destroyPanel(accountId, { keepLastUrl: false });
     forceSuspended.delete(accountId);
     lastUsedAt.delete(accountId);
-    const ses = session.fromPartition(partitionFor(accountId));
-    await ses.clearStorageData();
-    try {
-      await ses.clearCache();
-    } catch {
-      /* ignore */
+    if (shouldClear && partId) {
+      const ses = session.fromPartition(partition.partitionString(partId));
+      await ses.clearStorageData();
+      try {
+        await ses.clearCache();
+      } catch {
+        /* ignore */
+      }
     }
     emitSuspendedState();
   } finally {
     // If caller pre-marked (account:remove), keep tombstone until state is updated.
     if (!alreadyMarked) unmarkAccountRemoving(accountId);
   }
+}
+
+/**
+ * Recria o WebContentsView se a partição da conta mudou (ex.: área virou
+ * "Navegador convencional"). Mantém lastUrl.
+ * @param {string} accountId
+ */
+function rebindPanelSession(accountId) {
+  if (!panels.has(accountId)) return false;
+  destroyPanel(accountId, { keepLastUrl: true });
+  return true;
 }
 
 async function clearAllPartitionCaches() {
@@ -2686,9 +2731,11 @@ module.exports = {
   panelGetVolume,
   panelIsAudible,
   clearAccountSession,
+  rebindPanelSession,
   markAccountRemoving,
   unmarkAccountRemoving,
   isAccountRemoving,
+  resolvePartitionId,
   getLoadQueueDebug,
   enqueueVisibleLoads,
   getPanelCapture,

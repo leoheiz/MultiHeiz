@@ -68,7 +68,23 @@ function syncDnrForAccount(accountId) {
  * @param {string} accountId
  */
 function partitionFor(accountId) {
-  return `persist:acc-${accountId}`;
+  try {
+    const panels = require('../panels');
+    if (panels && typeof panels.partitionFor === 'function') {
+      return panels.partitionFor(accountId);
+    }
+  } catch {
+    /* ignore circular / early load */
+  }
+  try {
+    const { getState } = require('../state');
+    const part = require('../partition');
+    const acc = (getState().accounts || []).find((a) => a && a.id === accountId);
+    if (acc) return part.partitionForAccount(acc);
+    return part.partitionString(accountId);
+  } catch {
+    return `persist:acc-${accountId}`;
+  }
 }
 
 /**

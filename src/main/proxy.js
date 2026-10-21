@@ -267,7 +267,12 @@ async function applyProxyToSession(accountId, ses) {
   let session = ses;
   if (!session) {
     try {
-      const partition = `persist:acc-${accountId}`;
+      const partMod = require('./partition');
+      const { getState } = require('./state');
+      const acc = (getState().accounts || []).find((a) => a && a.id === accountId);
+      const partition = acc
+        ? partMod.partitionForAccount(acc)
+        : partMod.partitionString(accountId);
       session = electronSession.fromPartition(partition);
     } catch (err) {
       return { ok: false, error: (err && err.message) || 'Sessão indisponível' };
@@ -393,10 +398,14 @@ async function setProxyForAccount(accountId, input) {
 
   authFailures.delete(accountId);
 
-  const partition = `persist:acc-${accountId}`;
+  const partMod = require('./partition');
+  const accNow = (getState().accounts || []).find((a) => a && a.id === accountId);
+  const partitionName = accNow
+    ? partMod.partitionForAccount(accNow)
+    : partMod.partitionString(accountId);
   let ses;
   try {
-    ses = electronSession.fromPartition(partition);
+    ses = electronSession.fromPartition(partitionName);
   } catch (err) {
     return { ok: false, error: (err && err.message) || 'Sessão indisponível' };
   }
@@ -447,20 +456,30 @@ function getProxyCredentials(accountId) {
 }
 
 /**
- * Resolve accountId a partir do webContents (partição persist:acc-*).
+ * Resolve accountId a partir do webContents (painel real tem prioridade;
+ * partições compartilhadas podem ter várias contas — não usar só a sessão).
  * @param {import('electron').WebContents} wc
  * @returns {string|null}
  */
 function accountIdFromWebContents(wc) {
   if (!wc || wc.isDestroyed()) return null;
   try {
+    const panels = require('./panels');
+    if (panels && typeof panels.accountIdForWebContents === 'function') {
+      const fromPanel = panels.accountIdForWebContents(wc);
+      if (fromPanel) return fromPanel;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
     const ses = wc.session;
     if (!ses) return null;
-    // Match against known partitions
+    const partMod = require('./partition');
     for (const acc of getState().accounts || []) {
       if (!acc || !acc.id) continue;
       try {
-        const expected = electronSession.fromPartition(`persist:acc-${acc.id}`);
+        const expected = electronSession.fromPartition(partMod.partitionForAccount(acc));
         if (expected === ses) return acc.id;
       } catch {
         /* ignore */
@@ -580,7 +599,8 @@ async function testProxyForAccount(accountId) {
 
   let ses;
   try {
-    ses = electronSession.fromPartition(`persist:acc-${accountId}`);
+    const partMod = require('./partition');
+    ses = electronSession.fromPartition(partMod.partitionForAccount(acc));
   } catch (err) {
     return { ok: false, error: (err && err.message) || 'Sessão indisponível' };
   }

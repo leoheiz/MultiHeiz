@@ -1367,6 +1367,28 @@ select {
   margin-right: 2px;
 }
 
+.panel-session-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0.85;
+  color: var(--accent, #2bb8a6);
+  margin-right: 2px;
+}
+
+.panel-session-share svg {
+  width: 14px;
+  height: 14px;
+}
+
+.panel-session-share-n {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  min-width: 0.9em;
+}
+
 .panel-media-use-icon {
   display: inline-flex;
   width: 16px;

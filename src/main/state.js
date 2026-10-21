@@ -274,6 +274,13 @@ function migrate(parsed) {
           if (pauseInBackground && keepAliveInBackground) {
             keepAliveInBackground = false;
           }
+          const id = a && a.id != null ? String(a.id) : '';
+          // partitionId: chave da sessão Chromium (persist:acc-<id>).
+          // Ausente ou vazio → própria janela (id). Idempotente.
+          let partitionId =
+            a && a.partitionId != null && String(a.partitionId).trim()
+              ? String(a.partitionId).trim()
+              : id;
           return {
             ...a,
             pauseInBackground,
@@ -285,6 +292,7 @@ function migrate(parsed) {
               typeof (a && a.zoomFactor) === 'number' && a.zoomFactor >= 0.25 && a.zoomFactor <= 3
                 ? a.zoomFactor
                 : 1,
+            partitionId,
           };
         })
       : [],
