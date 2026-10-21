@@ -10,36 +10,29 @@
 ; Uses ${PRODUCT_NAME} / ${PRODUCT_FILENAME} / ${SHORTCUT_NAME} so the installertest
 ; variant stays isolated.
 
-!macro multiheizRemoveStaleShortcut lnkPath
-  ; Delete ${lnkPath} only if it exists and its target path is missing.
-  IfFileExists "${lnkPath}" 0 multiheiz_stale_done_${__LINE__}
-    Push $R7
-    Push $R8
+; id must be a simple token (no dots) — ${__LINE__} inside macros is invalid as a label.
+!macro multiheizRemoveStaleShortcut lnkPath id
+  IfFileExists "${lnkPath}" 0 multiheiz_stale_done_${id}
     Push $R9
     StrCpy $R9 "${lnkPath}"
-    ; Tiny PowerShell (no window): resolve .lnk target; remove if broken.
-    ; Paths may contain spaces — pass via env to avoid quoting hell.
     System::Call 'Kernel32::SetEnvironmentVariable(t "MH_STALE_LNK", t "$R9")'
     nsExec::ExecToLog 'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "$$p=$$env:MH_STALE_LNK; if (-not $$p) { exit 0 }; $$s=(New-Object -ComObject WScript.Shell).CreateShortcut($$p); $$t=$$s.TargetPath; if ($$t -and -not (Test-Path -LiteralPath $$t)) { Remove-Item -LiteralPath $$p -Force -ErrorAction SilentlyContinue }"'
-    Pop $R8
+    Pop $0
     System::Call 'Kernel32::SetEnvironmentVariable(t "MH_STALE_LNK", i 0)'
     Pop $R9
-    Pop $R8
-    Pop $R7
-  multiheiz_stale_done_${__LINE__}:
+  multiheiz_stale_done_${id}:
 !macroend
 
 !macro customInit
   ; Remove broken Start Menu / Desktop shortcuts left from old installs (target gone).
   ; Only touches our SHORTCUT_NAME — never other apps. Safe for installertest variant.
-  ; Use $SMPROGRAMS/$DESKTOP (avoid "$PROGRAMDATA\...\Start Menu\..." — NSIS treats
-  ; the space as ending the path and warns "unknown variable ...\Start").
+  ; Use $SMPROGRAMS/$DESKTOP (avoid "$PROGRAMDATA\...\Start Menu\..." — NSIS space warning).
   SetShellVarContext current
-  !insertmacro multiheizRemoveStaleShortcut "$SMPROGRAMS\${SHORTCUT_NAME}.lnk"
-  !insertmacro multiheizRemoveStaleShortcut "$DESKTOP\${SHORTCUT_NAME}.lnk"
+  !insertmacro multiheizRemoveStaleShortcut "$SMPROGRAMS\${SHORTCUT_NAME}.lnk" sm_user
+  !insertmacro multiheizRemoveStaleShortcut "$DESKTOP\${SHORTCUT_NAME}.lnk" desk_user
   SetShellVarContext all
-  !insertmacro multiheizRemoveStaleShortcut "$SMPROGRAMS\${SHORTCUT_NAME}.lnk"
-  !insertmacro multiheizRemoveStaleShortcut "$DESKTOP\${SHORTCUT_NAME}.lnk"
+  !insertmacro multiheizRemoveStaleShortcut "$SMPROGRAMS\${SHORTCUT_NAME}.lnk" sm_all
+  !insertmacro multiheizRemoveStaleShortcut "$DESKTOP\${SHORTCUT_NAME}.lnk" desk_all
   ; Restore shell context to match install mode chosen by initMultiUser.
   ${If} $installMode == "all"
     SetShellVarContext all

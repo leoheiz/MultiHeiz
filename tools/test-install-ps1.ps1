@@ -29,7 +29,14 @@ function Assert($cond, [string]$msg) {
 
 function Get-FileHashSafe([string]$path) {
   if (-not (Test-Path -LiteralPath $path)) { return $null }
-  return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $fs = [System.IO.File]::OpenRead($path)
+    try {
+      $bytes = $sha.ComputeHash($fs)
+      return ([BitConverter]::ToString($bytes) -replace '-', '')
+    } finally { $fs.Dispose() }
+  } finally { $sha.Dispose() }
 }
 
 function Snapshot-RealInstall {
@@ -134,7 +141,7 @@ if (-not $setup) {
 Assert ($null -ne $setup) "test setup missing in $testOut"
 Write-Host "  Setup: $($setup.FullName)"
 
-$setupHash = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+$setupHash = (Get-FileHashSafe $setup.FullName).ToLowerInvariant()
 $ver = (Get-Content (Join-Path $Root 'package.json') -Raw | ConvertFrom-Json).version
 $setupName = $setup.Name
 
