@@ -1084,6 +1084,13 @@ function createPanel(accountId) {
   adblock.bindWebContents(accountId, view.webContents);
 
   try {
+    const popoverOverlay = require('./popover-overlay');
+    popoverOverlay.attachOutsideCloseTarget(view.webContents, 'panel');
+  } catch {
+    /* ignore */
+  }
+
+  try {
     view.webContents.setUserAgent(chromeUserAgent());
   } catch {
     /* older electron */

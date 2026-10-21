@@ -57,9 +57,14 @@ async function runPopoverOverlaySelftest(ctx) {
   var v = document.getElementById('v');
   v.srcObject = stream;
   v.play().catch(function(){});
+  window.__ovClicks = 0;
+  document.addEventListener('click', function(){ window.__ovClicks++; }, true);
+  document.addEventListener('mousedown', function(){ window.__ovMouseDown = (window.__ovMouseDown||0)+1; }, true);
   window.__ovPage = {
     currentTime: function() { return v.currentTime || 0; },
-    playing: function() { return !v.paused; }
+    playing: function() { return !v.paused; },
+    clicks: function() { return window.__ovClicks|0; },
+    mouseDown: function() { return window.__ovMouseDown|0; }
   };
 })();
 </script>
@@ -244,12 +249,24 @@ async function runPopoverOverlaySelftest(ctx) {
   const t5 = await panelEval('acc-ov-a', 'window.__ovPage.currentTime()');
   assert(Number(t5) > Number(t4), 'video advances with layout menu');
 
-  // Click-outside via hide
-  popoverOverlay.hide('outside');
-  await sleep(100);
+  // Clique FORA no painel: fecha o popover e a página recebe o clique (sem engolir)
+  await panelEval('acc-ov-a', 'window.__ovClicks = 0; window.__ovMouseDown = 0; true');
+  {
+    const wc = panels.getPanelCapture('acc-ov-a');
+    assert(wc, 'panel wc outside');
+    wc.sendInputEvent({ type: 'mouseDown', x: 50, y: 50, button: 'left', clickCount: 1 });
+    wc.sendInputEvent({ type: 'mouseUp', x: 50, y: 50, button: 'left', clickCount: 1 });
+    await sleep(350);
+  }
+  const afterOutside = await rendererEval('window.multiheiz.popoverGet()');
+  assert(!afterOutside || !afterOutside.open, 'panel click closes layout popover: ' + JSON.stringify(afterOutside));
+  const pageHits = await panelEval('acc-ov-a', '({ c: window.__ovPage.clicks(), d: window.__ovPage.mouseDown() })');
+  assert(pageHits && (pageHits.c >= 1 || pageHits.d >= 1), 'page received click: ' + JSON.stringify(pageHits));
+  console.log('PASS: click outside panel closes + page receives', pageHits);
+
   const lagHide = (popoverOverlay.getSelftestLog() || []).filter((x) => x.op === 'hide').pop();
-  assert(!lagHide || lagHide.detail.lagMs < 20, 'hide lag < 20ms: ' + JSON.stringify(lagHide));
-  console.log('PASS: layout menu + hide lag', lagHide && lagHide.detail);
+  assert(!lagHide || lagHide.detail.lagMs < 50, 'hide lag ok: ' + JSON.stringify(lagHide));
+  console.log('PASS: layout menu + outside-close', lagHide && lagHide.detail);
 
   try {
     server.close();

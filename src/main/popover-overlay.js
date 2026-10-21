@@ -42,9 +42,22 @@ let readyResolve = null;
 /** @type {null | { id: string, kind: string, bounds: { x: number, y: number, width: number, height: number }, payload: object }} */
 let current = null;
 
+/**
+ * Ignore overlay blur briefly after an in-popover action (ex.: Suspender destrói painel
+ * e rouba o foco — o popover deve permanecer aberto).
+ */
+let ignoreBlurUntil = 0;
+
+/** @type {WeakSet<import('electron').WebContents>} */
+const outsideCloseAttached = new WeakSet();
+
 /** Selftest-only call log (MULTIHEIZ_SELFTEST). */
 /** @type {Array<{ at: number, op: string, detail?: object }>} */
 let selftestLog = [];
+
+function noteInternalAction(ms) {
+  ignoreBlurUntil = Date.now() + (typeof ms === 'number' ? ms : 700);
+}
 
 function selftestEnabled() {
   return !!process.env.MULTIHEIZ_SELFTEST;
@@ -151,11 +164,12 @@ function ensureView() {
   });
 
   view.webContents.on('blur', () => {
-    // Click into a panel steals focus — close shortly if still open.
-    // Memory monitor stays open (Suspender destroys a panel and blurs; chrome Esc/X/click closes).
+    // Clique fora (painel/chrome) ou perda de foco — fecha todos os popovers,
+    // inclusive memória. Cliques DENTRO não geram blur útil; Suspender usa
+    // noteInternalAction() para ignorar o blur causado pela destruição do painel.
     setTimeout(() => {
       if (!current) return;
-      if (current.kind === 'mem') return;
+      if (Date.now() < ignoreBlurUntil) return;
       try {
         if (overlayView && !overlayView.webContents.isDestroyed() && overlayView.webContents.isFocused()) {
           return;
@@ -464,11 +478,62 @@ function getZOrderIndex() {
  */
 function forwardAction(action) {
   const a = action && typeof action === 'object' ? { ...action } : {};
+  // Suspender/Reativar (e similares) podem destruir/recriar painel → blur na overlay.
+  if (a.type && /^mem-/.test(String(a.type))) {
+    noteInternalAction(800);
+  }
   // Keep envelope type = popover:action (must win over a.type like volume-set / mem-suspend).
   emitToRenderer({
     ...a,
     type: 'popover:action',
     actionType: a.type,
+  });
+}
+
+/**
+ * Fecha o popover ao interagir FORA (painel ou chrome), sem engolir o clique
+ * (nunca preventDefault em before-mouse-event).
+ * @param {import('electron').WebContents | null | undefined} wc
+ * @param {string} source  'panel' | 'chrome'
+ */
+function attachOutsideCloseTarget(wc, source) {
+  if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) return;
+  if (outsideCloseAttached.has(wc)) return;
+  outsideCloseAttached.add(wc);
+  const tag = source || 'outside';
+
+  const onMouse = (_event, mouse) => {
+    if (!current) return;
+    if (!mouse || (mouse.type !== 'mouseDown' && mouse.type !== 'leftMouseDown')) return;
+    // Não chamar preventDefault — o clique deve chegar à página/chrome.
+    // ignoreBlurUntil NÃO se aplica aqui: mouse no painel/chrome é sempre "fora".
+    requestClose(tag + '-mouse');
+  };
+  const onFocus = () => {
+    if (!current) return;
+    if (Date.now() < ignoreBlurUntil) return;
+    try {
+      if (overlayView && !overlayView.webContents.isDestroyed() && overlayView.webContents.isFocused()) {
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    requestClose(tag + '-focus');
+  };
+
+  try {
+    wc.on('before-mouse-event', onMouse);
+  } catch {
+    /* ignore */
+  }
+  try {
+    wc.on('focus', onFocus);
+  } catch {
+    /* ignore */
+  }
+  wc.once('destroyed', () => {
+    /* WeakSet drop; listeners go with wc */
   });
 }
 
@@ -548,6 +613,13 @@ function attachWindowListeners(win) {
   win.on('unmaximize', close);
   win.on('enter-full-screen', close);
   win.on('leave-full-screen', close);
+  try {
+    if (win.webContents && !win.webContents.isDestroyed()) {
+      attachOutsideCloseTarget(win.webContents, 'chrome');
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function setCloseRequestHandler(fn) {
@@ -574,6 +646,8 @@ module.exports = {
   destroy,
   onPanelsLayoutChanged,
   attachWindowListeners,
+  attachOutsideCloseTarget,
+  noteInternalAction,
   setCloseRequestHandler,
   clearSelftestLog,
   getSelftestLog,

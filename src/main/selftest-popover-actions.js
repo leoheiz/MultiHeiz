@@ -37,7 +37,14 @@ async function runPopoverActionsSelftest(ctx) {
   }
 
   const PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>pa</title></head>
-<body style="margin:0;background:#234;color:#fff;font:14px system-ui">Popover actions</body></html>`;
+<body style="margin:0;background:#234;color:#fff;font:14px system-ui;width:100%;height:100%">
+Popover actions
+<script>
+window.__paClicks = 0;
+document.addEventListener('click', function(){ window.__paClicks++; }, true);
+document.addEventListener('mousedown', function(){ window.__paMouseDown = (window.__paMouseDown||0)+1; }, true);
+</script>
+</body></html>`;
 
   let server = null;
   let port = 0;
@@ -231,7 +238,99 @@ async function runPopoverActionsSelftest(ctx) {
   assert(!panels.isForceSuspended('acc-pa-b'), 'acc-pa-b reactivated');
   console.log('PASS: Reativar via overlay');
 
+  // Clique DENTRO (Suspender de novo) NÃO fecha o popover
+  seedMetrics({
+    panels: [
+      {
+        accountId: 'acc-pa-a',
+        name: 'Janela A',
+        workspaceName: 'Área PA',
+        state: 'ativo',
+        active: true,
+        suspended: false,
+        forced: false,
+        visible: true,
+        focused: true,
+        ramMb: 50,
+        cpu: 1.2,
+        pid: 1001,
+        shared: false,
+        sharedWith: [],
+      },
+      {
+        accountId: 'acc-pa-b',
+        name: 'Janela B',
+        workspaceName: 'Área PA',
+        state: 'ativo',
+        active: true,
+        suspended: false,
+        forced: false,
+        visible: true,
+        focused: false,
+        ramMb: 40,
+        cpu: 0.8,
+        pid: 1002,
+        shared: false,
+        sharedWith: [],
+      },
+    ],
+  });
+  await sleep(80);
+  {
+    let open = await rendererEval('window.multiheiz.popoverGet()');
+    if (!open || !open.open) {
+      await rendererEval('window.__multiheizUi.openMemPopover()');
+      await sleep(250);
+    }
+    await overlayEval(`(() => {
+      const btn = document.querySelector('[data-role="mem-suspend"][data-account-id="acc-pa-b"]');
+      if (btn) btn.click();
+      return true;
+    })()`);
+    await sleep(500);
+    const still = await rendererEval('window.multiheiz.popoverGet()');
+    assert(still && still.open && still.id === 'mem-popover', 'Suspender inside must keep mem open: ' + JSON.stringify(still));
+    console.log('PASS: Suspender dentro não fecha');
+  }
+
+  // Clique FORA num painel fecha E a página recebe o clique
+  {
+    await panels.getPanelCapture('acc-pa-a').executeJavaScript('window.__paClicks = 0; window.__paMouseDown = 0;', true);
+    const wc = panels.getPanelCapture('acc-pa-a');
+    assert(wc, 'panel wc for outside click');
+    wc.sendInputEvent({ type: 'mouseDown', x: 40, y: 40, button: 'left', clickCount: 1 });
+    wc.sendInputEvent({ type: 'mouseUp', x: 40, y: 40, button: 'left', clickCount: 1 });
+    await sleep(350);
+    const afterOut = await rendererEval('window.multiheiz.popoverGet()');
+    assert(!afterOut || !afterOut.open, 'click panel must close popover: ' + JSON.stringify(afterOut));
+    const clicks = await wc.executeJavaScript(
+      '({ clicks: window.__paClicks|0, down: window.__paMouseDown|0 })',
+      true
+    );
+    assert(
+      clicks && (clicks.clicks >= 1 || clicks.down >= 1),
+      'page must receive click: ' + JSON.stringify(clicks)
+    );
+    console.log('PASS: clique no painel fecha popover e página recebe', clicks);
+  }
+
+  // Esc fecha
+  await rendererEval('window.__multiheizUi.openMemPopover()');
+  await sleep(250);
+  {
+    const view = popoverOverlay.getView();
+    assert(view, 'overlay for Esc');
+    view.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    view.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    await sleep(250);
+    const afterEsc = await rendererEval('window.multiheiz.popoverGet()');
+    assert(!afterEsc || !afterEsc.open, 'Esc must close: ' + JSON.stringify(afterEsc));
+    console.log('PASS: Esc fecha mem-popover');
+  }
+
   // Clique na linha foca a janela
+  await rendererEval('window.__multiheizUi.openMemPopover()');
+  await sleep(250);
   panels.setFocusedAccount('acc-pa-a');
   await sleep(100);
   const focusClick = await overlayEval(`(() => {
