@@ -2710,6 +2710,7 @@ function registerIpc() {
     platform: process.platform,
     usesCustomFrame: !!(recordedWindowChrome && recordedWindowChrome.frame === false),
     usesTitleBarOverlay: !!(recordedWindowChrome && recordedWindowChrome.titleBarStyle === 'hidden'),
+    passkeysUi: require('./passkeys').getPasskeysUi(),
   }));
 
   ipcMain.handle('workspace:create', (_e, name) => {

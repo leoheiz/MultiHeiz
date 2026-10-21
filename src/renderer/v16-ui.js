@@ -3352,6 +3352,32 @@
     }
   }
 
+  /**
+   * Rótulo de passkeys conforme a plataforma (nunca "do Windows" em Linux/macOS).
+   */
+  async function applyPasskeysLabel() {
+    const row = document.getElementById('windows-passkeys-row');
+    const labelEl = document.getElementById('windows-passkeys-label');
+    if (!row || !labelEl) return;
+    let ui = null;
+    try {
+      if (window.multiheiz && typeof window.multiheiz.getAppInfo === 'function') {
+        const info = await window.multiheiz.getAppInfo();
+        ui = info && info.passkeysUi;
+      }
+    } catch {
+      ui = null;
+    }
+    if (!ui || typeof ui !== 'object') {
+      labelEl.textContent = 'Usar chaves de acesso (passkeys) do sistema';
+      row.hidden = false;
+      return;
+    }
+    labelEl.textContent =
+      ui.label || 'Usar chaves de acesso (passkeys) do sistema';
+    row.hidden = ui.supported === false;
+  }
+
   async function fillSettingsForm() {
     const form = document.getElementById('form-settings');
     if (!form) return;
@@ -3365,6 +3391,7 @@
     form.homepage.value = s.homepage || 'https://www.google.com';
     if (form.uaIdentity) form.uaIdentity.value = s.uaIdentity || 'chrome';
     if (form.windowsPasskeys) form.windowsPasskeys.checked = s.windowsPasskeys !== false;
+    await applyPasskeysLabel();
     if (form.blankLinkMode) form.blankLinkMode.value = s.blankLinkMode || 'same';
     form.searchEngine.value = s.searchEngine || 'google';
     form.searchTemplate.value = s.searchTemplate || '';

@@ -14,6 +14,7 @@ async function runUaSelftest(ctx) {
     flushSave,
     sleep,
     waitForUrl,
+    rendererEval,
     userAgent,
     sessionPersist,
   } = ctx;
@@ -281,6 +282,49 @@ async function runUaSelftest(ctx) {
       return;
     }
     console.log('PASS: passkeys ON — disable patch absent');
+  }
+
+  // Rótulo da UI: nunca "do Windows" em Linux/macOS (simula platform via gancho).
+  {
+    const passkeys = require('./passkeys');
+    function assertLabel(platform, expectSubstr, forbidSubstr) {
+      passkeys.setSelftestPlatformOverride(platform);
+      const ui = passkeys.getPasskeysUi();
+      if (!ui.supported) {
+        throw new Error('passkeys UI should be supported on ' + platform);
+      }
+      if (!String(ui.label || '').includes(expectSubstr)) {
+        throw new Error('passkeys label for ' + platform + ' missing "' + expectSubstr + '": ' + ui.label);
+      }
+      if (forbidSubstr && String(ui.label || '').includes(forbidSubstr)) {
+        throw new Error('passkeys label for ' + platform + ' must not say "' + forbidSubstr + '": ' + ui.label);
+      }
+    }
+    assertLabel('linux', 'do sistema', 'do Windows');
+    assertLabel('darwin', 'do sistema', 'do Windows');
+    assertLabel('win32', 'do Windows', null);
+    passkeys.setSelftestPlatformOverride('linux');
+    // Renderer must pick up passkeysUi from app:info
+    if (typeof rendererEval === 'function') {
+      await rendererEval(`(async function(){
+        if (window.MultiHeizV16 && window.MultiHeizV16.fillSettingsForm) {
+          await window.MultiHeizV16.fillSettingsForm();
+        }
+        return true;
+      })()`);
+      const labelText = await rendererEval(
+        'document.getElementById("windows-passkeys-label") && document.getElementById("windows-passkeys-label").textContent'
+      );
+      if (!labelText || !String(labelText).includes('do sistema') || String(labelText).includes('do Windows')) {
+        console.log('FAIL: renderer passkeys label for simulated linux', labelText);
+        app.exit(1);
+        return;
+      }
+      console.log('PASS: passkeys label renderer (linux sim) =', labelText);
+    } else {
+      console.log('PASS: passkeys label helpers (no rendererEval)');
+    }
+    passkeys.setSelftestPlatformOverride(null);
   }
 
   updateState((s) => {
