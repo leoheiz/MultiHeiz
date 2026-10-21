@@ -146,10 +146,11 @@ $ver = (Get-Content (Join-Path $Root 'package.json') -Raw | ConvertFrom-Json).ve
 $setupName = $setup.Name
 
 $serveRoot = Join-Path $env:TEMP ('mh-mock-gh-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-New-Item -ItemType Directory -Path (Join-Path $serveRoot 'assets') | Out-Null
-Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $serveRoot 'assets' $setupName)
-Set-Content -LiteralPath (Join-Path $serveRoot 'assets' 'SHA256SUMS.txt') -Value "$setupHash  $setupName`n" -Encoding ascii
-Set-Content -LiteralPath (Join-Path $serveRoot 'assets' 'SHA256SUMS-BAD.txt') -Value $(('0' * 64) + "  $setupName`n") -Encoding ascii
+$assetsDir = Join-Path $serveRoot 'assets'
+New-Item -ItemType Directory -Path $assetsDir | Out-Null
+Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $assetsDir $setupName)
+Set-Content -LiteralPath (Join-Path $assetsDir 'SHA256SUMS.txt') -Value "$setupHash  $setupName`n" -Encoding ascii
+Set-Content -LiteralPath (Join-Path $assetsDir 'SHA256SUMS-BAD.txt') -Value $(('0' * 64) + "  $setupName`n") -Encoding ascii
 
 # Start mock on ephemeral port (node prints MOCK_READY port=N)
 $mockProc = Start-Process -FilePath 'node' -ArgumentList @(
