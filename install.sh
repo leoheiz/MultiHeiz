@@ -25,7 +25,7 @@ Usage: install.sh [options]
   --version VER           Install tag vVER / VER instead of latest
   --deb                   Prefer .deb (apt/dpkg); default is AppImage to ~/.local
   --force                 Reinstall even if the same version is present
-  --uninstall             Remove AppImage install (or apt remove multiheiz for --deb)
+  --uninstall             Remove AppImage (~/.local); with --deb, apt remove multiheiz
   --asset-pattern GLOB    Override asset name pattern
   --product-name NAME     Name used in messages (default MultiHeiz)
   -h, --help              Show help
@@ -166,9 +166,20 @@ ICON_PATH="${HOME}/.local/share/icons/hicolor/512x512/apps/multiheiz.png"
 DESKTOP_PATH="${HOME}/.local/share/applications/multiheiz.desktop"
 VERSION_FILE="${LOCAL_BIN}/.multiheiz-version"
 
+# True only when multiheiz is fully installed (not rc/config-files).
+deb_is_installed() {
+  have_cmd dpkg-query || return 1
+  local st
+  st=$(dpkg-query -W -f='${Status}' multiheiz 2>/dev/null || true)
+  [ "$st" = "install ok installed" ]
+}
+
+appimage_is_installed() {
+  [ -e "$APPIMAGE_PATH" ] || [ -e "$SYMLINK_PATH" ] || [ -e "$DESKTOP_PATH" ] || [ -e "$VERSION_FILE" ] || [ -e "$ICON_PATH" ]
+}
+
 uninstall_appimage() {
   rm -f "$APPIMAGE_PATH" "$SYMLINK_PATH" "$DESKTOP_PATH" "$VERSION_FILE"
-  # keep icon (harmless); remove if present
   rm -f "$ICON_PATH"
   if have_cmd update-desktop-database; then
     update-desktop-database "${HOME}/.local/share/applications" >/dev/null 2>&1 || true
@@ -177,12 +188,20 @@ uninstall_appimage() {
 }
 
 if [ "$UNINSTALL" -eq 1 ]; then
-  if [ "$USE_DEB" -eq 1 ] || have_cmd dpkg; then
-    if dpkg -l multiheiz >/dev/null 2>&1; then
+  if [ "$USE_DEB" -eq 1 ]; then
+    if deb_is_installed; then
       sudo apt-get remove -y multiheiz || sudo dpkg -r multiheiz
+      echo "Removido pacote .deb multiheiz."
+    else
+      echo "Nada a remover: pacote multiheiz não está instalado."
+    fi
+  else
+    if appimage_is_installed; then
+      uninstall_appimage
+    else
+      echo "Nada a remover: install AppImage de $PRODUCT_NAME não encontrado."
     fi
   fi
-  uninstall_appimage
   exit 0
 fi
 
@@ -209,11 +228,18 @@ REMOTE_VER=${TAG#v}
 echo "Release remoto: $REMOTE_VER"
 
 LOCAL_VER=""
-if [ -f "$VERSION_FILE" ]; then
-  LOCAL_VER=$(cat "$VERSION_FILE" || true)
-elif have_cmd dpkg && dpkg -l multiheiz >/dev/null 2>&1; then
-  LOCAL_VER=$(dpkg-query -W -f='${Version}' multiheiz 2>/dev/null || true)
-  LOCAL_VER=${LOCAL_VER%%-*}
+if [ "$USE_DEB" -eq 1 ]; then
+  if deb_is_installed; then
+    LOCAL_VER=$(dpkg-query -W -f='${Version}' multiheiz 2>/dev/null || true)
+    LOCAL_VER=${LOCAL_VER%%-*}
+  fi
+else
+  if [ -f "$VERSION_FILE" ]; then
+    LOCAL_VER=$(cat "$VERSION_FILE" || true)
+  fi
+  if deb_is_installed; then
+    echo "Nota: pacote .deb multiheiz também instalado no sistema; este modo instala AppImage em ~/.local."
+  fi
 fi
 
 if [ -n "$LOCAL_VER" ] && [ "$FORCE" -eq 0 ]; then
