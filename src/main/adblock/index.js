@@ -3,11 +3,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { Worker } = require('node:worker_threads');
 const { app, ipcMain, webContents, net } = require('electron');
 const { ElectronBlocker, fetchResources } = require('@ghostery/adblocker-electron');
 const { parse } = require('tldts-experimental');
 const { getState, updateState } = require('../state');
 const { resolvePreloadPath } = require('../preload-path');
+const settingsApply = require('../settings-apply');
 const hub = require('./web-request-hub');
 const {
   LISTS,
@@ -889,7 +891,96 @@ async function gatherFilterText(opts = {}) {
 }
 
 /**
+ * Resolve engine-worker.js path (prefer asar.unpacked when packaged).
+ * @returns {string}
+ */
+function engineWorkerPath() {
+  const candidate = path.join(__dirname, 'engine-worker.js');
+  try {
+    const resolved = resolvePreloadPath(candidate);
+    if (resolved && resolved.path) return resolved.path;
+  } catch {
+    /* ignore */
+  }
+  return candidate;
+}
+
+/**
+ * Parse + serialize off the main thread. Falls back to sync parse if Worker fails.
+ * @param {{ text: string, config: object, resourcesText: string, skipSerialize?: boolean }} args
+ * @returns {Promise<Buffer>}
+ */
+function compileEngineOffMain(args) {
+  return new Promise((resolve, reject) => {
+    let worker;
+    let settled = false;
+    const finish = (err, bin) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        if (worker) void worker.terminate();
+      } catch {
+        /* ignore */
+      }
+      if (err) reject(err);
+      else resolve(bin);
+    };
+    try {
+      worker = new Worker(engineWorkerPath());
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const timer = setTimeout(() => {
+      finish(new Error('engine-worker timeout'));
+    }, 120000);
+    worker.on('message', (msg) => {
+      if (msg && msg.ok && msg.bin) {
+        finish(null, Buffer.isBuffer(msg.bin) ? msg.bin : Buffer.from(msg.bin));
+        return;
+      }
+      finish(new Error((msg && msg.error) || 'engine-worker falhou'));
+    });
+    worker.on('error', (err) => {
+      finish(err);
+    });
+    worker.on('exit', (code) => {
+      if (!settled && code !== 0) finish(new Error('engine-worker exit ' + code));
+    });
+    ensureDir();
+    worker.postMessage({
+      type: 'compile',
+      text: args.text,
+      config: args.config,
+      resourcesText: args.resourcesText || '',
+      skipSerialize: !!args.skipSerialize,
+      engineOutPath: args.skipSerialize ? '' : enginePath(),
+    });
+  });
+}
+
+/**
+ * Sync fallback (main thread) — used only if worker_threads cannot start.
+ * @param {{ text: string, config: object, resourcesText: string, skipSerialize?: boolean }} args
+ * @returns {Buffer}
+ */
+function compileEngineOnMain(args) {
+  const parsed = ElectronBlocker.parse(args.text, args.config);
+  if (args.resourcesText) {
+    parsed.updateResources(args.resourcesText, '' + args.resourcesText.length);
+  }
+  const bin = Buffer.from(parsed.serialize());
+  if (!args.skipSerialize) {
+    ensureDir();
+    fs.writeFileSync(enginePath(), bin);
+  }
+  return bin;
+}
+
+/**
  * Actual engine compile (single runner). Callers go through buildEngine / schedule.
+ * Heavy parse/serialize runs in a worker thread; main only deserializes.
  * @param {{ forceDownload?: boolean, skipSerialize?: boolean }} [opts]
  */
 async function buildEngineBody(opts = {}) {
@@ -934,13 +1025,33 @@ async function buildEngineBody(opts = {}) {
     return false;
   }
 
+  const resourcesText = await loadResourcesText({ forceDownload: !!opts.forceDownload });
+  const config = engineConfig();
+  let bin;
   try {
-    emitProgress('Parse de filtros…');
-    blocker = ElectronBlocker.parse(gathered.text, engineConfig());
-    const resourcesText = await loadResourcesText({ forceDownload: !!opts.forceDownload });
-    if (resourcesText) {
-      blocker.updateResources(resourcesText, '' + resourcesText.length);
+    emitProgress('Parse de filtros (worker)…');
+    try {
+      bin = await compileEngineOffMain({
+        text: gathered.text,
+        config,
+        resourcesText: resourcesText || '',
+        skipSerialize: !!opts.skipSerialize,
+      });
+    } catch (workerErr) {
+      console.warn(
+        '[adblock] worker compile fallback → main',
+        workerErr && workerErr.message ? workerErr.message : workerErr
+      );
+      emitProgress('Parse de filtros…');
+      bin = compileEngineOnMain({
+        text: gathered.text,
+        config,
+        resourcesText: resourcesText || '',
+        skipSerialize: !!opts.skipSerialize,
+      });
     }
+    emitProgress('Aplicando motor…');
+    blocker = ElectronBlocker.deserialize(new Uint8Array(bin));
   } catch (err) {
     console.error('[adblock] parse failed', err);
     blocker = null;
@@ -961,17 +1072,6 @@ async function buildEngineBody(opts = {}) {
   refreshFilterCounts();
   lastBuildMs = Date.now() - t0;
   lastBuildRssMb = Math.round((process.memoryUsage().rss - rss0) / (1024 * 1024));
-
-  if (!opts.skipSerialize) {
-    try {
-      ensureDir();
-      emitProgress('Serializando engine.bin…');
-      const bin = blocker.serialize();
-      fs.writeFileSync(enginePath(), Buffer.from(bin));
-    } catch (err) {
-      console.warn('[adblock] serialize failed', err && err.message);
-    }
-  }
 
   const now = Date.now();
   const fp = listFingerprint();
@@ -1772,40 +1872,28 @@ async function applySettings(partial) {
   if (partial && typeof partial === 'object') {
     writeAdblockSettings(partial);
   }
-  const needRebuild =
-    partial &&
-    (partial.lists ||
-      typeof partial.antiTracking === 'boolean' ||
-      typeof partial.cosmetic === 'boolean' ||
-      typeof partial.youtubeExperimental === 'boolean' ||
-      typeof partial.enabled === 'boolean' ||
-      typeof partial.userRules === 'string' ||
-      Array.isArray(partial.customLists) ||
-      typeof partial.updateIntervalHours === 'number');
+  const p = partial && typeof partial === 'object' ? partial : {};
+  const needRebuild = settingsApply.adblockPartialNeedsRebuild(p);
+  const enabledTouched = typeof p.enabled === 'boolean';
+  const intervalTouched = typeof p.updateIntervalHours === 'number';
 
   if (needRebuild) {
     clearEarlyCache();
-    if (partial && partial.enabled === false) {
-      reattachAll();
-    } else if (
-      !blocker ||
-      partial.lists ||
-      typeof partial.antiTracking === 'boolean' ||
-      typeof partial.youtubeExperimental === 'boolean' ||
-      typeof partial.cosmetic === 'boolean' ||
-      typeof partial.userRules === 'string' ||
-      Array.isArray(partial.customLists)
-    ) {
-      await buildEngine({ forceDownload: false }, { immediate: true });
-      reattachAll();
-    } else {
-      reattachAll();
-    }
-    if (typeof partial.updateIntervalHours === 'number') {
-      scheduleUpdateTimer();
-    }
-  } else {
+    // Structural change (lists/cosmetic/rules) — compile off-main, then swap.
+    await buildEngine({ forceDownload: false }, { immediate: true });
     reattachAll();
+  } else if (enabledTouched || Object.keys(p).length > 0) {
+    // Enable/disable (and other soft keys): never rebuild when engine already cached.
+    clearEarlyCache();
+    if (enabledTouched && p.enabled !== false && !blocker) {
+      // First enable with empty cache — need an engine once.
+      await buildEngine({ forceDownload: false }, { immediate: true });
+    }
+    reattachAll();
+  }
+
+  if (intervalTouched) {
+    scheduleUpdateTimer();
   }
   emitStatus();
   return getStatus();

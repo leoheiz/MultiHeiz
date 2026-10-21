@@ -459,15 +459,23 @@ async function runLagAuditSelftest(ctx) {
       await sleep(300);
     })
   );
+  // Toggles with settings modal open count as light (budget); open modal stays modal.
   rows.push(
-    await measureAction('settings-toggles', 'modal', async () => {
-      // Appearance / DoH / adblock while settings open
+    await measureAction('settings-toggle-appearance', 'light', async () => {
       await rendererEval(`(async function(){
         if (window.MultiHeizV16 && window.MultiHeizV16.openSettingsSection) {
           window.MultiHeizV16.openSettingsSection('aparencia');
         }
         await window.multiheiz.updateSettings({ lightMode: true });
         await window.multiheiz.updateSettings({ lightMode: false });
+        return true;
+      })()`);
+      await sleep(80);
+    })
+  );
+  rows.push(
+    await measureAction('settings-toggle-doh', 'light', async () => {
+      await rendererEval(`(async function(){
         if (window.MultiHeizV16 && window.MultiHeizV16.openSettingsSection) {
           window.MultiHeizV16.openSettingsSection('rede');
         }
@@ -477,16 +485,25 @@ async function runLagAuditSelftest(ctx) {
         await window.multiheiz.updateSettings({
           doh: { mode: 'off', provider: 'cloudflare', customUrl: '' }
         });
-        const ab = (await window.multiheiz.getState()).settings.adblock || {};
-        await window.multiheiz.updateSettings({
-          adblock: { ...ab, enabled: !(ab.enabled !== false) }
-        });
-        await window.multiheiz.updateSettings({
-          adblock: { ...ab, enabled: ab.enabled !== false }
-        });
         return true;
       })()`);
-      await sleep(200);
+      await sleep(80);
+    })
+  );
+  rows.push(
+    await measureAction('settings-toggle-adblock', 'light', async () => {
+      await rendererEval(`(async function(){
+        if (window.MultiHeizV16 && window.MultiHeizV16.openSettingsSection) {
+          window.MultiHeizV16.openSettingsSection('bloqueador');
+        }
+        const ab = (await window.multiheiz.getState()).settings.adblock || {};
+        const on = ab.enabled !== false;
+        // Only enabled — must not ship lists/cosmetic (deep-diff + no rebuild).
+        await window.multiheiz.updateSettings({ adblock: { enabled: !on } });
+        await window.multiheiz.updateSettings({ adblock: { enabled: on } });
+        return true;
+      })()`);
+      await sleep(120);
     })
   );
   rows.push(
@@ -549,6 +566,8 @@ async function runLagAuditSelftest(ctx) {
   h.disable();
 
   // --- budgets ---
+  /** Settings toggles (modal open): soft meta is the hard gate (< 50 ms). */
+  const SETTINGS_TOGGLE_BUDGET_MS = SOFT_TARGET_MS;
   const failures = [];
   for (const r of rows) {
     if (r.kind === 'light') {
@@ -556,9 +575,11 @@ async function runLagAuditSelftest(ctx) {
         failures.push(r.action + ': escondeu/fotografou painel (não é modal)');
       }
       if (PHASE === 'check' || PHASE === 'after') {
-        if (r.maxLagMs > LIGHT_BUDGET_MS) {
+        const isSettingsToggle = /^settings-toggle-/.test(String(r.action || ''));
+        const budget = isSettingsToggle ? SETTINGS_TOGGLE_BUDGET_MS : LIGHT_BUDGET_MS;
+        if (r.maxLagMs > budget) {
           failures.push(
-            r.action + ': lag main ' + r.maxLagMs + 'ms > budget ' + LIGHT_BUDGET_MS + 'ms'
+            r.action + ': lag main ' + r.maxLagMs + 'ms > budget ' + budget + 'ms'
           );
         }
       }

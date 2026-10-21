@@ -102,6 +102,31 @@
   }
 
   /**
+   * Deep-diff adblock so enable/disable does not ship lists/cosmetic (rebuild trigger).
+   * @param {object} prevAb
+   * @param {object} nextAb
+   */
+  function diffAdblockPartial(prevAb, nextAb) {
+    const p = prevAb && typeof prevAb === 'object' ? prevAb : {};
+    const n = nextAb && typeof nextAb === 'object' ? nextAb : {};
+    const out = {};
+    for (const key of Object.keys(n)) {
+      if (key === 'lists') {
+        const pl = p.lists && typeof p.lists === 'object' ? p.lists : {};
+        const nl = n.lists && typeof n.lists === 'object' ? n.lists : {};
+        const listsOut = {};
+        for (const id of new Set([...Object.keys(pl), ...Object.keys(nl)])) {
+          if (!settingsJsonEqual(pl[id], nl[id])) listsOut[id] = nl[id];
+        }
+        if (Object.keys(listsOut).length) out.lists = listsOut;
+        continue;
+      }
+      if (!settingsJsonEqual(p[key], n[key])) out[key] = n[key];
+    }
+    return out;
+  }
+
+  /**
    * Only keys that differ from current settings (avoids full adblock rebuild on every toggle).
    * @param {object} prev
    * @param {object} next
@@ -111,8 +136,12 @@
     const n = next && typeof next === 'object' ? next : {};
     const out = {};
     for (const key of Object.keys(n)) {
+      if (key === 'adblock') {
+        const d = diffAdblockPartial(p.adblock, n.adblock);
+        if (Object.keys(d).length) out.adblock = d;
+        continue;
+      }
       if (
-        key === 'adblock' ||
         key === 'doh' ||
         key === 'modules' ||
         key === 'extensions' ||

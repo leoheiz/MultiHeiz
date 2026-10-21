@@ -246,6 +246,30 @@ async function runSettingsPerfSelftest(ctx) {
     console.log('PASS: diffSettingsPartial');
   }
 
+  // Adblock deep-diff: enable-only must not look like lists/cosmetic change
+  {
+    const prevAb = {
+      enabled: true,
+      cosmetic: true,
+      antiTracking: true,
+      lists: { easylist: true, easyprivacy: true },
+      userRules: '',
+    };
+    const nextAb = { ...prevAb, enabled: false, lists: { ...prevAb.lists } };
+    const dAb = settingsApply.diffAdblockPartial(prevAb, nextAb);
+    assert(dAb.enabled === false, 'diffAdblock enabled');
+    assert(!dAb.lists, 'enable-only must omit lists');
+    assert(!dAb.cosmetic, 'enable-only must omit cosmetic');
+    assert(!settingsApply.adblockPartialNeedsRebuild(dAb), 'enable-only no rebuild');
+    const listsFlip = settingsApply.diffAdblockPartial(prevAb, {
+      ...prevAb,
+      lists: { ...prevAb.lists, easylist: false },
+    });
+    assert(listsFlip.lists && listsFlip.lists.easylist === false, 'lists deep diff');
+    assert(settingsApply.adblockPartialNeedsRebuild(listsFlip), 'lists need rebuild');
+    console.log('PASS: diffAdblockPartial enable-only');
+  }
+
   const logBody =
     beforeLines.join('\n') +
     '\n' +
