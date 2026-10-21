@@ -184,6 +184,18 @@
         {
           "tag": "Correção",
           "text": "Digitação na interface deixa de engasgar com vídeo tocando: sonda FPS só em selftest/profile; métricas/favicon/título atualizam de forma incremental ou com throttle (status bar ≤1/s)."
+        },
+        {
+          "tag": "Correção",
+          "text": "Bloqueador de anúncios volta a ficar ativo desde a abertura: o motor sobe em segundo plano (com cache) e anexa a todas as sessões; o escudo do painel reflete a configuração salva sem precisar ligar de novo."
+        },
+        {
+          "tag": "Correção",
+          "text": "Indicador de FPS na barra de status restaurado de forma leve (contagem rAF amostrada ~1×/s, sem IPC por frame); pausa quando a janela está oculta ou minimizada."
+        },
+        {
+          "tag": "Correção",
+          "text": "Modo Livre destravado: alças de redimensionar e grade funcionam logo na inicialização (e após trocar layout, travar/destravar ou área de trabalho), sem precisar mudar de área e voltar."
         }
       ]
     },
