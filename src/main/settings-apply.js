@@ -119,17 +119,21 @@ const PANEL_SYNC_KEYS = new Set([
 
 const UA_KEYS = new Set(['uaIdentity', 'preferHighPerfGpu']);
 
+const AUTOSTART_KEYS = new Set(['openAtLogin', 'openAsHidden']);
+
 /**
  * @param {object} changedPartial  already-diffed keys being applied
- * @returns {{ needPanelSync: boolean, needUa: boolean, needAdblock: boolean, needDoh: boolean, needLanguageTool: boolean, needAiWrite: boolean }}
+ * @returns {{ needPanelSync: boolean, needUa: boolean, needAdblock: boolean, needDoh: boolean, needLanguageTool: boolean, needAiWrite: boolean, needAutostart: boolean }}
  */
 function classifySettingsSideEffects(changedPartial) {
   const c = changedPartial && typeof changedPartial === 'object' ? changedPartial : {};
   let needPanelSync = false;
   let needUa = false;
+  let needAutostart = false;
   for (const k of Object.keys(c)) {
     if (PANEL_SYNC_KEYS.has(k)) needPanelSync = true;
     if (UA_KEYS.has(k)) needUa = true;
+    if (AUTOSTART_KEYS.has(k)) needAutostart = true;
   }
   return {
     needPanelSync,
@@ -138,6 +142,7 @@ function classifySettingsSideEffects(changedPartial) {
     needDoh: !!(c.doh && typeof c.doh === 'object'),
     needLanguageTool: !!(c.languageTool && typeof c.languageTool === 'object'),
     needAiWrite: !!(c.aiWrite && typeof c.aiWrite === 'object'),
+    needAutostart,
   };
 }
 

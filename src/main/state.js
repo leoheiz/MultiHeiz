@@ -165,6 +165,10 @@ function defaultState() {
       frameCapAll: 0, // 0 = off; else FPS for all panels
       /** Verificar atualizações automaticamente ao iniciar (default ON) */
       autoCheckUpdates: true,
+      /** Iniciar com o sistema (default OFF) */
+      openAtLogin: false,
+      /** Se openAtLogin: iniciar minimizado/oculto (--hidden) */
+      openAsHidden: false,
       modules: {
         planilha: true,
         alarmes: true,

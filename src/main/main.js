@@ -47,6 +47,7 @@ const aiWrite = require('./ai-write');
 const settingsApply = require('./settings-apply');
 const popoverOverlay = require('./popover-overlay');
 const unread = require('./unread');
+const autostart = require('./autostart');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -295,6 +296,7 @@ const SELFTEST_AI = selftestMode === 'ai';
 const SELFTEST_FPS = selftestMode === 'fps';
 const SELFTEST_LAYOUT_HANDLES_STARTUP = selftestMode === 'layout-handles-startup';
 const SELFTEST_SOCKETS = selftestMode === 'sockets';
+const SELFTEST_AUTOSTART = selftestMode === 'autostart';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -355,7 +357,8 @@ const ANY_SELFTEST =
   SELFTEST_AI ||
   SELFTEST_FPS ||
   SELFTEST_LAYOUT_HANDLES_STARTUP ||
-  SELFTEST_SOCKETS;
+  SELFTEST_SOCKETS ||
+  SELFTEST_AUTOSTART;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -657,6 +660,21 @@ function setupApplicationMenu() {
 
 function createWindow() {
   const st = loadState();
+  // Keep OS autostart entry aligned with persisted settings (skip selftests).
+  if (!ANY_SELFTEST) {
+    try {
+      autostart.setAutostart({
+        openAtLogin: !!(st.settings && st.settings.openAtLogin),
+        openAsHidden: !!(
+          st.settings &&
+          st.settings.openAtLogin &&
+          st.settings.openAsHidden
+        ),
+      });
+    } catch (err) {
+      console.warn('[autostart] sync', err && err.message ? err.message : err);
+    }
+  }
   const bounds = st.windowBounds || {};
   const uiSize =
     SELFTEST_UI ||
@@ -758,6 +776,7 @@ function createWindow() {
   const chrome = windowChrome.getChromeConstructorOptions(st.appearance);
   recordedWindowChrome = chrome.recorded;
   lastTitleBarOverlay = chrome.titleBarOverlay || null;
+  const startHidden = !ANY_SELFTEST && autostart.wantsStartHidden();
   const winOpts = {
     width: winW,
     height: winH,
@@ -771,42 +790,44 @@ function createWindow() {
     // Keep bg/v18 selftest window shown — hidden BrowserWindow makes offscreen
     // WebContentsView rAF intermittently fall to ~1 Hz despite anti-throttle.
     // adblock-real stays hidden/off-screen (paintWhenInitiallyHidden keeps rendering).
+    // --hidden (autostart "Iniciar minimizado"): create hidden, then minimize.
     show:
-      !ANY_SELFTEST ||
-      SELFTEST_BG ||
-      SELFTEST_V18 ||
-      SELFTEST_V19 ||
-      SELFTEST_V110 ||
-      SELFTEST_V120 ||
-      SELFTEST_TITLEBAR ||
-      SELFTEST_FULLSCREEN ||
-      SELFTEST_SIDEBAR ||
-      SELFTEST_REALCLICK_SIDEBAR ||
-      SELFTEST_REALCLICK_SIDEBAR2 ||
-      SELFTEST_REALCLICK_LEGACY_COMPACT ||
-      SELFTEST_REALDRAG_TOPBAR ||
-      SELFTEST_REALHOVER_FULLSCREEN ||
-      SELFTEST_CONTEXTMENU ||
-      SELFTEST_SETTINGS_PERF ||
-      SELFTEST_WORKSPACE_DELETE ||
-      SELFTEST_LAYOUT_WORKSPACE ||
-      SELFTEST_CATALOG ||
-      SELFTEST_CUSTOM_SITE ||
-      SELFTEST_EDIT_START_URL ||
-      SELFTEST_UI_INPUT_LAG ||
-      SELFTEST_SHOTS_SIDEBAR2 ||
-      SELFTEST_ADBLOCK ||
-      SELFTEST_ADBLOCK_STARTUP ||
-      SELFTEST_FPS ||
-      SELFTEST_LAYOUT_HANDLES_STARTUP ||
-      SELFTEST_EXT ||
-      SELFTEST_UA ||
-      SELFTEST_PERF ||
-      SELFTEST_LAG_AUDIT ||
-      SELFTEST_POPOVER_OVERLAY ||
-      SELFTEST_POPOVER_ACTIONS ||
-      SELFTEST_REALHOVER_VOLUME ||
-      SELFTEST_BADGES,
+      !startHidden &&
+      (!ANY_SELFTEST ||
+        SELFTEST_BG ||
+        SELFTEST_V18 ||
+        SELFTEST_V19 ||
+        SELFTEST_V110 ||
+        SELFTEST_V120 ||
+        SELFTEST_TITLEBAR ||
+        SELFTEST_FULLSCREEN ||
+        SELFTEST_SIDEBAR ||
+        SELFTEST_REALCLICK_SIDEBAR ||
+        SELFTEST_REALCLICK_SIDEBAR2 ||
+        SELFTEST_REALCLICK_LEGACY_COMPACT ||
+        SELFTEST_REALDRAG_TOPBAR ||
+        SELFTEST_REALHOVER_FULLSCREEN ||
+        SELFTEST_CONTEXTMENU ||
+        SELFTEST_SETTINGS_PERF ||
+        SELFTEST_WORKSPACE_DELETE ||
+        SELFTEST_LAYOUT_WORKSPACE ||
+        SELFTEST_CATALOG ||
+        SELFTEST_CUSTOM_SITE ||
+        SELFTEST_EDIT_START_URL ||
+        SELFTEST_UI_INPUT_LAG ||
+        SELFTEST_SHOTS_SIDEBAR2 ||
+        SELFTEST_ADBLOCK ||
+        SELFTEST_ADBLOCK_STARTUP ||
+        SELFTEST_FPS ||
+        SELFTEST_LAYOUT_HANDLES_STARTUP ||
+        SELFTEST_EXT ||
+        SELFTEST_UA ||
+        SELFTEST_PERF ||
+        SELFTEST_LAG_AUDIT ||
+        SELFTEST_POPOVER_OVERLAY ||
+        SELFTEST_POPOVER_ACTIONS ||
+        SELFTEST_REALHOVER_VOLUME ||
+        SELFTEST_BADGES),
     paintWhenInitiallyHidden: true,
     autoHideMenuBar: true,
     webPreferences: {
@@ -837,6 +858,25 @@ function createWindow() {
     if (!img.isEmpty()) mainWindow.setIcon(img);
   } catch {
     /* ignore */
+  }
+
+  if (startHidden) {
+    try {
+      mainWindow.once('ready-to-show', () => {
+        try {
+          mainWindow.minimize();
+          mainWindow.showInactive();
+        } catch {
+          try {
+            mainWindow.minimize();
+          } catch {
+            /* ignore */
+          }
+        }
+      });
+    } catch {
+      /* ignore */
+    }
   }
 
   if (!offscreenSelftest && st.windowMaximized) {
@@ -1182,6 +1222,27 @@ function createWindow() {
             waitForLayoutSettle,
             app,
             permissions,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_AUTOSTART) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runAutostartSelftest } = require('./selftest-autostart');
+          runAutostartSelftest({
+            mainWindow,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            sleep,
+            app,
+            autostart,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -2453,6 +2514,7 @@ function publicState() {
     ui: s.ui || { sidebarCollapsed: false, sidebarAutoHide: false, layoutLocked: true },
     appearance: s.appearance,
     freeTiles: s.freeTiles || {},
+    autostart: autostart.getStatus(),
   };
 }
 
@@ -2769,6 +2831,31 @@ function registerIpc() {
       });
     }
     if (prof) prof.mark('uaQueued');
+
+    if (effects.needAutostart) {
+      try {
+        const stSettings = getState().settings || {};
+        const openAtLogin = !!stSettings.openAtLogin;
+        const openAsHidden = openAtLogin && !!stSettings.openAsHidden;
+        if (!openAtLogin && stSettings.openAsHidden) {
+          updateState((s) => {
+            s.settings.openAsHidden = false;
+          });
+        }
+        const r = autostart.setAutostart({ openAtLogin, openAsHidden });
+        if (!r.ok) {
+          console.warn('[settings] autostart', r.error || 'failed');
+          // Revert persisted flags if OS apply failed (e.g. portable path missing)
+          updateState((s) => {
+            s.settings.openAtLogin = false;
+            s.settings.openAsHidden = false;
+          });
+        }
+      } catch (err) {
+        console.warn('[settings] autostart', err && err.message ? err.message : err);
+      }
+    }
+    if (prof) prof.mark('autostart');
 
     // Park/throttle only when related keys changed — never on DoH/appearance-only.
     if (effects.needPanelSync) {
@@ -5887,6 +5974,13 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', () => {
+  if (SELFTEST_AUTOSTART) {
+    try {
+      autostart.cleanupSelftest();
+    } catch {
+      /* ignore */
+    }
+  }
   flushSave();
   if (v16) v16.flushAll();
   try {

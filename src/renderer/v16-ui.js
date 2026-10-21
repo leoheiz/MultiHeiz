@@ -2708,6 +2708,9 @@
       if (t && (t.name === 'dohMode' || t.name === 'dohProvider')) {
         syncDohFormVisibility();
       }
+      if (t && (t.name === 'openAtLogin' || t.name === 'openAsHidden')) {
+        syncAutostartForm();
+      }
       if (t && t.name === 'aiProvider') {
         syncAiFormVisibility(form);
       }
@@ -2962,6 +2965,37 @@
     if (customWrap) customWrap.hidden = mode === 'off' || provider !== 'custom';
   }
 
+  function syncAutostartForm() {
+    const form = document.getElementById('form-settings');
+    const note = document.getElementById('open-at-login-note');
+    const row = document.getElementById('open-at-login-row');
+    const hiddenRow = document.getElementById('open-as-hidden-row');
+    if (!form) return;
+    const info = (getState() && getState().autostart) || {};
+    const supported = info.supported !== false;
+    const reason = info.disabledReason || '';
+    if (form.openAtLogin) {
+      form.openAtLogin.disabled = !supported;
+      if (!supported) form.openAtLogin.checked = false;
+    }
+    if (note) {
+      if (!supported && reason) {
+        note.hidden = false;
+        note.textContent = reason;
+      } else {
+        note.hidden = true;
+        note.textContent = '';
+      }
+    }
+    if (row) row.classList.toggle('disabled', !supported);
+    const loginOn = !!(form.openAtLogin && form.openAtLogin.checked && supported);
+    if (form.openAsHidden) {
+      form.openAsHidden.disabled = !loginOn;
+      if (!loginOn) form.openAsHidden.checked = false;
+    }
+    if (hiddenRow) hiddenRow.hidden = !supported;
+  }
+
   function parseLtLanguages(raw) {
     return String(raw || '')
       .split(/[,;\s]+/)
@@ -3061,6 +3095,8 @@
           openLastPage: !!form.openLastPage.checked,
           persistSessions: !!(form.persistSessions && form.persistSessions.checked),
           confirmOnRemove: !!form.confirmOnRemove.checked,
+          openAtLogin: !!(form.openAtLogin && form.openAtLogin.checked),
+          openAsHidden: !!(form.openAsHidden && form.openAsHidden.checked),
           keepBackgroundRunning: !!form.keepBackgroundRunning.checked,
           suspendHidden: !!form.suspendHidden.checked,
           suspendDelayMs: Number(form.suspendDelayMs.value) || 0,
@@ -3385,6 +3421,9 @@
     form.openLastPage.checked = !!s.openLastPage;
     if (form.persistSessions) form.persistSessions.checked = s.persistSessions !== false;
     form.confirmOnRemove.checked = s.confirmOnRemove !== false;
+    if (form.openAtLogin) form.openAtLogin.checked = !!s.openAtLogin;
+    if (form.openAsHidden) form.openAsHidden.checked = !!s.openAsHidden;
+    syncAutostartForm();
     form.keepBackgroundRunning.checked = !!s.keepBackgroundRunning;
     form.suspendHidden.checked = !!s.suspendHidden;
     form.suspendDelayMs.value = Number(s.suspendDelayMs) || 0;
