@@ -793,8 +793,16 @@
           <section class="settings-pane" data-pane="diagnosticos">
             <div class="diag-actions">
               <button type="button" class="btn ghost" id="btn-open-data">Abrir pasta de dados</button>
-              <button type="button" class="btn ghost" id="btn-export-diag">Exportar diagnóstico</button>
+              <button type="button" class="btn primary" id="btn-gen-diag">Gerar diagnóstico</button>
+              <button type="button" class="btn ghost" id="btn-export-diag" disabled>Salvar relatório…</button>
+              <button type="button" class="btn ghost" id="btn-github-issue">Abrir issue no GitHub</button>
             </div>
+            <p class="muted-note">
+              O relatório remove URLs pessoais, e-mails, tokens e caminhos do usuário. A issue no GitHub
+              leva só a versão e o sistema — nunca o relatório completo.
+            </p>
+            <label class="muted-note" for="diag-preview">Pré-visualização (somente leitura)</label>
+            <textarea id="diag-preview" class="diag-box tall" readonly rows="14" spellcheck="false"></textarea>
             <pre id="diag-process" class="diag-box"></pre>
             <h3>Painel em foco</h3>
             <pre id="diag-adblock-focus" class="diag-box"></pre>
@@ -809,6 +817,8 @@
             <p class="muted-note">Electron <span id="about-electron"></span> · Chromium <span id="about-chrome"></span></p>
             <p class="muted-note">Tudo gratuito — sem licenças, ativação ou paywall.</p>
             <button type="button" class="btn ghost" id="btn-about-novidades">Novidades / Log de atualizações</button>
+            <button type="button" class="btn ghost" id="btn-about-diag">Diagnóstico com um clique</button>
+            <button type="button" class="btn ghost" id="btn-about-github-issue">Abrir issue no GitHub</button>
             <div id="kofi-support-section" class="kofi-support-section hidden">
               <h3>Apoiar o desenvolvedor</h3>
               <p class="muted-note">

@@ -165,10 +165,15 @@ function initV16(ctx) {
     });
     ipcMain.handle('app:open-data-folder', () => diagnostics.openDataFolder());
     ipcMain.handle('diagnostics:logs', () => logger.readRecent(300));
+    ipcMain.handle('diagnostics:preview', () => {
+      const metrics = memory.getLatestMetrics();
+      return diagnostics.previewDiagnostics({ metrics });
+    });
     ipcMain.handle('diagnostics:export', async () => {
       const metrics = memory.getLatestMetrics();
       return diagnostics.exportDiagnostics(getMainWindow(), { metrics });
     });
+    ipcMain.handle('diagnostics:github-issue', () => diagnostics.openGithubIssue());
     ipcMain.handle('diagnostics:process-info', () => {
       const metrics = memory.getLatestMetrics();
       return {
@@ -176,6 +181,7 @@ function initV16(ctx) {
         memoryUsage: process.memoryUsage(),
         versions: process.versions,
         pid: process.pid,
+        crashCount: require('./diag-log').getCrashCount(),
       };
     });
     // updates:* handlers registered by src/main/updater.js (initUpdater)

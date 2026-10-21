@@ -2956,11 +2956,55 @@
     const openData = document.getElementById('btn-open-data');
     if (openData) openData.addEventListener('click', () => window.multiheiz.openDataFolder());
 
+    const fillDiagPreview = (text) => {
+      const ta = document.getElementById('diag-preview');
+      if (ta) ta.value = text || '';
+      const saveBtn = document.getElementById('btn-export-diag');
+      if (saveBtn) saveBtn.disabled = !text;
+    };
+
+    const genDiag = document.getElementById('btn-gen-diag');
+    if (genDiag) {
+      genDiag.addEventListener('click', async () => {
+        genDiag.disabled = true;
+        try {
+          const r = window.multiheiz.diagnosticsPreview
+            ? await window.multiheiz.diagnosticsPreview()
+            : await window.multiheiz.diagnosticsExport();
+          if (r && r.preview) fillDiagPreview(r.preview);
+          else if (r && r.ok && r.path) toast('Diagnóstico exportado');
+          else fillDiagPreview((r && r.preview) || '');
+        } finally {
+          genDiag.disabled = false;
+        }
+      });
+    }
+
     const exportDiag = document.getElementById('btn-export-diag');
     if (exportDiag) {
       exportDiag.addEventListener('click', async () => {
         const r = await window.multiheiz.diagnosticsExport();
-        if (r && r.ok) toast('Diagnóstico exportado');
+        if (r && r.preview) fillDiagPreview(r.preview);
+        if (r && r.ok) toast('Diagnóstico salvo');
+      });
+    }
+
+    const openGithubIssue = async () => {
+      if (!window.multiheiz.diagnosticsGithubIssue) return;
+      const r = await window.multiheiz.diagnosticsGithubIssue();
+      if (r && r.stubbed) toast('Issue (selftest): URL gerada');
+    };
+    const btnGh = document.getElementById('btn-github-issue');
+    if (btnGh) btnGh.addEventListener('click', openGithubIssue);
+    const btnAboutGh = document.getElementById('btn-about-github-issue');
+    if (btnAboutGh) btnAboutGh.addEventListener('click', openGithubIssue);
+    const btnAboutDiag = document.getElementById('btn-about-diag');
+    if (btnAboutDiag) {
+      btnAboutDiag.addEventListener('click', () => {
+        const nav = document.querySelector('.settings-nav-btn[data-section="diagnosticos"]');
+        if (nav) nav.click();
+        const gen = document.getElementById('btn-gen-diag');
+        if (gen) gen.click();
       });
     }
 

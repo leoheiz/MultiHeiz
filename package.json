@@ -33,6 +33,7 @@
     "selftest:store": "node tools/selftest-store.js",
     "selftest:updater": "node tools/selftest-updater.js",
     "selftest:diff-update": "node tools/selftest-diff-update.js",
+    "selftest:diagnostics": "node tools/selftest-diagnostics.js",
     "selftest:v110": "node tools/selftest-v110.js",
     "selftest:v120": "node tools/selftest-v120.js",
     "selftest:security": "node tools/selftest-security.js",

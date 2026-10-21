@@ -176,7 +176,9 @@ contextBridge.exposeInMainWorld('multiheiz', {
   downloadsRemove: (id) => ipcRenderer.invoke('downloads:remove', id),
 
   diagnosticsLogs: () => ipcRenderer.invoke('diagnostics:logs'),
+  diagnosticsPreview: () => ipcRenderer.invoke('diagnostics:preview'),
   diagnosticsExport: () => ipcRenderer.invoke('diagnostics:export'),
+  diagnosticsGithubIssue: () => ipcRenderer.invoke('diagnostics:github-issue'),
   diagnosticsProcessInfo: () => ipcRenderer.invoke('diagnostics:process-info'),
   updatesCheck: () => ipcRenderer.invoke('updates:check'),
   updatesStatus: () => ipcRenderer.invoke('updates:status'),

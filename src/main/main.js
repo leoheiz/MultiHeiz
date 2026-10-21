@@ -29,6 +29,7 @@ const extensions = require('./extensions');
 const userAgent = require('./user-agent');
 const sessionPersist = require('./session-persist');
 const logger = require('./logger');
+const diagLog = require('./diag-log');
 const recovery = require('./recovery');
 const changelog = require('./changelog');
 const updater = require('./updater');
@@ -298,6 +299,7 @@ const SELFTEST_LAYOUT_HANDLES_STARTUP = selftestMode === 'layout-handles-startup
 const SELFTEST_SOCKETS = selftestMode === 'sockets';
 const SELFTEST_AUTOSTART = selftestMode === 'autostart';
 const SELFTEST_DIFF_UPDATE = selftestMode === 'diff-update';
+const SELFTEST_DIAGNOSTICS = selftestMode === 'diagnostics';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -360,7 +362,8 @@ const ANY_SELFTEST =
   SELFTEST_LAYOUT_HANDLES_STARTUP ||
   SELFTEST_SOCKETS ||
   SELFTEST_AUTOSTART ||
-  SELFTEST_DIFF_UPDATE;
+  SELFTEST_DIFF_UPDATE ||
+  SELFTEST_DIAGNOSTICS;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -850,6 +853,12 @@ function createWindow() {
   mainWindow = new BrowserWindow(winOpts);
 
   try {
+    diagLog.attachWindow(mainWindow);
+  } catch {
+    /* ignore */
+  }
+
+  try {
     mainWindow.setMenuBarVisibility(false);
   } catch {
     /* ignore */
@@ -1269,6 +1278,24 @@ function createWindow() {
           failSelftest(err);
         }
       }, 1200);
+    });
+  } else if (SELFTEST_DIAGNOSTICS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runDiagnosticsSelftest } = require('./selftest-diagnostics');
+          runDiagnosticsSelftest({
+            mainWindow,
+            getState,
+            updateState,
+            flushSave,
+            sleep,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
     });
   } else if (SELFTEST_ADBLOCK_PACKAGED) {
     mainWindow.webContents.once('did-finish-load', () => {
@@ -5815,6 +5842,12 @@ async function runV14Selftest() {
 
 app.whenReady().then(async () => {
   loadState();
+  try {
+    diagLog.installProcessHandlers();
+    diagLog.attachAppCrashHooks(app);
+  } catch (err) {
+    console.warn('[main] diag-log', err && err.message ? err.message : err);
+  }
   try {
     require('./extensions/dnr-shim').ensureExtresProtocol();
   } catch (err) {
