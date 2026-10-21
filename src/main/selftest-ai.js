@@ -129,7 +129,33 @@ async function runAiSelftest(ctx) {
   }
   console.log('PASS: disabled = sem menu IA');
 
-  // 2) Ligar + salvar chave via safeStorage
+  // 2) Ligar + salvar chave via safeStorage (ou SKIP se indisponível / basic_text)
+  const { safeStorageApi } = require('./proxy');
+  const ssInfo = safeStorageApi();
+  const safeOk = !!ssInfo.available;
+  if (!safeOk) {
+    console.log(
+      'SKIP: safeStorage indisponível — chave API criptografada / fluxos com chave (backend=' +
+        (ssInfo.backend || '?') +
+        ')'
+    );
+    const setFail = aiWrite.setApiKey(testKey);
+    assert(!setFail.ok, 'setApiKey deve falhar sem safeStorage');
+    assert(
+      /safeStorage|seguro|criptograf/i.test(String(setFail.error || '')),
+      'erro menciona armazenamento: ' + JSON.stringify(setFail)
+    );
+    // Resto que não depende de chave: validação de URL / normalize
+    const badUrl = aiWrite.validateBaseUrl('http://evil.example/v1', {
+      allowLoopbackHttp: false,
+      provider: 'openai-compat',
+    });
+    assert(!badUrl.ok, 'validateBaseUrl rejeita http remoto');
+    console.log('PASS: selftest ai complete (parcial sem safeStorage)');
+    app.exit(0);
+    return;
+  }
+
   assert(aiWrite.getSelftestStats().encryptionAvailable, 'safeStorage disponível');
   const setKey = aiWrite.setApiKey(testKey);
   assert(setKey.ok, 'setApiKey: ' + (setKey.error || ''));

@@ -42,6 +42,16 @@ async function runProxySelftest(ctx) {
 
   assert(echoUrl && proxyPort, 'env MULTIHEIZ_PROXY_TEST_URL / PORT required');
 
+  const ss = proxy.safeStorageApi();
+  const safeOk = !!ss.available;
+  if (!safeOk) {
+    console.log(
+      'SKIP: safeStorage indisponível — senha criptografada / auth com senha salva (backend=' +
+        (ss.backend || '?') +
+        ')'
+    );
+  }
+
   updateState((s) => {
     if (!s.workspaces.some((w) => w.id === 'ws-default')) {
       s.workspaces.push({ id: 'ws-default', name: 'Default' });
@@ -90,95 +100,108 @@ async function runProxySelftest(ctx) {
   assert(setA.ok, 'set proxy A: ' + (setA.error || ''));
   console.log('PASS: proxy set on window A');
 
-  // Senha não aparece em claro no estado público
   const pub = publicState();
   const accAPub = (pub.accounts || []).find((a) => a.id === 'acc-px-a');
-  assert(accAPub && accAPub.proxy && accAPub.proxy.passwordSaved === true, 'passwordSaved public');
+  assert(accAPub && accAPub.proxy, 'proxy public present');
   assert(!accAPub.proxy.passwordEnc, 'no passwordEnc in publicState');
   assert(!accAPub.proxy.password, 'no password in publicState');
   const raw = JSON.stringify(pub);
   assert(!raw.includes(proxyPass), 'publicState must not contain plaintext password');
   console.log('PASS: password not exposed in publicState');
 
-  // Arquivo de estado: ciphertext ok, plaintext não
   flushSave();
   const stateFile = path.join(app.getPath('userData'), 'multiheiz-state.json');
   const disk = fs.readFileSync(stateFile, 'utf8');
   assert(!disk.includes(proxyPass), 'state file must not contain plaintext password');
-  const diskObj = JSON.parse(disk);
-  const diskA = (diskObj.accounts || []).find((a) => a.id === 'acc-px-a');
-  assert(diskA && diskA.proxy && diskA.proxy.passwordEnc, 'passwordEnc on disk');
-  console.log('PASS: password encrypted on disk');
 
-  // sanitize / export
-  const diagnostics = require('./diagnostics');
-  const sanitized = diagnostics.sanitizeState(getState());
-  const sanA = (sanitized.accounts || []).find((a) => a.id === 'acc-px-a');
-  assert(!sanA.proxy || !sanA.proxy.passwordEnc, 'sanitize strips passwordEnc');
-  assert(!JSON.stringify(sanitized).includes(proxyPass), 'sanitize no plaintext');
-  console.log('PASS: diagnostics sanitize strips proxy secrets');
+  if (safeOk) {
+    assert(accAPub.proxy.passwordSaved === true, 'passwordSaved public');
+    const diskObj = JSON.parse(disk);
+    const diskA = (diskObj.accounts || []).find((a) => a.id === 'acc-px-a');
+    assert(diskA && diskA.proxy && diskA.proxy.passwordEnc, 'passwordEnc on disk');
+    console.log('PASS: password encrypted on disk');
+
+    const diagnostics = require('./diagnostics');
+    const sanitized = diagnostics.sanitizeState(getState());
+    const sanA = (sanitized.accounts || []).find((a) => a.id === 'acc-px-a');
+    assert(!sanA.proxy || !sanA.proxy.passwordEnc, 'sanitize strips passwordEnc');
+    assert(!JSON.stringify(sanitized).includes(proxyPass), 'sanitize no plaintext');
+    console.log('PASS: diagnostics sanitize strips proxy secrets');
+  } else {
+    assert(setA.passwordWarning, 'passwordWarning when safeStorage missing');
+    assert(accAPub.proxy.passwordSaved !== true, 'passwordSaved false without safeStorage');
+    console.log('SKIP: safeStorage indisponível — passwordEnc / sanitize de ciphertext');
+  }
 
   panels.createPanel('acc-px-a');
   panels.createPanel('acc-px-b');
   await sleep(800);
 
-  // Teste via eco local (A pelo proxy)
-  const testA = await proxy.testProxyForAccount('acc-px-a');
-  assert(testA.ok, 'test A ok: ' + (testA.error || ''));
-  assert(
-    /proxy-ok|via-proxy/i.test(String(testA.body || testA.ip || '')),
-    'echo marker via proxy: ' + (testA.body || testA.ip)
-  );
-  console.log('PASS: window A reaches echo via proxy', testA.ip || testA.body);
-
-  // Contador do proxy deve ter subido (lido do arquivo de hits do harness)
   const hitsFile = process.env.MULTIHEIZ_PROXY_HITS_FILE;
   assert(hitsFile, 'HITS_FILE env');
-  await sleep(200);
-  const hitsAfterA = Number(fs.readFileSync(hitsFile, 'utf8') || '0');
-  assert(hitsAfterA > hitsBefore, `proxy hits increased (${hitsBefore} -> ${hitsAfterA})`);
-  console.log('PASS: proxy hit counter increased', hitsAfterA);
 
-  // Janela B: direto — não deve incrementar hits do proxy (ou pouco)
-  const hitsMid = hitsAfterA;
-  const testB = await proxy.testProxyForAccount('acc-px-b');
-  assert(testB.ok, 'test B ok: ' + (testB.error || ''));
-  assert(
-    /direct-ok|no-proxy/i.test(String(testB.body || testB.ip || '')),
-    'echo marker direct: ' + (testB.body || testB.ip)
-  );
-  await sleep(200);
-  const hitsAfterB = Number(fs.readFileSync(hitsFile, 'utf8') || '0');
-  assert(hitsAfterB === hitsMid, `direct B must not hit proxy (${hitsMid} vs ${hitsAfterB})`);
-  console.log('PASS: window B direct does not hit proxy');
+  if (safeOk) {
+    const testA = await proxy.testProxyForAccount('acc-px-a');
+    assert(testA.ok, 'test A ok: ' + (testA.error || ''));
+    assert(
+      /proxy-ok|via-proxy/i.test(String(testA.body || testA.ip || '')),
+      'echo marker via proxy: ' + (testA.body || testA.ip)
+    );
+    console.log('PASS: window A reaches echo via proxy', testA.ip || testA.body);
 
-  // Auth errada: falha limpa
-  const setBad = await proxy.setProxyForAccount('acc-px-a', {
-    type: 'http',
-    host: proxyHost,
-    port: proxyPort,
-    username: proxyUser,
-    password: 'senha-errada-xyz',
-    bypass: '<-loopback>',
-  });
-  assert(setBad.ok, 'set bad password config');
-  const testBad = await proxy.testProxyForAccount('acc-px-a');
-  assert(!testBad.ok, 'bad auth must fail test');
-  console.log('PASS: bad proxy auth fails cleanly', testBad.error);
+    await sleep(200);
+    const hitsAfterA = Number(fs.readFileSync(hitsFile, 'utf8') || '0');
+    assert(hitsAfterA > hitsBefore, `proxy hits increased (${hitsBefore} -> ${hitsAfterA})`);
+    console.log('PASS: proxy hit counter increased', hitsAfterA);
 
-  // Auth correta de novo
-  const setGood = await proxy.setProxyForAccount('acc-px-a', {
-    type: 'http',
-    host: proxyHost,
-    port: proxyPort,
-    username: proxyUser,
-    password: proxyPass,
-    bypass: '<-loopback>',
-  });
-  assert(setGood.ok, 'restore good auth');
-  const testGood = await proxy.testProxyForAccount('acc-px-a');
-  assert(testGood.ok, 'good auth works again: ' + (testGood.error || ''));
-  console.log('PASS: correct proxy auth works');
+    const hitsMid = hitsAfterA;
+    const testB = await proxy.testProxyForAccount('acc-px-b');
+    assert(testB.ok, 'test B ok: ' + (testB.error || ''));
+    assert(
+      /direct-ok|no-proxy/i.test(String(testB.body || testB.ip || '')),
+      'echo marker direct: ' + (testB.body || testB.ip)
+    );
+    await sleep(200);
+    const hitsAfterB = Number(fs.readFileSync(hitsFile, 'utf8') || '0');
+    assert(hitsAfterB === hitsMid, `direct B must not hit proxy (${hitsMid} vs ${hitsAfterB})`);
+    console.log('PASS: window B direct does not hit proxy');
+
+    const setBad = await proxy.setProxyForAccount('acc-px-a', {
+      type: 'http',
+      host: proxyHost,
+      port: proxyPort,
+      username: proxyUser,
+      password: 'senha-errada-xyz',
+      bypass: '<-loopback>',
+    });
+    assert(setBad.ok, 'set bad password config');
+    const testBad = await proxy.testProxyForAccount('acc-px-a');
+    assert(!testBad.ok, 'bad auth must fail test');
+    console.log('PASS: bad proxy auth fails cleanly', testBad.error);
+
+    const setGood = await proxy.setProxyForAccount('acc-px-a', {
+      type: 'http',
+      host: proxyHost,
+      port: proxyPort,
+      username: proxyUser,
+      password: proxyPass,
+      bypass: '<-loopback>',
+    });
+    assert(setGood.ok, 'restore good auth');
+    const testGood = await proxy.testProxyForAccount('acc-px-a');
+    assert(testGood.ok, 'good auth works again: ' + (testGood.error || ''));
+    console.log('PASS: correct proxy auth works');
+  } else {
+    console.log('SKIP: safeStorage indisponível — eco via proxy com senha salva / auth');
+    // Sem senha salva o proxy autenticado falha; janela B direta ainda funciona.
+    const testB = await proxy.testProxyForAccount('acc-px-b');
+    assert(testB.ok, 'test B ok sem safeStorage: ' + (testB.error || ''));
+    assert(
+      /direct-ok|no-proxy/i.test(String(testB.body || testB.ip || '')),
+      'echo marker direct: ' + (testB.body || testB.ip)
+    );
+    console.log('PASS: window B direct (sem safeStorage)');
+  }
 
   // Remover → direto
   const rem = await proxy.removeProxyForAccount('acc-px-a');

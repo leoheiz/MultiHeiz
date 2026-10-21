@@ -124,7 +124,12 @@ function validateProxyInput(input) {
 }
 
 /**
- * @returns {{ available: boolean, encrypt: (s: string) => string|null, decrypt: (b64: string) => string|null }}
+ * @returns {{
+ *   available: boolean,
+ *   backend: string,
+ *   encrypt: (s: string) => string|null,
+ *   decrypt: (b64: string) => string|null
+ * }}
  */
 function safeStorageApi() {
   let safeStorage = null;
@@ -133,9 +138,24 @@ function safeStorageApi() {
   } catch {
     safeStorage = null;
   }
-  const available = !!(safeStorage && typeof safeStorage.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable());
+  let backend = 'unknown';
+  try {
+    if (safeStorage && typeof safeStorage.getSelectedStorageBackend === 'function') {
+      backend = String(safeStorage.getSelectedStorageBackend() || 'unknown');
+    }
+  } catch {
+    backend = 'unknown';
+  }
+  const encryptionFlag = !!(
+    safeStorage &&
+    typeof safeStorage.isEncryptionAvailable === 'function' &&
+    safeStorage.isEncryptionAvailable()
+  );
+  // basic_text = Linux sem keyring — não serve para segredos.
+  const available = encryptionFlag && backend !== 'basic_text';
   return {
     available,
+    backend,
     encrypt(plain) {
       if (!available || plain == null || plain === '') return null;
       try {

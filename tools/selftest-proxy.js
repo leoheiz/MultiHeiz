@@ -32,6 +32,7 @@ function runNodeChecks() {
     session: { fromPartition: () => ({ setProxy: async () => {}, fetch: async () => {} }) },
     safeStorage: {
       isEncryptionAvailable: () => false,
+      getSelectedStorageBackend: () => 'basic_text',
       encryptString: () => Buffer.from('x'),
       decryptString: () => '',
     },
