@@ -172,6 +172,18 @@
         {
           "tag": "Melhoria",
           "text": "selftests de proxy e IA pulam asserções de safeStorage quando a criptografia do sistema não está disponível (ex.: Linux sem keyring), com mensagem SKIP e saída 0."
+        },
+        {
+          "tag": "Correção",
+          "text": "Site personalizado: foco no campo de URL ao abrir o formulário; a busca do seletor não captura teclas com o formulário aberto; URL normalizada e validada antes de salvar (host inválido como www mostra “Endereço inválido” e não cria a janela)."
+        },
+        {
+          "tag": "Correção",
+          "text": "Editar URL inicial: após salvar, navega quando o painel está em branco, com erro ou ainda na URL inicial antiga; se o usuário já navegou para outra página, só salva e oferece “Abrir agora”."
+        },
+        {
+          "tag": "Correção",
+          "text": "Digitação na interface deixa de engasgar com vídeo tocando: sonda FPS só em selftest/profile; métricas/favicon/título atualizam de forma incremental ou com throttle (status bar ≤1/s)."
         }
       ]
     },
