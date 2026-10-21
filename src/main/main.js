@@ -201,6 +201,7 @@ const SELFTEST_V14 = selftestMode === 'v14';
 const SELFTEST_INPUT = selftestMode === 'input';
 const SELFTEST_V16 = selftestMode === 'v16';
 const SELFTEST_ADBLOCK = selftestMode === 'adblock';
+const SELFTEST_ADBLOCK_STARTUP = selftestMode === 'adblock-startup';
 const SELFTEST_ADBLOCK_REAL = selftestMode === 'adblock-real';
 const SELFTEST_ADBLOCK_PACKAGED = selftestMode === 'adblock-packaged';
 const SELFTEST_V18 = selftestMode === 'v18';
@@ -258,6 +259,7 @@ const ANY_SELFTEST =
   SELFTEST_INPUT ||
   SELFTEST_V16 ||
   SELFTEST_ADBLOCK ||
+  SELFTEST_ADBLOCK_STARTUP ||
   SELFTEST_ADBLOCK_REAL ||
   SELFTEST_ADBLOCK_PACKAGED ||
   SELFTEST_V18 ||
@@ -646,7 +648,8 @@ function createWindow() {
     SELFTEST_POPOVER_ACTIONS ||
     SELFTEST_BADGES ||
     SELFTEST_LANGUAGETOOL ||
-    SELFTEST_AI
+    SELFTEST_AI ||
+    SELFTEST_ADBLOCK_STARTUP
       ? {
           width: Number(envGet('MULTIHEIZ_UI_WIDTH')) || 1600,
           height: Number(envGet('MULTIHEIZ_UI_HEIGHT')) || 900,
@@ -742,6 +745,7 @@ function createWindow() {
       SELFTEST_UI_INPUT_LAG ||
       SELFTEST_SHOTS_SIDEBAR2 ||
       SELFTEST_ADBLOCK ||
+      SELFTEST_ADBLOCK_STARTUP ||
       SELFTEST_EXT ||
       SELFTEST_UA ||
       SELFTEST_PERF ||
@@ -989,6 +993,30 @@ function createWindow() {
         try {
           const { runAdblockSelftest } = require('./selftest-adblock');
           runAdblockSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            adblock,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_ADBLOCK_STARTUP) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runAdblockStartupSelftest } = require('./selftest-adblock-startup');
+          runAdblockStartupSelftest({
             mainWindow,
             panels,
             getState,
@@ -2708,6 +2736,7 @@ function registerIpc() {
   ipcMain.handle('adblock:inject-test-filters', async (_e, text) => {
     if (
       !SELFTEST_ADBLOCK &&
+      !SELFTEST_ADBLOCK_STARTUP &&
       !SELFTEST_ADBLOCK_REAL &&
       !SELFTEST_V18 &&
       envGet('MULTIHEIZ_ADBLOCK_TEST') !== '1'

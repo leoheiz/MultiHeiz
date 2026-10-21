@@ -122,6 +122,7 @@ function isTestMode() {
   const st = envGet('MULTIHEIZ_SELFTEST') || '';
   return (
     st === 'adblock' ||
+    st === 'adblock-startup' ||
     st === 'adblock-real' ||
     st === 'adblock-packaged' ||
     st === 'v18' ||
@@ -516,6 +517,7 @@ function engineConfig() {
   const ab = readAdblockSettings();
   const offlineSelftest =
     envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
+    envGet('MULTIHEIZ_SELFTEST') === 'adblock-startup' ||
     envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
     envGet('MULTIHEIZ_SELFTEST') === 'v18';
   return {
@@ -598,7 +600,11 @@ async function loadResourcesText(opts = {}) {
   ensureDir();
   const file = resourcesCachePath();
   // Offline adblock selftest: never hit the network for resources
-  if (envGet('MULTIHEIZ_SELFTEST') === 'adblock' || envGet('MULTIHEIZ_SELFTEST') === 'v18') {
+  if (
+    envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
+    envGet('MULTIHEIZ_SELFTEST') === 'adblock-startup' ||
+    envGet('MULTIHEIZ_SELFTEST') === 'v18'
+  ) {
     const minimal = minimalTestResources();
     fs.writeFileSync(file, minimal, 'utf8');
     return minimal;
@@ -648,6 +654,7 @@ async function gatherFilterText(opts = {}) {
   if (
     isTestMode() &&
     (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
+      envGet('MULTIHEIZ_SELFTEST') === 'adblock-startup' ||
       envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
       envGet('MULTIHEIZ_SELFTEST') === 'v18')
   ) {
@@ -1066,7 +1073,8 @@ async function buildEngineBody(opts = {}) {
   }
 
   engineSource =
-    envGet('MULTIHEIZ_SELFTEST') === 'adblock'
+    envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
+    envGet('MULTIHEIZ_SELFTEST') === 'adblock-startup'
       ? 'test'
       : 'lists';
   refreshFilterCounts();
@@ -1760,24 +1768,71 @@ function updateIntervalMs() {
   return h * 60 * 60 * 1000;
 }
 
+function isOfflineAdblockSelftest() {
+  const st = envGet('MULTIHEIZ_SELFTEST') || '';
+  return (
+    st === 'adblock' ||
+    st === 'adblock-startup' ||
+    st === 'adblock-packaged' ||
+    st === 'v18' ||
+    st === 'builtin-yt'
+  );
+}
+
 function scheduleUpdateTimer() {
   if (updateTimer) {
     clearInterval(updateTimer);
     updateTimer = null;
   }
-  if (
-    isTestMode() &&
-    (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
-      envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
-      envGet('MULTIHEIZ_SELFTEST') === 'v18' ||
-      envGet('MULTIHEIZ_SELFTEST') === 'builtin-yt')
-  ) {
+  if (isTestMode() && isOfflineAdblockSelftest()) {
     return;
   }
   updateTimer = setInterval(() => {
     updateListsNow().catch(() => {});
   }, updateIntervalMs());
   if (typeof updateTimer.unref === 'function') updateTimer.unref();
+}
+
+/**
+ * Attach hub listeners to every known session + every account partition +
+ * the default session. Safe to call repeatedly after the engine is ready.
+ */
+function attachBlockingEverywhere() {
+  reattachAll();
+  attachAllAccountSessions();
+  try {
+    const { session } = require('electron');
+    if (session && session.defaultSession) {
+      attachSession(session.defaultSession, null);
+    }
+  } catch (err) {
+    debugLog('attach defaultSession', err && err.message ? err.message : err);
+  }
+}
+
+/**
+ * Ensure a live engine exists when adblock is enabled: prefer a valid
+ * engine.bin cache, else compile off the main thread (worker) immediately.
+ * @param {{ forceDownload?: boolean, allowStaleBgUpdate?: boolean }} [opts]
+ * @returns {Promise<boolean>}
+ */
+async function ensureEngineAtStartup(opts = {}) {
+  const forceDownload = !!opts.forceDownload;
+  const allowStaleBgUpdate = opts.allowStaleBgUpdate !== false;
+
+  if (tryLoadSerializedEngine()) {
+    if (allowStaleBgUpdate && forceDownload && !fetchBlocked) {
+      buildEngine({ forceDownload: true }, { immediate: false })
+        .then((ok) => {
+          if (ok && isGloballyEnabled()) attachBlockingEverywhere();
+          emitStatus();
+        })
+        .catch((e) => console.warn('[adblock] bg update', e && e.message));
+    }
+    return true;
+  }
+
+  return buildEngine({ forceDownload }, { immediate: true });
 }
 
 /**
@@ -1801,44 +1856,32 @@ function init(opts) {
         writeAdblockSettings({ lists: merged });
       }
 
+      // Disabled in saved settings: do not compile; still register IPC + detach hubs.
+      if (!isGloballyEnabled()) {
+        reattachAll();
+        emitStatus();
+        scheduleUpdateTimer();
+        debugLog('init skipped engine (adblock disabled)');
+        return;
+      }
+
       const meta = loadMeta();
       const interval = updateIntervalMs();
       const stale = !meta.lastUpdateAt || Date.now() - Number(meta.lastUpdateAt) > interval;
+      const forceDownload = isOfflineAdblockSelftest() ? false : stale;
 
-      let ok = false;
-      if (tryLoadSerializedEngine()) {
-        ok = true;
-        if (stale && !fetchBlocked) {
-          buildEngine({ forceDownload: true })
-            .then(() => {
-              reattachAll();
-              emitStatus();
-            })
-            .catch((e) => console.warn('[adblock] bg update', e && e.message));
-        }
-      } else {
-        ok = await buildEngine(
-          {
-            forceDownload:
-              isTestMode() &&
-              (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
-                envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
-                envGet('MULTIHEIZ_SELFTEST') === 'v18' ||
-                envGet('MULTIHEIZ_SELFTEST') === 'builtin-yt')
-                ? false
-                : stale,
-          },
-          { immediate: true }
-        );
-      }
+      const ok = await ensureEngineAtStartup({
+        forceDownload,
+        // Cache hit + stale lists → refresh in background without blocking startup attach
+        allowStaleBgUpdate: !isOfflineAdblockSelftest() && stale,
+      });
 
-      if (ok) {
-        reattachAll();
-        attachAllAccountSessions();
+      if (ok && isGloballyEnabled()) {
+        attachBlockingEverywhere();
       }
       emitStatus();
       scheduleUpdateTimer();
-      debugLog('init done source=' + engineSource, 'ready=' + !!blocker);
+      debugLog('init done source=' + engineSource, 'ready=' + !!blocker, 'enabled=' + isGloballyEnabled());
     } catch (err) {
       console.error('[adblock] init failed', err);
       writeAdblockSettings({ statusMessage: 'Falha ao iniciar bloqueador' });
@@ -1854,16 +1897,12 @@ function whenReady() {
 async function updateListsNow() {
   const ok = await buildEngine(
     {
-      forceDownload: !(
-        isTestMode() &&
-        (envGet('MULTIHEIZ_SELFTEST') === 'adblock' ||
-          envGet('MULTIHEIZ_SELFTEST') === 'adblock-packaged' ||
-          envGet('MULTIHEIZ_SELFTEST') === 'v18')
-      ),
+      forceDownload: !(isTestMode() && isOfflineAdblockSelftest()),
     },
     { immediate: true }
   );
-  reattachAll();
+  if (ok && isGloballyEnabled()) attachBlockingEverywhere();
+  else reattachAll();
   emitStatus();
   return getStatus();
 }
@@ -1881,7 +1920,8 @@ async function applySettings(partial) {
     clearEarlyCache();
     // Structural change (lists/cosmetic/rules) — compile off-main, then swap.
     await buildEngine({ forceDownload: false }, { immediate: true });
-    reattachAll();
+    if (isGloballyEnabled()) attachBlockingEverywhere();
+    else reattachAll();
   } else if (enabledTouched || Object.keys(p).length > 0) {
     // Enable/disable (and other soft keys): never rebuild when engine already cached.
     clearEarlyCache();
@@ -1889,7 +1929,8 @@ async function applySettings(partial) {
       // First enable with empty cache — need an engine once.
       await buildEngine({ forceDownload: false }, { immediate: true });
     }
-    reattachAll();
+    if (isGloballyEnabled()) attachBlockingEverywhere();
+    else reattachAll();
   }
 
   if (intervalTouched) {
@@ -2284,7 +2325,8 @@ async function injectTestFilters(text) {
     /* ignore */
   }
   await buildEngine({ forceDownload: false, skipSerialize: false }, { immediate: true });
-  reattachAll();
+  if (isGloballyEnabled()) attachBlockingEverywhere();
+  else reattachAll();
   return getStatus();
 }
 
@@ -2304,6 +2346,8 @@ module.exports = {
   whenReady,
   attachSession,
   attachAllAccountSessions,
+  attachBlockingEverywhere,
+  ensureEngineAtStartup,
   detachSession,
   bindWebContents,
   applySettings,

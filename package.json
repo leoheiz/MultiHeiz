@@ -22,6 +22,7 @@
     "selftest:input": "node tools/selftest-input.js",
     "selftest:v16": "node tools/selftest-v16.js",
     "selftest:adblock": "node tools/selftest-adblock.js",
+    "selftest:adblock-startup": "node tools/selftest-adblock-startup.js",
     "selftest:packaged": "node tools/selftest-packaged.js",
     "selftest:v18": "node tools/selftest-v18.js",
     "selftest:v19": "node tools/selftest-v19.js",
