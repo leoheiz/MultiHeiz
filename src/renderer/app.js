@@ -161,6 +161,43 @@ function uiLagLegacyMode() {
   return false;
 }
 
+/** MULTIHEIZ_PROFILE: console.time spans for applyState / sidebar (Windows attribution). */
+function profileEnabled() {
+  try {
+    return !!(window.__mhProfile || (typeof process !== 'undefined' && process.env && process.env.MULTIHEIZ_PROFILE));
+  } catch {
+    return !!window.__mhProfile;
+  }
+}
+function profileTime(label, fn) {
+  if (!profileEnabled()) return fn();
+  const t0 = performance.now();
+  try {
+    return fn();
+  } finally {
+    console.log('[mh-profile]', label, (performance.now() - t0).toFixed(1) + 'ms');
+  }
+}
+
+/** requestIdleCallback with setTimeout fallback (chunked sidebar). */
+function mhRequestIdle(cb, opts) {
+  if (typeof window.requestIdleCallback === 'function') {
+    return window.requestIdleCallback(cb, opts);
+  }
+  return window.setTimeout(() => cb({ timeRemaining: () => 16, didTimeout: false }), 1);
+}
+function mhCancelIdle(id) {
+  if (typeof window.cancelIdleCallback === 'function') {
+    try {
+      window.cancelIdleCallback(id);
+    } catch {
+      /* ignore */
+    }
+  } else {
+    clearTimeout(id);
+  }
+}
+
 /** @type {Set<string>} */
 const openOverlays = new Set();
 
@@ -558,7 +595,10 @@ function renderIncrementalChrome() {
   updateLockButton();
   renderTabs();
   renderPager();
-  renderSidebar();
+  // Prefer in-place sidebar patch — full rebuild is the long-task hotspot with many accounts.
+  if (!patchSidebarIncremental()) {
+    renderSidebar();
+  }
   // Patch mute / volume affordances on existing slots
   for (const slot of el.grid.querySelectorAll('.panel-slot[data-account-id]')) {
     const id = slot.getAttribute('data-account-id');
@@ -571,6 +611,7 @@ function renderIncrementalChrome() {
       const pct = accountVolumePercent(id);
       if (volBtn.title != null) volBtn.title = muted ? 'Sem som' : `Volume ${pct}%`;
     }
+    patchPanelSessionShareIndicator(slot, id);
   }
   syncLivreEditChrome();
   updateMemBadges();
@@ -581,54 +622,63 @@ function renderIncrementalChrome() {
  * @param {object} next
  * @param {{ soft?: boolean }} [opts] soft=true: update state without full re-render (settings apply)
  */
-function applyState(next, opts = {}) {
-  const prev = state;
-  state = next;
-  if (!state.ui) {
-    state.ui = {
-      sidebarCollapsed: false,
-      sidebarAutoHide: false,
-      layoutLocked: true,
-      sidebarWidth: SIDEBAR_W_DEFAULT,
-    };
-  }
-  if (typeof state.ui.sidebarAutoHide !== 'boolean') {
-    state.ui.sidebarAutoHide = false;
-  }
-  if (typeof state.ui.sidebarWidth !== 'number' || !Number.isFinite(state.ui.sidebarWidth)) {
-    state.ui.sidebarWidth = SIDEBAR_W_DEFAULT;
-  }
-  if (!state.appearance) state.appearance = { ...THEME_PRESETS.escuro };
-  if (!state.freeTiles) state.freeTiles = {};
-  state.layout = normalizeLayout(state.layout);
-  if (opts.soft) {
-    // Settings-only path: keep panels/layout as-is; modules may refresh lightly.
-    if (window.MultiHeizV16 && window.MultiHeizV16.renderSidebarModules) {
+function scheduleSidebarModulesIdle() {
+  if (!(window.MultiHeizV16 && window.MultiHeizV16.renderSidebarModules)) return;
+  mhRequestIdle(() => {
+    try {
       window.MultiHeizV16.renderSidebarModules();
+    } catch {
+      /* ignore */
     }
-    return;
-  }
-  applyAppearance(state.appearance);
-  applySidebarWidthCss();
-  if (canIncrementalApply(prev, state) && el.grid && el.grid.querySelector('.panel-slot')) {
-    renderIncrementalChrome();
-    // Sidebar width / auto-hide may still need a bounds sync.
-    const prevW = prev && prev.ui && prev.ui.sidebarWidth;
-    const nextW = state.ui && state.ui.sidebarWidth;
-    const prevAh = prev && prev.ui && prev.ui.sidebarAutoHide;
-    const nextAh = state.ui && state.ui.sidebarAutoHide;
-    const prevCol = prev && prev.ui && prev.ui.sidebarCollapsed;
-    const nextCol = state.ui && state.ui.sidebarCollapsed;
-    if (prevW !== nextW || prevAh !== nextAh || prevCol !== nextCol) {
+  });
+}
+
+function applyState(next, opts = {}) {
+  profileTime('applyState', () => {
+    const prev = state;
+    state = next;
+    if (!state.ui) {
+      state.ui = {
+        sidebarCollapsed: false,
+        sidebarAutoHide: false,
+        layoutLocked: true,
+        sidebarWidth: SIDEBAR_W_DEFAULT,
+      };
+    }
+    if (typeof state.ui.sidebarAutoHide !== 'boolean') {
+      state.ui.sidebarAutoHide = false;
+    }
+    if (typeof state.ui.sidebarWidth !== 'number' || !Number.isFinite(state.ui.sidebarWidth)) {
+      state.ui.sidebarWidth = SIDEBAR_W_DEFAULT;
+    }
+    if (!state.appearance) state.appearance = { ...THEME_PRESETS.escuro };
+    if (!state.freeTiles) state.freeTiles = {};
+    state.layout = normalizeLayout(state.layout);
+    if (opts.soft) {
+      // Settings-only path: keep panels/layout as-is; modules may refresh lightly.
+      scheduleSidebarModulesIdle();
+      return;
+    }
+    applyAppearance(state.appearance);
+    applySidebarWidthCss();
+    if (canIncrementalApply(prev, state) && el.grid && el.grid.querySelector('.panel-slot')) {
+      renderIncrementalChrome();
+      // Sidebar width / auto-hide may still need a bounds sync.
+      const prevW = prev && prev.ui && prev.ui.sidebarWidth;
+      const nextW = state.ui && state.ui.sidebarWidth;
+      const prevAh = prev && prev.ui && prev.ui.sidebarAutoHide;
+      const nextAh = state.ui && state.ui.sidebarAutoHide;
+      const prevCol = prev && prev.ui && prev.ui.sidebarCollapsed;
+      const nextCol = state.ui && state.ui.sidebarCollapsed;
+      if (prevW !== nextW || prevAh !== nextAh || prevCol !== nextCol) {
+        scheduleSync();
+      }
+    } else {
+      render();
       scheduleSync();
     }
-  } else {
-    render();
-    scheduleSync();
-  }
-  if (window.MultiHeizV16 && window.MultiHeizV16.renderSidebarModules) {
-    window.MultiHeizV16.renderSidebarModules();
-  }
+    scheduleSidebarModulesIdle();
+  });
 }
 
 /** Legacy setting: arrow collapses like before (no auto-hide / hot-zone / overlay). */
@@ -1610,148 +1660,295 @@ function formatUptime(ms) {
   return `${sec}s`;
 }
 
-function renderSidebar() {
-  el.sidebarList.innerHTML = '';
-  const list = accountsInWorkspace();
-  for (const acc of list) {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.dataset.accountId = acc.id;
-    item.className =
-      'sidebar-item' + (focusedAccountId === acc.id || visiblePageAccounts().some((a) => a.id === acc.id && a.id === focusedAccountId) ? ' active' : '');
-    if (visiblePageAccounts().some((a) => a.id === acc.id) && !focusedAccountId) {
-      /* leave */
+/** @type {number} */
+let sidebarIdleId = 0;
+/** @type {string} */
+let sidebarBuildToken = '';
+
+function cancelSidebarIdle() {
+  if (!sidebarIdleId) return;
+  mhCancelIdle(sidebarIdleId);
+  sidebarIdleId = 0;
+}
+
+/**
+ * Build one sidebar row (shared by sync + chunked paths).
+ * @param {object} acc
+ * @returns {HTMLButtonElement}
+ */
+function buildSidebarItem(acc) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.dataset.accountId = acc.id;
+  item.className = 'sidebar-item' + (focusedAccountId === acc.id ? ' active' : '');
+
+  const stripe = document.createElement('div');
+  stripe.className = 'sidebar-color';
+  stripe.style.background = acc.color || 'var(--accent)';
+
+  const favWrap = document.createElement('span');
+  favWrap.className = 'sidebar-fav-wrap';
+  const fav = document.createElement('img');
+  fav.className = 'sidebar-fav';
+  fav.alt = '';
+  const favUrl = favicons.get(acc.id) || acc.catalogIconUrl || '';
+  if (favUrl) fav.src = favUrl;
+  else fav.style.opacity = '0.35';
+  favWrap.appendChild(fav);
+  const unread = unreadByAccount.get(acc.id);
+  const showUnread = acc.showUnread !== false;
+  if (showUnread && unread && (typeof unread.count === 'number' || unread.dot)) {
+    const badge = document.createElement('span');
+    badge.className = 'sidebar-unread-badge';
+    badge.dataset.role = 'sidebar-unread';
+    if (typeof unread.count === 'number' && unread.count > 0) {
+      badge.textContent = unread.count >= 99 ? '99+' : String(unread.count);
+      badge.title =
+        unread.count === 1
+          ? '1 mensagem não lida'
+          : `${unread.count >= 99 ? '99+' : unread.count} mensagens não lidas`;
+    } else {
+      badge.classList.add('is-dot');
+      badge.textContent = '';
+      badge.title = 'Mensagens não lidas';
     }
-    if (focusedAccountId === acc.id) item.classList.add('active');
-
-    const stripe = document.createElement('div');
-    stripe.className = 'sidebar-color';
-    stripe.style.background = acc.color || 'var(--accent)';
-
-    const favWrap = document.createElement('span');
-    favWrap.className = 'sidebar-fav-wrap';
-    const fav = document.createElement('img');
-    fav.className = 'sidebar-fav';
-    fav.alt = '';
-    // Favicon da página tem prioridade; senão ícone do catálogo (persistido).
-    const favUrl = favicons.get(acc.id) || acc.catalogIconUrl || '';
-    if (favUrl) fav.src = favUrl;
-    else fav.style.opacity = '0.35';
-    favWrap.appendChild(fav);
-    const unread = unreadByAccount.get(acc.id);
-    const showUnread = acc.showUnread !== false;
-    if (showUnread && unread && (typeof unread.count === 'number' || unread.dot)) {
-      const badge = document.createElement('span');
-      badge.className = 'sidebar-unread-badge';
-      badge.dataset.role = 'sidebar-unread';
-      if (typeof unread.count === 'number' && unread.count > 0) {
-        badge.textContent = unread.count >= 99 ? '99+' : String(unread.count);
-        badge.title =
-          unread.count === 1
-            ? '1 mensagem não lida'
-            : `${unread.count >= 99 ? '99+' : unread.count} mensagens não lidas`;
-      } else {
-        badge.classList.add('is-dot');
-        badge.textContent = '';
-        badge.title = 'Mensagens não lidas';
-      }
-      badge.setAttribute('aria-label', badge.title);
-      favWrap.appendChild(badge);
-    }
-
-    const body = document.createElement('div');
-    body.className = 'sidebar-body';
-    const name = document.createElement('div');
-    name.className = 'sidebar-name';
-    name.textContent = acc.name;
-    const meta = document.createElement('div');
-    meta.className = 'sidebar-meta';
-    const m = panelMetrics(acc.id);
-    const st = windowStatus(acc);
-    const stLabel =
-      st === 'ativa' ? 'ativa' : st === 'segundo' ? 'em segundo plano' : st === 'suspensa' ? 'suspensa' : 'mudo';
-    const blocked = adblockPageCounts.get(acc.id) || 0;
-    const blockBit = blocked > 0 ? ` · blk ${blocked}` : '';
-    meta.textContent = m
-      ? `${stLabel} · ${m.ramMb ?? 0} MB · ${m.cpu ?? 0}%${blockBit}`
-      : `${stLabel}${blockBit}`;
-    body.append(name, meta);
-
-    const proxyActive = !!(acc.proxy && acc.proxy.active);
-    let proxyBadge = null;
-    if (proxyActive) {
-      proxyBadge = document.createElement('span');
-      proxyBadge.className = 'sidebar-proxy-badge';
-      proxyBadge.textContent = 'P';
-      proxyBadge.title =
-        acc.proxy.host && acc.proxy.port
-          ? `Usando proxy ${acc.proxy.host}:${acc.proxy.port}`
-          : 'Usando proxy';
-      proxyBadge.setAttribute('aria-label', proxyBadge.title);
-    }
-
-    let audioBtn = null;
-    const isAudible = audibleAccounts.has(acc.id);
-    if (isAudible || accountIsMuted(acc.id)) {
-      audioBtn = document.createElement('button');
-      audioBtn.type = 'button';
-      audioBtn.className =
-        'sidebar-audio-btn' + (accountIsMuted(acc.id) ? ' is-muted' : '');
-      audioBtn.dataset.role = 'sidebar-volume';
-      audioBtn.dataset.accountId = acc.id;
-      audioBtn.title = 'Volume / Mudo';
-      audioBtn.setAttribute('aria-label', 'Volume da janela');
-      audioBtn.innerHTML = svg(accountIsMuted(acc.id) ? ICO.mute : ICO.unmute);
-      audioBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        applyState(await window.multiheiz.panelSetMuted(acc.id, !accountIsMuted(acc.id)), {
-          soft: true,
-        });
-        renderIncrementalChrome();
-      });
-      bindVolumeHover(audioBtn, acc.id);
-    }
-
-    const dot = document.createElement('span');
-    dot.className = `status-dot ${st}`;
-    dot.title = stLabel;
-    dot.setAttribute('aria-hidden', 'true');
-
-    const proxyBit = proxyActive
-      ? ` — proxy ${acc.proxy.host || ''}:${acc.proxy.port || ''}`
-      : '';
-    const a11yLabel = `${acc.name} — ${stLabel}${proxyBit}`;
-    item.title = a11yLabel;
-    item.setAttribute('aria-label', a11yLabel);
-    const parts = [stripe, favWrap, body];
-    if (proxyBadge) parts.push(proxyBadge);
-    if (audioBtn) parts.push(audioBtn);
-    parts.push(dot);
-    item.append(...parts);
-    item.addEventListener('click', async () => {
-      focusedAccountId = acc.id;
-      await window.multiheiz.panelFocus(acc.id);
-      if (state.layout !== 'livre' && !visiblePageAccounts().some((a) => a.id === acc.id)) {
-        const all = accountsInWorkspace();
-        const slots = slotsForLayout(state.layout, all.length || 1);
-        const idx = all.findIndex((a) => a.id === acc.id);
-        if (idx >= 0) applyState(await window.multiheiz.setPage(Math.floor(idx / slots)));
-      }
-      renderSidebar();
-    });
-    item.addEventListener('dblclick', () => toggleMaximize(acc.id));
-    item.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      showAccountMenu(e.clientX, e.clientY, acc);
-    });
-    item.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        item.click();
-      }
-    });
-    el.sidebarList.appendChild(item);
+    badge.setAttribute('aria-label', badge.title);
+    favWrap.appendChild(badge);
   }
+
+  const body = document.createElement('div');
+  body.className = 'sidebar-body';
+  const name = document.createElement('div');
+  name.className = 'sidebar-name';
+  name.textContent = acc.name;
+  const meta = document.createElement('div');
+  meta.className = 'sidebar-meta';
+  const m = panelMetrics(acc.id);
+  const st = windowStatus(acc);
+  const stLabel =
+    st === 'ativa' ? 'ativa' : st === 'segundo' ? 'em segundo plano' : st === 'suspensa' ? 'suspensa' : 'mudo';
+  const blocked = adblockPageCounts.get(acc.id) || 0;
+  const blockBit = blocked > 0 ? ` · blk ${blocked}` : '';
+  meta.textContent = m
+    ? `${stLabel} · ${m.ramMb ?? 0} MB · ${m.cpu ?? 0}%${blockBit}`
+    : `${stLabel}${blockBit}`;
+  body.append(name, meta);
+
+  const proxyActive = !!(acc.proxy && acc.proxy.active);
+  let proxyBadge = null;
+  if (proxyActive) {
+    proxyBadge = document.createElement('span');
+    proxyBadge.className = 'sidebar-proxy-badge';
+    proxyBadge.textContent = 'P';
+    proxyBadge.title =
+      acc.proxy.host && acc.proxy.port
+        ? `Usando proxy ${acc.proxy.host}:${acc.proxy.port}`
+        : 'Usando proxy';
+    proxyBadge.setAttribute('aria-label', proxyBadge.title);
+  }
+
+  let audioBtn = null;
+  const isAudible = audibleAccounts.has(acc.id);
+  if (isAudible || accountIsMuted(acc.id)) {
+    audioBtn = document.createElement('button');
+    audioBtn.type = 'button';
+    audioBtn.className = 'sidebar-audio-btn' + (accountIsMuted(acc.id) ? ' is-muted' : '');
+    audioBtn.dataset.role = 'sidebar-volume';
+    audioBtn.dataset.accountId = acc.id;
+    audioBtn.title = 'Volume / Mudo';
+    audioBtn.setAttribute('aria-label', 'Volume da janela');
+    audioBtn.innerHTML = svg(accountIsMuted(acc.id) ? ICO.mute : ICO.unmute);
+    audioBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      applyState(await window.multiheiz.panelSetMuted(acc.id, !accountIsMuted(acc.id)), {
+        soft: true,
+      });
+      renderIncrementalChrome();
+    });
+    bindVolumeHover(audioBtn, acc.id);
+  }
+
+  const dot = document.createElement('span');
+  dot.className = `status-dot ${st}`;
+  dot.title = stLabel;
+  dot.setAttribute('aria-hidden', 'true');
+
+  const proxyBit = proxyActive
+    ? ` — proxy ${acc.proxy.host || ''}:${acc.proxy.port || ''}`
+    : '';
+  const a11yLabel = `${acc.name} — ${stLabel}${proxyBit}`;
+  item.title = a11yLabel;
+  item.setAttribute('aria-label', a11yLabel);
+  const parts = [stripe, favWrap, body];
+  if (proxyBadge) parts.push(proxyBadge);
+  if (audioBtn) parts.push(audioBtn);
+  parts.push(dot);
+  item.append(...parts);
+  item.addEventListener('click', async () => {
+    focusedAccountId = acc.id;
+    await window.multiheiz.panelFocus(acc.id);
+    if (state.layout !== 'livre' && !visiblePageAccounts().some((a) => a.id === acc.id)) {
+      const all = accountsInWorkspace();
+      const slots = slotsForLayout(state.layout, all.length || 1);
+      const idx = all.findIndex((a) => a.id === acc.id);
+      if (idx >= 0) applyState(await window.multiheiz.setPage(Math.floor(idx / slots)));
+    }
+    renderSidebar();
+  });
+  item.addEventListener('dblclick', () => toggleMaximize(acc.id));
+  item.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showAccountMenu(e.clientX, e.clientY, acc);
+  });
+  item.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      item.click();
+    }
+  });
+  return item;
+}
+
+/**
+ * @param {{ sync?: boolean }} [opts] sync=true forces one-shot build (selftests / tiny lists).
+ */
+function renderSidebar(opts = {}) {
+  const list = accountsInWorkspace();
+  // Many rows in one turn → longtask on slower hosts (Linux/xvfb ui-input-lag).
+  if (!opts.sync && list.length >= 6 && !uiLagLegacyMode()) {
+    renderSidebarChunked();
+    return;
+  }
+  cancelSidebarIdle();
+  sidebarBuildToken = '';
+  profileTime('renderSidebar', () => {
+    el.sidebarList.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    for (const acc of list) {
+      frag.appendChild(buildSidebarItem(acc));
+    }
+    el.sidebarList.appendChild(frag);
+  });
+}
+
+/**
+ * Build sidebar in idle chunks (≤2 rows / slice) so no single turn exceeds ~50 ms on slow hosts.
+ */
+function renderSidebarChunked() {
+  cancelSidebarIdle();
+  const list = accountsInWorkspace();
+  const token = String(Date.now()) + '-' + list.length;
+  sidebarBuildToken = token;
+  el.sidebarList.innerHTML = '';
+  let idx = 0;
+  const CHUNK = 2;
+  const pump = (deadline) => {
+    sidebarIdleId = 0;
+    if (sidebarBuildToken !== token) return;
+    const t0 = performance.now();
+    const frag = document.createDocumentFragment();
+    let n = 0;
+    while (idx < list.length && n < CHUNK) {
+      if (deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() < 3 && n > 0) {
+        break;
+      }
+      frag.appendChild(buildSidebarItem(list[idx]));
+      idx += 1;
+      n += 1;
+      if (performance.now() - t0 > 12 && n > 0) break;
+    }
+    if (frag.childNodes.length) el.sidebarList.appendChild(frag);
+    if (idx < list.length) {
+      sidebarIdleId = mhRequestIdle(pump, { timeout: 120 });
+    } else if (profileEnabled()) {
+      console.log('[mh-profile] renderSidebarChunked done', list.length);
+    }
+  };
+  // First slice sync so the list isn't empty for a full frame; keep it tiny (2 rows).
+  pump({ timeRemaining: () => 8, didTimeout: false });
+  if (idx < list.length) {
+    sidebarIdleId = mhRequestIdle(pump, { timeout: 120 });
+  }
+}
+
+/**
+ * Patch existing sidebar rows when account ids/order match. Returns false → caller should full rebuild.
+ * @returns {boolean}
+ */
+function patchSidebarIncremental() {
+  if (!el.sidebarList) return false;
+  const list = accountsInWorkspace();
+  const items = [...el.sidebarList.querySelectorAll('.sidebar-item[data-account-id]')];
+  if (items.length !== list.length) return false;
+  for (let i = 0; i < list.length; i++) {
+    if (items[i].dataset.accountId !== list[i].id) return false;
+  }
+  for (let i = 0; i < list.length; i++) {
+    const acc = list[i];
+    const item = items[i];
+    item.classList.toggle('active', focusedAccountId === acc.id);
+    const nameEl = item.querySelector('.sidebar-name');
+    if (nameEl && nameEl.textContent !== (acc.name || '')) nameEl.textContent = acc.name || '';
+    const stripe = item.querySelector('.sidebar-color');
+    if (stripe) stripe.style.background = acc.color || 'var(--accent)';
+    const meta = item.querySelector('.sidebar-meta');
+    if (meta) {
+      const m = panelMetrics(acc.id);
+      const st = windowStatus(acc);
+      const stLabel =
+        st === 'ativa' ? 'ativa' : st === 'segundo' ? 'em segundo plano' : st === 'suspensa' ? 'suspensa' : 'mudo';
+      const blocked = adblockPageCounts.get(acc.id) || 0;
+      const blockBit = blocked > 0 ? ` · blk ${blocked}` : '';
+      const next = m
+        ? `${stLabel} · ${m.ramMb ?? 0} MB · ${m.cpu ?? 0}%${blockBit}`
+        : `${stLabel}${blockBit}`;
+      if (meta.textContent !== next) meta.textContent = next;
+      const dot = item.querySelector('.status-dot');
+      if (dot) {
+        dot.className = `status-dot ${st}`;
+        dot.title = stLabel;
+      }
+    }
+  }
+  updateSidebarMetricsIncremental();
+  return true;
+}
+
+/**
+ * Keep session-share chip on an existing panel header in sync without rebuilding the slot.
+ * @param {Element} slot
+ * @param {string} accountId
+ */
+function patchPanelSessionShareIndicator(slot, accountId) {
+  const acc = (state.accounts || []).find((a) => a.id === accountId);
+  const shareCount =
+    acc && typeof acc.sessionShareCount === 'number' ? acc.sessionShareCount : 1;
+  let shareInd = slot.querySelector('[data-role="panel-session-share"]');
+  if (shareCount <= 1) {
+    if (shareInd) shareInd.remove();
+    return;
+  }
+  const title = `Sessão compartilhada (${shareCount} janelas)`;
+  if (!shareInd) {
+    shareInd = document.createElement('span');
+    shareInd.className = 'panel-session-share';
+    shareInd.dataset.role = 'panel-session-share';
+    shareInd.innerHTML = svg(ICO.users);
+    const countSpan = document.createElement('span');
+    countSpan.className = 'panel-session-share-n';
+    shareInd.appendChild(countSpan);
+    const mediaInd = slot.querySelector('[data-role="panel-media-use"]');
+    const header = slot.querySelector('.panel-header');
+    if (header) {
+      if (mediaInd && mediaInd.nextSibling) header.insertBefore(shareInd, mediaInd.nextSibling);
+      else if (mediaInd) header.appendChild(shareInd);
+      else header.insertBefore(shareInd, header.firstChild);
+    }
+  }
+  shareInd.title = title;
+  shareInd.setAttribute('aria-label', title);
+  const nEl = shareInd.querySelector('.panel-session-share-n');
+  if (nEl) nEl.textContent = String(shareCount);
 }
 
 /**

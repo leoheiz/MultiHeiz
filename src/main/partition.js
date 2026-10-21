@@ -93,6 +93,8 @@ function partitionMembershipKey(accounts) {
 /**
  * Enriquece contas públicas com partitionId resolvido e sessionShareCount.
  * Contagem só é recalculada quando a associação conta↔partição muda.
+ * Mutates ephemeral public copies in place (no second { …a } spread) — publicState
+ * already cloned via sanitizeAccountProxyForPublic; avoid O(n) alloc on every push.
  * @param {Array<object>} accounts
  * @returns {Array<object>}
  */
@@ -105,12 +107,14 @@ function enrichAccountsSessionShare(accounts) {
     enrichCacheKey = key;
     enrichCacheUsage = usage;
   }
-  return list.map((a) => {
-    if (!a || typeof a !== 'object') return a;
+  for (const a of list) {
+    if (!a || typeof a !== 'object') continue;
     const partitionId = resolvePartitionId(a);
     const sessionShareCount = usage.get(partitionId) || 1;
-    return { ...a, partitionId, sessionShareCount };
-  });
+    if (a.partitionId !== partitionId) a.partitionId = partitionId;
+    if (a.sessionShareCount !== sessionShareCount) a.sessionShareCount = sessionShareCount;
+  }
+  return list;
 }
 
 /** Call from tests when forcing a fresh recount. */

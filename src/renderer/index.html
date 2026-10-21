@@ -818,7 +818,8 @@
               leva só a versão e o sistema — nunca o relatório completo.
             </p>
             <label class="muted-note" for="diag-preview">Pré-visualização (somente leitura)</label>
-            <textarea id="diag-preview" class="diag-box tall" readonly rows="14" spellcheck="false"></textarea>
+            <!-- Mounted lazily on first diagnostics visit — avoids a tall textarea in the initial DOM. -->
+            <div id="diag-preview-host"></div>
             <pre id="diag-process" class="diag-box"></pre>
             <h3>Painel em foco</h3>
             <pre id="diag-adblock-focus" class="diag-box"></pre>

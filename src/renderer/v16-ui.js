@@ -2701,6 +2701,22 @@
   /* ---------- Settings redesign ---------- */
 
   function wireSettings() {
+    /** Lazy-mount #diag-preview (tall textarea) only when diagnostics is used. */
+    const ensureDiagPreview = () => {
+      let ta = document.getElementById('diag-preview');
+      if (ta) return ta;
+      const host = document.getElementById('diag-preview-host');
+      if (!host) return null;
+      ta = document.createElement('textarea');
+      ta.id = 'diag-preview';
+      ta.className = 'diag-box tall';
+      ta.readOnly = true;
+      ta.rows = 14;
+      ta.spellcheck = false;
+      host.appendChild(ta);
+      return ta;
+    };
+
     const nav = document.querySelectorAll('.settings-nav-btn');
     nav.forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -2710,7 +2726,10 @@
         document.querySelectorAll('.settings-pane').forEach((p) => {
           p.classList.toggle('active', p.getAttribute('data-pane') === section);
         });
-        if (section === 'diagnosticos') refreshDiagnostics();
+        if (section === 'diagnosticos') {
+          ensureDiagPreview();
+          refreshDiagnostics();
+        }
         if (section === 'sobre') refreshAbout();
         if (section === 'adblock') refreshAdblockUi();
         if (section === 'extensoes') refreshExtensionsUi();
@@ -2957,7 +2976,7 @@
     if (openData) openData.addEventListener('click', () => window.multiheiz.openDataFolder());
 
     const fillDiagPreview = (text) => {
-      const ta = document.getElementById('diag-preview');
+      const ta = ensureDiagPreview();
       if (ta) ta.value = text || '';
       const saveBtn = document.getElementById('btn-export-diag');
       if (saveBtn) saveBtn.disabled = !text;
