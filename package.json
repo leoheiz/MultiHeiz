@@ -80,6 +80,8 @@
     "check:security-review": "node tools/check-security.js",
     "check:release": "node tools/check-release.js",
     "test:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/test-installer.ps1",
+    "test:install-ps1": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/test-install-ps1.ps1",
+    "sha256sums": "node tools/sha256sums.js",
     "clean": "node tools/clean-dist.js",
     "predist": "npm run check:encoding && npm run clean",
     "predist:win": "npm run check:encoding && npm run clean",
