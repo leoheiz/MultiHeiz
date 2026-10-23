@@ -3505,6 +3505,14 @@
           fullscreenTopbarReveal: !!(
             form.fullscreenTopbarReveal && form.fullscreenTopbarReveal.checked
           ),
+          showPipToolbarButton: !!(
+            form.showPipToolbarButton && form.showPipToolbarButton.checked
+          ),
+          miniPlayerOpacity: (() => {
+            let n = Number(form.miniPlayerOpacity && form.miniPlayerOpacity.value);
+            if (!Number.isFinite(n)) n = 100;
+            return Math.min(100, Math.max(20, Math.round(n)));
+          })(),
           doh: {
             mode: (form.dohMode && form.dohMode.value) || 'off',
             provider: (form.dohProvider && form.dohProvider.value) || 'cloudflare',
@@ -3843,6 +3851,14 @@
     if (form.sidebarAlwaysActive) form.sidebarAlwaysActive.checked = !!s.sidebarAlwaysActive;
     if (form.fullscreenTopbarReveal) {
       form.fullscreenTopbarReveal.checked = !!s.fullscreenTopbarReveal;
+    }
+    if (form.showPipToolbarButton) {
+      form.showPipToolbarButton.checked = s.showPipToolbarButton !== false;
+    }
+    if (form.miniPlayerOpacity) {
+      let op = Number(s.miniPlayerOpacity);
+      if (!Number.isFinite(op)) op = 100;
+      form.miniPlayerOpacity.value = String(Math.min(100, Math.max(20, Math.round(op))));
     }
     if (form.memoryCleanupEnabled) form.memoryCleanupEnabled.checked = !!s.memoryCleanupEnabled;
     if (form.memoryCleanupIntervalMin) {

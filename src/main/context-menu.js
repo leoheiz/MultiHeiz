@@ -336,6 +336,20 @@ function buildContextMenuTemplate(params, nav = {}, extra = {}) {
     });
   }
 
+  if (p.mediaType === 'video' || p.mediaType === 'audio') {
+    items.push({ type: 'separator' });
+    items.push({
+      id: 'pip-video',
+      label: 'Vídeo em janela flutuante (PiP)',
+      enabled: p.mediaType === 'video',
+    });
+    items.push({
+      id: 'mini-player',
+      label: 'Mini player (sempre no topo)',
+      enabled: true,
+    });
+  }
+
   items.push({ type: 'separator' });
   items.push({
     id: 'print',
@@ -565,6 +579,40 @@ function runContextAction(d, wc, params, openInNewWindow) {
           accountId = panels.getFocusedAccountId();
         }
         if (accountId) panelShortcuts.runAction(accountId, 'viewSource');
+      } catch {
+        /* ignore */
+      }
+      break;
+    }
+    case 'pip-video': {
+      try {
+        const pip = require('./picture-in-picture');
+        const panels = require('./panels');
+        let accountId = null;
+        if (typeof panels.accountIdForWebContents === 'function') {
+          accountId = panels.accountIdForWebContents(wc);
+        }
+        if (!accountId && typeof panels.getFocusedAccountId === 'function') {
+          accountId = panels.getFocusedAccountId();
+        }
+        if (accountId) void pip.togglePip(accountId);
+      } catch {
+        /* ignore */
+      }
+      break;
+    }
+    case 'mini-player': {
+      try {
+        const mini = require('./mini-player');
+        const panels = require('./panels');
+        let accountId = null;
+        if (typeof panels.accountIdForWebContents === 'function') {
+          accountId = panels.accountIdForWebContents(wc);
+        }
+        if (!accountId && typeof panels.getFocusedAccountId === 'function') {
+          accountId = panels.getFocusedAccountId();
+        }
+        if (accountId) void mini.open(accountId);
       } catch {
         /* ignore */
       }

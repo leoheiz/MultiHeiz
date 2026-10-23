@@ -212,6 +212,20 @@ const SHORTCUT_DEFS = [
     scope: 'both',
     group: 'Editar',
   },
+  {
+    id: 'pictureInPicture',
+    name: 'Vídeo em janela flutuante (PiP)',
+    defaultCombo: 'Ctrl+Shift+P',
+    scope: 'panel',
+    group: 'Exibir',
+  },
+  {
+    id: 'miniPlayerLock',
+    name: 'Mini player: travar / destravar (global)',
+    defaultCombo: 'Ctrl+Alt+L',
+    scope: 'app',
+    group: 'Exibir',
+  },
 ];
 
 const DEF_BY_ID = new Map(SHORTCUT_DEFS.map((d) => [d.id, d]));

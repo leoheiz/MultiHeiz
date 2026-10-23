@@ -766,6 +766,28 @@
             <p class="muted-note">
               Em tela cheia (F11), a barra superior aparece só quando o cursor chega à borda de cima e some ao sair dela. Desligado = barra permanece oculta.
             </p>
+            <label class="check">
+              <input type="checkbox" name="showPipToolbarButton" id="show-pip-toolbar-button" checked />
+              Mostrar botão de vídeo em janela flutuante (PiP) na barra do painel
+            </label>
+            <p class="muted-note">
+              O atalho (Ctrl+Shift+P por padrão) e o menu de contexto do vídeo continuam disponíveis.
+            </p>
+            <label>
+              Opacidade do mini player (Experimental (em testes))
+              <input
+                name="miniPlayerOpacity"
+                id="mini-player-opacity"
+                type="number"
+                min="20"
+                max="100"
+                step="1"
+                value="100"
+              />
+            </label>
+            <p class="muted-note">
+              Mini player (sempre no topo): opacidade 20–100%. Atalho global para travar/destravar: Ctrl+Alt+L (só com o mini player aberto). Para aparecer sobre jogos, use o jogo em tela cheia sem bordas ou deixe as otimizações de tela cheia do Windows ligadas. Em tela cheia exclusiva o Windows não permite janelas por cima.
+            </p>
           </section>
 
           <section class="settings-pane" data-pane="memoria">

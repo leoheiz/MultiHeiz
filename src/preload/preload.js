@@ -85,6 +85,13 @@ contextBridge.exposeInMainWorld('multiheiz', {
     ipcRenderer.invoke('panel:set-volume', { accountId, percent }),
   panelGetVolume: (accountId) => ipcRenderer.invoke('panel:get-volume', accountId),
   panelVolumeDiag: (accountId) => ipcRenderer.invoke('panel:volume-diag', accountId),
+  panelPipToggle: (accountId) => ipcRenderer.invoke('panel:pip-toggle', accountId),
+  panelPipProbe: (accountId) => ipcRenderer.invoke('panel:pip-probe', accountId),
+  panelPipState: (accountId) => ipcRenderer.invoke('panel:pip-state', accountId),
+  panelPipMenu: (accountId, x, y) =>
+    ipcRenderer.invoke('panel:pip-menu', { accountId, x, y }),
+  panelMiniPlayerOpen: (accountId) => ipcRenderer.invoke('panel:mini-player-open', accountId),
+  panelMiniPlayerClose: () => ipcRenderer.invoke('panel:mini-player-close'),
   panelFocus: (accountId) => ipcRenderer.invoke('panel:focus', accountId),
   panelReactivate: (accountId) => ipcRenderer.invoke('panel:reactivate', accountId),
   panelSuspend: (accountId) => ipcRenderer.invoke('panel:suspend', accountId),

@@ -79,6 +79,15 @@ function defaultState() {
     windowMaximized: false,
     /** Per-workspace free-tile map: { [wsId]: { [accountId]: { c, r, w, h } } } */
     freeTiles: {},
+    /**
+     * Mini player (experimental): last position/size/opacity.
+     * { x?, y?, width?, height?, opacityPercent? }
+     */
+    miniPlayer: {
+      width: 420,
+      height: 280,
+      opacityPercent: 100,
+    },
     ui: {
       /**
        * Compact icon rail (52px). Independent of sidebarAutoHide in standard mode;
@@ -148,6 +157,10 @@ function defaultState() {
        * ON by default. No always-visible / pinned mode.
        */
       fullscreenTopbarReveal: true,
+      /** Mostrar botão PiP na barra do painel (padrão: ligado). */
+      showPipToolbarButton: true,
+      /** Opacidade padrão do mini player (20–100). */
+      miniPlayerOpacity: 100,
       /**
        * DNS over HTTPS (app-wide). mode: off | automatic | secure.
        * provider: cloudflare | google | quad9 | adguard | custom (+ customUrl https).
@@ -438,6 +451,33 @@ function migrate(parsed) {
   }
   if (typeof next.settings.fullscreenTopbarReveal !== 'boolean') {
     next.settings.fullscreenTopbarReveal = true;
+  }
+  if (typeof next.settings.showPipToolbarButton !== 'boolean') {
+    next.settings.showPipToolbarButton = true;
+  }
+  {
+    let op = Number(next.settings.miniPlayerOpacity);
+    if (!Number.isFinite(op)) op = 100;
+    next.settings.miniPlayerOpacity = Math.min(100, Math.max(20, Math.round(op)));
+  }
+  if (!next.miniPlayer || typeof next.miniPlayer !== 'object') {
+    next.miniPlayer = { ...base.miniPlayer };
+  } else {
+    const mp = next.miniPlayer;
+    let w = Number(mp.width);
+    let h = Number(mp.height);
+    let op = Number(mp.opacityPercent);
+    if (!Number.isFinite(w) || w < 200) w = base.miniPlayer.width;
+    if (!Number.isFinite(h) || h < 120) h = base.miniPlayer.height;
+    if (!Number.isFinite(op)) op = next.settings.miniPlayerOpacity;
+    next.miniPlayer = {
+      ...mp,
+      width: Math.round(w),
+      height: Math.round(h),
+      opacityPercent: Math.min(100, Math.max(20, Math.round(op))),
+    };
+    if (typeof mp.x === 'number') next.miniPlayer.x = mp.x;
+    if (typeof mp.y === 'number') next.miniPlayer.y = mp.y;
   }
   // 1.3.1 one-shot: early 1.3.1 test builds defaulted OFF and wrote false into
   // state. Force ON once; after the marker is set, user toggles persist.

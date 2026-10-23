@@ -53,6 +53,8 @@ const partition = require('./partition');
 const autostart = require('./autostart');
 const keymap = require('./keymap');
 const panelShortcuts = require('./panel-shortcuts');
+const pictureInPicture = require('./picture-in-picture');
+const miniPlayer = require('./mini-player');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -314,6 +316,8 @@ const SELFTEST_SUSPEND = selftestMode === 'suspend';
 const SELFTEST_SHORTCUTS = selftestMode === 'shortcuts';
 const SELFTEST_SHORTCUT_CUSTOM = selftestMode === 'shortcut-custom';
 const SELFTEST_MINIMIZE_RESTORE = selftestMode === 'minimize-restore';
+const SELFTEST_PIP = selftestMode === 'pip';
+const SELFTEST_MINIPLAYER = selftestMode === 'miniplayer';
 const SELFTEST_DIAG_CERTISIGN = selftestMode === 'diag-certisign';
 const ANY_SELFTEST =
   SELFTEST ||
@@ -390,6 +394,8 @@ const ANY_SELFTEST =
   SELFTEST_SHORTCUTS ||
   SELFTEST_SHORTCUT_CUSTOM ||
   SELFTEST_MINIMIZE_RESTORE ||
+  SELFTEST_PIP ||
+  SELFTEST_MINIPLAYER ||
   SELFTEST_DIAG_CERTISIGN;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
@@ -418,7 +424,10 @@ if (
   SELFTEST_UI_INPUT_LAG ||
   SELFTEST_POPOVER_OVERLAY ||
   SELFTEST_POPOVER_ACTIONS ||
-  SELFTEST_SUSPEND
+  SELFTEST_SUSPEND ||
+  SELFTEST_PIP ||
+  SELFTEST_MINIPLAYER ||
+  SELFTEST_FULLSCREEN
 ) {
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 }
@@ -745,6 +754,8 @@ function createWindow() {
     SELFTEST_SHORTCUTS ||
     SELFTEST_SHORTCUT_CUSTOM ||
     SELFTEST_MINIMIZE_RESTORE ||
+    SELFTEST_PIP ||
+    SELFTEST_MINIPLAYER ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
@@ -793,6 +804,8 @@ function createWindow() {
     SELFTEST_SIDEBAR ||
     SELFTEST_MINIMIZE_RESTORE ||
     SELFTEST_SHORTCUT_CUSTOM ||
+    SELFTEST_PIP ||
+    SELFTEST_MINIPLAYER ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
     SELFTEST_DIAG_CERTISIGN ||
@@ -879,6 +892,8 @@ function createWindow() {
         SELFTEST_SHORTCUTS ||
         SELFTEST_SHORTCUT_CUSTOM ||
         SELFTEST_MINIMIZE_RESTORE ||
+        SELFTEST_PIP ||
+        SELFTEST_MINIPLAYER ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_FAVORITES_POPOVER ||
         SELFTEST_DIAG_CERTISIGN ||
@@ -1005,6 +1020,17 @@ function createWindow() {
     rebuildApplicationMenu: () => setupApplicationMenu(),
   });
   panelShortcuts.ensureIpc();
+  miniPlayer.configure({
+    panels,
+    getMainWindow: () => mainWindow,
+  });
+  pictureInPicture.configure({
+    panels,
+    getMainWindow: () => mainWindow,
+    openMiniPlayer: (accountId) => {
+      void miniPlayer.open(accountId);
+    },
+  });
   sidebarCursor.init(mainWindow, emitToRenderer, {
     isChromeHidden: () => chromeFullscreen.isChromeHidden(),
   });
@@ -2117,6 +2143,61 @@ function createWindow() {
             app,
             panelShortcuts,
             keymap,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_PIP) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runPipSelftest } = require('./selftest-pip');
+          runPipSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            pictureInPicture,
+            panelShortcuts,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_MINIPLAYER) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runMiniPlayerSelftest } = require('./selftest-miniplayer');
+          runMiniPlayerSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            miniPlayer,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -4367,6 +4448,27 @@ function registerIpc() {
     panels.suspendForMemory(accountId, { force: true });
     return { ok: true };
   });
+
+  ipcMain.handle('panel:pip-toggle', async (_e, accountId) => {
+    return pictureInPicture.togglePip(accountId);
+  });
+  ipcMain.handle('panel:pip-probe', async (_e, accountId) => {
+    return pictureInPicture.probeVideo(accountId);
+  });
+  ipcMain.handle('panel:pip-state', async (_e, accountId) => {
+    return pictureInPicture.getPipState(accountId);
+  });
+  ipcMain.handle('panel:pip-menu', (_e, payload) => {
+    const accountId = payload && payload.accountId;
+    const x = payload && payload.x;
+    const y = payload && payload.y;
+    return pictureInPicture.popupPipMenu(accountId, x, y);
+  });
+  ipcMain.handle('panel:mini-player-open', async (_e, accountId) => {
+    return miniPlayer.open(accountId);
+  });
+  ipcMain.handle('panel:mini-player-close', () => miniPlayer.close());
+  ipcMain.handle('panel:mini-player-selftest', () => miniPlayer.getSelftestSnapshot());
 
   ipcMain.handle('memory:metrics', () => memory.getLatestMetrics());
 

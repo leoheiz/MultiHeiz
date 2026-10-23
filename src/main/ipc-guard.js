@@ -49,6 +49,7 @@ const LT_PANEL_CHANNELS = new Set([
 
 const INDEX_HTML = path.resolve(__dirname, '..', 'renderer', 'index.html');
 const POPOVER_HTML = path.resolve(__dirname, '..', 'renderer', 'popover-overlay.html');
+const MINI_PLAYER_HTML = path.resolve(__dirname, '..', 'renderer', 'mini-player.html');
 
 /** @type {(() => import('electron').BrowserWindow|null) | null} */
 let getMainWindow = null;
@@ -69,7 +70,8 @@ function isAllowedUiHtmlPath(resolvedPath) {
   const n = path.normalize(resolvedPath).toLowerCase();
   return (
     n === path.normalize(INDEX_HTML).toLowerCase() ||
-    n === path.normalize(POPOVER_HTML).toLowerCase()
+    n === path.normalize(POPOVER_HTML).toLowerCase() ||
+    n === path.normalize(MINI_PLAYER_HTML).toLowerCase()
   );
 }
 

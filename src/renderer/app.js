@@ -355,6 +355,8 @@ const ICO = {
   // Lucide users — sessão compartilhada entre janelas
   users:
     'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+  // Picture-in-Picture (picture-in-picture lucide-ish)
+  pip: 'M21 3H7a2 2 0 00-2 2v6h2V5h14v10h-6v2h6a2 2 0 002-2V5a2 2 0 00-2-2zM3 11h10a2 2 0 012 2v6a2 2 0 01-2 2H3a2 2 0 01-2-2v-6a2 2 0 012-2z',
 };
 
 function settingsIconHtml() {
@@ -641,6 +643,52 @@ function syncLivreEditChrome() {
 }
 
 /**
+ * Show/hide PiP toolbar buttons to match settings.showPipToolbarButton.
+ * Creates a button after volume when missing; removes when setting is off.
+ */
+function syncPipToolbarButtons() {
+  if (!el.grid) return;
+  const show = !(state.settings && state.settings.showPipToolbarButton === false);
+  for (const slot of el.grid.querySelectorAll('.panel-slot[data-account-id]')) {
+    const id = slot.getAttribute('data-account-id');
+    if (!id) continue;
+    const actions = slot.querySelector('.panel-header-actions');
+    if (!actions) continue;
+    let btn = slot.querySelector('[data-role="panel-pip"]');
+    if (!show) {
+      if (btn) btn.remove();
+      continue;
+    }
+    if (btn) continue;
+    const volBtn = slot.querySelector('[data-role="panel-volume"]');
+    btn = iconBtn(ICO.pip, 'Vídeo em janela flutuante (PiP)', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (e.shiftKey || e.altKey) {
+        const r = btn.getBoundingClientRect();
+        if (window.multiheiz.panelPipMenu) {
+          await window.multiheiz.panelPipMenu(id, Math.round(r.left), Math.round(r.bottom + 4));
+        }
+        return;
+      }
+      if (window.multiheiz.panelPipToggle) await window.multiheiz.panelPipToggle(id);
+    });
+    btn.dataset.role = 'panel-pip';
+    btn.addEventListener('contextmenu', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const r = btn.getBoundingClientRect();
+      if (window.multiheiz.panelPipMenu) {
+        await window.multiheiz.panelPipMenu(id, Math.round(r.left), Math.round(r.bottom + 4));
+      }
+    });
+    if (volBtn && volBtn.nextSibling) actions.insertBefore(btn, volBtn.nextSibling);
+    else if (volBtn) actions.appendChild(btn);
+    else actions.insertBefore(btn, actions.firstChild);
+  }
+}
+
+/**
  * Refresh chrome without destroying `.panel-slot` nodes (volume/mute/settings).
  */
 function renderIncrementalChrome() {
@@ -667,6 +715,7 @@ function renderIncrementalChrome() {
     }
     patchPanelSessionShareIndicator(slot, id);
   }
+  syncPipToolbarButtons();
   syncLivreEditChrome();
   updateMemBadges();
   updateStatusBar();
@@ -715,6 +764,7 @@ function applyState(next, opts = {}) {
         resetTopbarRevealUi();
       }
       syncSidebarAutoHideTracking();
+      syncPipToolbarButtons();
       scheduleSidebarModulesIdle();
       return;
     }
@@ -2516,6 +2566,33 @@ function buildPanelSlot(acc, tile) {
   btnMute.dataset.role = 'panel-volume';
   if (!nav.muted && volPct > 100) btnMute.classList.add('is-boost');
   bindVolumeHover(btnMute, acc.id);
+  const showPipBtn = !(state.settings && state.settings.showPipToolbarButton === false);
+  let btnPip = null;
+  if (showPipBtn) {
+    btnPip = iconBtn(ICO.pip, 'Vídeo em janela flutuante (PiP)', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (e.button === 2 || e.shiftKey || e.altKey) {
+        const r = btnPip.getBoundingClientRect();
+        if (window.multiheiz.panelPipMenu) {
+          await window.multiheiz.panelPipMenu(acc.id, Math.round(r.left), Math.round(r.bottom + 4));
+        }
+        return;
+      }
+      if (window.multiheiz.panelPipToggle) {
+        await window.multiheiz.panelPipToggle(acc.id);
+      }
+    });
+    btnPip.dataset.role = 'panel-pip';
+    btnPip.addEventListener('contextmenu', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const r = btnPip.getBoundingClientRect();
+      if (window.multiheiz.panelPipMenu) {
+        await window.multiheiz.panelPipMenu(acc.id, Math.round(r.left), Math.round(r.bottom + 4));
+      }
+    });
+  }
   const btnStar = iconBtn(ICO.star, 'Favoritar (Ctrl+D)', async (e) => {
     e.stopPropagation();
     focusedAccountId = acc.id;
@@ -2575,7 +2652,11 @@ function buildPanelSlot(acc, tile) {
   btnMore.dataset.role = 'panel-menu';
 
   // Star + shield + puzzle on the left so header-actions stay compact (livre drag hit-tests ~35% into header)
-  actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnMax, btnMore);
+  if (btnPip) {
+    actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnPip, btnMax, btnMore);
+  } else {
+    actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnMax, btnMore);
+  }
   const headerBits = [stripe, fav, siteInfoBtn, mediaInd];
   if (shareInd) headerBits.push(shareInd);
   headerBits.push(btnStar, btnShield, btnExt, titleBlock, actions);
@@ -5893,6 +5974,16 @@ window.__multiheizUi = {
   showTabsOverflowMenu: () => {
     showTabsOverflowMenu();
     return { ok: true };
+  },
+  applyState: (st, opts) => applyState(st, opts || {}),
+  setShowPipToolbarButton: async (on) => {
+    const st = await window.multiheiz.updateSettings({ showPipToolbarButton: !!on });
+    applyState(st, { soft: true });
+    return {
+      ok: true,
+      shown: !!document.querySelector('[data-role="panel-pip"]'),
+      setting: !!(st && st.settings && st.settings.showPipToolbarButton),
+    };
   },
   syncNow: () => {
     syncViews();

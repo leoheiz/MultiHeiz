@@ -480,6 +480,24 @@ function runAction(accountId, actionId) {
         /* ignore */
       }
       return true;
+    case 'pictureInPicture':
+      try {
+        const pip = require('./picture-in-picture');
+        void pip.togglePip(accountId);
+        noteAction('pictureInPicture', accountId);
+      } catch {
+        /* ignore */
+      }
+      return true;
+    case 'miniPlayerLock':
+      try {
+        const mini = require('./mini-player');
+        if (mini.isOpen()) mini.toggleLock();
+        noteAction('miniPlayerLock', accountId);
+      } catch {
+        /* ignore */
+      }
+      return true;
     case 'newWindow':
       if (emitToRenderer) emitToRenderer({ type: 'ui:new-account' });
       return true;

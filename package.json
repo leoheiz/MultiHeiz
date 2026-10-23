@@ -54,6 +54,8 @@
     "selftest:contextmenu": "node tools/selftest-contextmenu.js",
     "selftest:shortcuts": "node tools/selftest-shortcuts.js",
     "selftest:shortcut-custom": "node tools/selftest-shortcut-custom.js",
+    "selftest:pip": "node tools/selftest-pip.js",
+    "selftest:miniplayer": "node tools/selftest-miniplayer.js",
     "selftest:minimize-restore": "node tools/selftest-minimize-restore.js",
     "selftest:proxy": "node tools/selftest-proxy.js",
     "selftest:doh": "node tools/selftest-doh.js",

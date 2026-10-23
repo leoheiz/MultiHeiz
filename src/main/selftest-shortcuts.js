@@ -42,9 +42,9 @@ async function runShortcutsSelftest(ctx) {
     assert(keymap.normalizeComboString('CommandOrControl+Shift+R') === 'Ctrl+Shift+R', 'normalize CmdOrCtrl');
     const def = keymap.resolveShortcut(null, 'print');
     assert(def.combo === 'Ctrl+P' && def.isDefault, 'default print');
-    const remapped = keymap.applyOverride(null, 'print', { combo: 'Ctrl+Shift+P' });
-    assert(keymap.resolveShortcut(remapped, 'print').combo === 'Ctrl+Shift+P', 'remap print');
-    const conflict = keymap.findConflict(remapped, 'Ctrl+Shift+P', 'find');
+    const remapped = keymap.applyOverride(null, 'print', { combo: 'Ctrl+Shift+O' });
+    assert(keymap.resolveShortcut(remapped, 'print').combo === 'Ctrl+Shift+O', 'remap print');
+    const conflict = keymap.findConflict(remapped, 'Ctrl+Shift+O', 'find');
     assert(conflict && conflict.id === 'print', 'conflict detection');
     const restored = keymap.applyOverride(remapped, 'print', { restore: true });
     assert(keymap.resolveShortcut(restored, 'print').isDefault, 'restore default');
@@ -271,12 +271,12 @@ async function runShortcutsSelftest(ctx) {
     console.log('PASS: Alt+Right forward');
   }
 
-  // Remap Ctrl+P → Ctrl+Shift+P; old combo must not print; new must
+  // Remap Ctrl+P → Ctrl+Shift+O (Ctrl+Shift+P is PiP default); old combo must not print; new must
   updateState((s) => {
     s.settings.keyboardShortcuts = keymap.applyOverride(
       s.settings.keyboardShortcuts,
       'print',
-      { combo: 'Ctrl+Shift+P' }
+      { combo: 'Ctrl+Shift+O' }
     );
   });
   flushSave();
@@ -285,15 +285,15 @@ async function runShortcutsSelftest(ctx) {
   await sendKey('P', ['control']);
   await sleep(200);
   assert(panelShortcuts.getPrintMockLog().length === 0, 'old Ctrl+P no longer prints after remap');
-  await sendKey('P', ['control', 'shift']);
+  await sendKey('O', ['control', 'shift']);
   await sleep(200);
-  assert(panelShortcuts.getPrintMockLog().length >= 1, 'new Ctrl+Shift+P prints');
+  assert(panelShortcuts.getPrintMockLog().length >= 1, 'new Ctrl+Shift+O prints');
   console.log('PASS: remap print combo');
 
   // Conflict detection (unit already; also via findConflict with live settings)
   {
     const ks = getState().settings.keyboardShortcuts;
-    const c = keymap.findConflict(ks, 'Ctrl+Shift+P', 'find');
+    const c = keymap.findConflict(ks, 'Ctrl+Shift+O', 'find');
     assert(c && c.id === 'print', 'live conflict');
     console.log('PASS: conflict detection live');
   }
