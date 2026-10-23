@@ -1,6 +1,45 @@
 {
   "versions": [
     {
+      "version": "1.3.1",
+      "date": "2026-10-23",
+      "title": "Volume, atualização automática e favoritos",
+      "entries": [
+        {
+          "tag": "Correção",
+          "text": "Volume 0–200% em rádio web (ex. htzfm): funciona com áudio fora da página; se o site não permitir passar de 100%, o app avisa e não deixa o som mudo."
+        },
+        {
+          "tag": "Novo",
+          "text": "Atualização automática em segundo plano: baixa em silêncio e avisa quando estiver pronta (Reiniciar agora / Depois). Controles em Sobre."
+        },
+        {
+          "tag": "Novo",
+          "text": "Atalhos no painel focado (imprimir, localizar, zoom, recarregar…) e Configurações → Atalhos de teclado para personalizar."
+        },
+        {
+          "tag": "Novo",
+          "text": "Favoritos no estilo Edge (menu rápido + página com pastas) e nova janela a partir dos favoritos no catálogo."
+        },
+        {
+          "tag": "Novo",
+          "text": "Certificados: escolher e-CPF/e-CNPJ, cadeado com info do site e página clara em erro de certificado (continuar só em rede local)."
+        },
+        {
+          "tag": "Novo",
+          "text": "Minimizar e Fechar na barra lateral; várias janelas suspensas na mesma área; opção de limpar memória de tempos em tempos."
+        },
+        {
+          "tag": "Correção",
+          "text": "Vídeo em tela cheia do site não bagunça mais o layout; opção de mostrar a barra superior ao levar o mouse ao topo (desligada por padrão)."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Corretor nativo ligado por padrão; LanguageTool desligado por padrão (com aviso se ligar). Página de extensões redesenhada (Experimental em testes)."
+        }
+      ]
+    },
+    {
       "version": "1.3.0",
       "date": "2026-10-19",
       "title": "AdBlocker Ultimate no YouTube e sandbox",

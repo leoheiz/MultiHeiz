@@ -10,7 +10,7 @@
   with appId com.leo.multiheiz.installertest / productName MultiHeizInstallerTest
   so Start Menu shortcuts and registry keys cannot overwrite the real app.
 
-  Also statically verifies the real dist\MultiHeiz-1.3.0-setup.exe exists after
+  Also statically verifies the real dist\MultiHeiz-1.3.1-setup.exe exists after
   npm run dist:win (does not run it).
 #>
 $ErrorActionPreference = 'Stop'
@@ -368,7 +368,7 @@ Assert-RealInstallUnchanged $before $after
 Write-Host '  Real install unchanged'
 
 Write-Step 'Static check: production setup artifact (if present)'
-$prodSetup = Join-Path $Root 'dist\MultiHeiz-1.3.0-setup.exe'
+$prodSetup = Join-Path $Root 'dist\MultiHeiz-1.3.1-setup.exe'
 if (Test-Path -LiteralPath $prodSetup) {
   $len = (Get-Item -LiteralPath $prodSetup).Length
   Assert ($len -gt 1MB) "production setup too small: $len"

@@ -22,7 +22,7 @@ trap cleanup EXIT
 
 mkdir -p "$WORK/assets" "$WORK/shim" "$WORK/home"
 
-FAKE_APP="MultiHeiz-1.3.0.AppImage"
+FAKE_APP="MultiHeiz-1.3.1.AppImage"
 printf 'FAKE-APPIMAGE' >"$WORK/assets/$FAKE_APP"
 if command -v sha256sum >/dev/null 2>&1; then
   HASH=$(sha256sum "$WORK/assets/$FAKE_APP" | awk '{print $1}')
@@ -58,8 +58,8 @@ while [ $# -gt 0 ]; do
 done
 case "$fmt" in
   *Status*) printf '%s\n' "install ok installed" ;;
-  *Version*) printf '%s\n' "1.3.0" ;;
-  *) printf '%s\n' "1.3.0" ;;
+  *Version*) printf '%s\n' "1.3.1" ;;
+  *) printf '%s\n' "1.3.1" ;;
 esac
 EOF
 

@@ -93,7 +93,7 @@ async function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-diff-upd-'));
 
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-  assert(pkg.version === '1.3.0', 'package version must stay 1.3.0 (got ' + pkg.version + ')');
+  assert(pkg.version === '1.3.1', 'package version must be 1.3.1 (got ' + pkg.version + ')');
   assert(
     pkg.build && pkg.build.nsis && pkg.build.nsis.differentialPackage === true,
     'nsis.differentialPackage must be true'
