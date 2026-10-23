@@ -2164,6 +2164,44 @@ function renderSidebarChunked() {
  * Patch existing sidebar rows when account ids/order match. Returns false → caller should full rebuild.
  * @returns {boolean}
  */
+/**
+ * Keep unread badge on an existing sidebar row in sync (showUnread / count / dot).
+ * @param {Element} item
+ * @param {object} acc
+ */
+function patchSidebarUnreadBadge(item, acc) {
+  const favWrap = item.querySelector('.sidebar-fav-wrap');
+  if (!favWrap) return;
+  let badge = favWrap.querySelector('[data-role="sidebar-unread"]');
+  const unread = unreadByAccount.get(acc.id);
+  const showUnread = acc.showUnread !== false;
+  const shouldShow =
+    showUnread && unread && (typeof unread.count === 'number' || unread.dot);
+  if (!shouldShow) {
+    if (badge) badge.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'sidebar-unread-badge';
+    badge.dataset.role = 'sidebar-unread';
+    favWrap.appendChild(badge);
+  }
+  if (typeof unread.count === 'number' && unread.count > 0) {
+    badge.classList.remove('is-dot');
+    badge.textContent = unread.count >= 99 ? '99+' : String(unread.count);
+    badge.title =
+      unread.count === 1
+        ? '1 mensagem não lida'
+        : `${unread.count >= 99 ? '99+' : unread.count} mensagens não lidas`;
+  } else {
+    badge.classList.add('is-dot');
+    badge.textContent = '';
+    badge.title = 'Mensagens não lidas';
+  }
+  badge.setAttribute('aria-label', badge.title);
+}
+
 function patchSidebarIncremental() {
   if (!el.sidebarList) return false;
   const list = accountsInWorkspace();
@@ -2176,10 +2214,12 @@ function patchSidebarIncremental() {
     const acc = list[i];
     const item = items[i];
     item.classList.toggle('active', focusedAccountId === acc.id);
+    item.classList.toggle('is-minimized', !!acc.minimized);
     const nameEl = item.querySelector('.sidebar-name');
     if (nameEl && nameEl.textContent !== (acc.name || '')) nameEl.textContent = acc.name || '';
     const stripe = item.querySelector('.sidebar-color');
     if (stripe) stripe.style.background = acc.color || 'var(--accent)';
+    patchSidebarUnreadBadge(item, acc);
     const meta = item.querySelector('.sidebar-meta');
     if (meta) {
       const m = panelMetrics(acc.id);
