@@ -3310,6 +3310,96 @@ dialog label.check-row input[type='checkbox'],
 }
 .mgr-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
+.history-page {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+.history-page-layout {
+  display: flex;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+.history-page-left {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-right: 1px solid var(--border);
+  padding-right: 12px;
+}
+.history-page-right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.history-page-side-title {
+  margin: 0;
+  font-size: 16px;
+}
+.history-page-search { width: 100%; }
+.history-page-nav {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+.history-page-nav.is-active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.history-page-list {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.history-page-row {
+  align-items: center;
+  gap: 8px;
+}
+.history-page-row .history-row-delete {
+  opacity: 0;
+  min-width: 28px;
+}
+.history-page-row:hover .history-row-delete {
+  opacity: 1;
+}
+.history-row-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-row-domain {
+  display: block;
+}
+.history-row-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  font-size: 12px;
+}
+.history-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.history-select-bar.hidden { display: none; }
+.history-row-check { flex-shrink: 0; }
+
 .favorites-page {
   display: flex;
   flex-direction: column;

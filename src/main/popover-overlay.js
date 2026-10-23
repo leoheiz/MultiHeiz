@@ -24,6 +24,7 @@ const LIGHT_OVERLAY_IDS = new Set([
   'store-bar-menu',
   'ai-write-popover',
   'favorites-popover',
+  'history-popover',
 ]);
 
 /** @type {import('electron').BrowserWindow | null} */
@@ -387,6 +388,13 @@ function applyMeasuredSize(size) {
     h = Math.max(h, Math.min(minH, 420));
     h = Math.min(h, 420);
   }
+  if (current.kind === 'history') {
+    const data = (current.payload && current.payload.data) || {};
+    const entries = (data.entries && data.entries.length) || 0;
+    const minH = Math.max(180, 120 + Math.min(entries, 8) * 36);
+    h = Math.max(h, Math.min(minH, 420));
+    h = Math.min(h, 420);
+  }
   const anchor = (current.payload && current.payload.anchor) || { x: current.bounds.x, y: current.bounds.y };
   const prefer = (current.payload && current.payload.prefer) || 'below';
   const bounds = placeBounds(anchor, w, h, prefer);
@@ -429,6 +437,13 @@ function estimateSize(kind, data) {
     return {
       width: 300,
       height: Math.min(420, Math.max(180, 96 + folders * 28 + items * 36)),
+    };
+  }
+  if (kind === 'history') {
+    const entries = (data && data.entries && data.entries.length) || 0;
+    return {
+      width: 340,
+      height: Math.min(420, Math.max(200, 120 + Math.min(entries, 8) * 36)),
     };
   }
   if (kind === 'ai-write') return { width: 320, height: 280 };

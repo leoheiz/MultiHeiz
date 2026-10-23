@@ -34,7 +34,8 @@
   .layout-menu,
   .mem-popover-box,
   .ai-write-popover,
-  .favorites-popover {
+  .favorites-popover,
+  .history-popover {
     box-sizing: border-box;
     border-radius: 8px;
     border: 1px solid var(--border, #3a4654);
@@ -200,6 +201,122 @@
   }
   .favorites-popover-action:hover {
     background: color-mix(in srgb, var(--text) 10%, transparent);
+  }
+
+  .history-popover {
+    width: 340px;
+    max-height: 420px;
+    min-height: 180px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .history-popover-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .history-popover-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .history-popover-icon,
+  .history-popover-pin {
+    background: transparent;
+    border: 1px solid var(--border, #3a4654);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    color: inherit;
+  }
+  .history-popover-pin.is-pinned { border-color: var(--accent, #3d6df0); }
+  .history-popover-search {
+    width: 100%;
+    box-sizing: border-box;
+    background: color-mix(in srgb, var(--bg, #121820) 80%, #000);
+    border: 1px solid var(--border, #3a4654);
+    color: inherit;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font: inherit;
+  }
+  .history-popover-tabs {
+    display: flex;
+    gap: 4px;
+  }
+  .history-popover-tab {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--border, #3a4654);
+    border-radius: 6px;
+    color: inherit;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+  .history-popover-tab.is-active {
+    border-color: var(--accent, #3d6df0);
+    background: color-mix(in srgb, var(--accent, #3d6df0) 18%, transparent);
+  }
+  .history-popover-list {
+    overflow: auto;
+    max-height: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 80px;
+  }
+  .history-day-header {
+    font-size: 11px;
+    font-weight: 600;
+    opacity: 0.75;
+    padding: 6px 4px 2px;
+  }
+  .history-item-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 6px 4px;
+    border-radius: 6px;
+  }
+  .history-item-row:hover {
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+  }
+  .history-item-favicon {
+    width: 16px;
+    height: 16px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .history-item-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .history-item-time {
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
+    font-size: 11px;
+  }
+  .history-popover-empty {
+    padding: 12px 4px;
+    opacity: 0.7;
+    font-size: 12px;
   }
 
   .volume-popover {

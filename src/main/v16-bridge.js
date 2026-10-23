@@ -116,6 +116,11 @@ function initV16(ctx) {
       emitToRenderer({ type: 'history:changed' });
       return true;
     });
+    ipcMain.handle('history:delete-many', (_e, ids) => {
+      history.deleteEntries(ids || []);
+      emitToRenderer({ type: 'history:changed' });
+      return true;
+    });
     ipcMain.handle('history:clear', (_e, opts) => {
       const o = opts || {};
       if (o.windowId) history.clearByWindow(o.windowId);

@@ -50,6 +50,12 @@
       const minH = Math.max(160, 96 + folders * 28 + items * 36);
       h = Math.max(h, Math.min(minH, 420));
     }
+    if (current && current.kind === 'history') {
+      const entries =
+        (current.data && current.data.entries && current.data.entries.length) || 0;
+      const minH = Math.max(180, 120 + Math.min(entries, 8) * 36);
+      h = Math.max(h, Math.min(minH, 420));
+    }
     if (window.mhPopover && window.mhPopover.measure) {
       window.mhPopover.measure({ width: w, height: h });
     }
@@ -471,6 +477,193 @@
     }
   }
 
+  function historyDayLabel(ts) {
+    const d = new Date(ts || 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const that = new Date(d);
+    that.setHours(0, 0, 0, 0);
+    const diff = Math.round((today.getTime() - that.getTime()) / 86400000);
+    const weekday = d.toLocaleDateString('pt-BR', { weekday: 'long' });
+    const full = d.toLocaleDateString('pt-BR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+    if (diff === 0) return 'Hoje — ' + weekday + ', ' + full;
+    if (diff === 1) return 'Ontem — ' + weekday + ', ' + full;
+    return weekday + ', ' + full;
+  }
+
+  function historyDomain(url) {
+    try {
+      return new URL(String(url || '')).hostname || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function historyTooltipUrl(url) {
+    try {
+      const u = new URL(String(url || ''));
+      u.search = '';
+      u.hash = '';
+      return u.toString();
+    } catch {
+      return String(url || '').split(/[?#]/)[0];
+    }
+  }
+
+  function renderHistoryPopover(data) {
+    const pop = document.createElement('div');
+    pop.className = 'history-popover';
+    pop.dataset.role = 'history-popover';
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', 'Histórico');
+
+    const head = document.createElement('div');
+    head.className = 'history-popover-head';
+    const title = document.createElement('strong');
+    title.textContent = 'Histórico';
+    const headActions = document.createElement('div');
+    headActions.className = 'history-popover-head-actions';
+
+    const mkIcon = (label, role, type, glyph) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'history-popover-icon';
+      b.dataset.role = role;
+      b.title = label;
+      b.setAttribute('aria-label', label);
+      b.textContent = glyph;
+      b.addEventListener('click', () => {
+        window.mhPopover.action({ type });
+        if (type === 'history-open-page' && !(data && data.pinned)) {
+          window.mhPopover.close('action');
+        }
+      });
+      return b;
+    };
+    const searchToggle = mkIcon('Buscar', 'history-search-toggle', 'history-focus-search', '⌕');
+    const trashBtn = mkIcon('Limpar histórico', 'history-trash', 'history-clear', '🗑');
+    const openPageBtn = mkIcon('Abrir página completa', 'history-open-page', 'history-open-page', '…');
+    const pinBtn = document.createElement('button');
+    pinBtn.type = 'button';
+    pinBtn.className = 'history-popover-pin' + (data && data.pinned ? ' is-pinned' : '');
+    pinBtn.dataset.role = 'history-pin';
+    pinBtn.title = data && data.pinned ? 'Desafixar' : 'Fixar';
+    pinBtn.textContent = data && data.pinned ? 'Fixado' : 'Fixar';
+    pinBtn.addEventListener('click', () => {
+      window.mhPopover.action({ type: 'history-pin', pinned: !(data && data.pinned) });
+    });
+    headActions.append(searchToggle, trashBtn, openPageBtn, pinBtn);
+    head.append(title, headActions);
+    pop.appendChild(head);
+
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'history-popover-search';
+    search.dataset.role = 'history-search';
+    search.placeholder = 'Pesquisar no histórico';
+    search.value = (data && data.query) || '';
+    pop.appendChild(search);
+
+    const tabs = document.createElement('div');
+    tabs.className = 'history-popover-tabs';
+    const tabAll = document.createElement('button');
+    tabAll.type = 'button';
+    tabAll.className =
+      'history-popover-tab' + (!(data && data.tab === 'closed') ? ' is-active' : '');
+    tabAll.dataset.role = 'history-tab-all';
+    tabAll.textContent = 'Tudo';
+    tabAll.addEventListener('click', () => {
+      window.mhPopover.action({ type: 'history-tab', tab: 'all' });
+    });
+    const tabClosed = document.createElement('button');
+    tabClosed.type = 'button';
+    tabClosed.className =
+      'history-popover-tab' + (data && data.tab === 'closed' ? ' is-active' : '');
+    tabClosed.dataset.role = 'history-tab-closed';
+    tabClosed.textContent = 'Fechadas recentemente';
+    tabClosed.addEventListener('click', () => {
+      window.mhPopover.action({ type: 'history-tab', tab: 'closed' });
+    });
+    tabs.append(tabAll, tabClosed);
+    pop.appendChild(tabs);
+
+    const list = document.createElement('div');
+    list.className = 'history-popover-list';
+    list.dataset.role = 'history-list';
+
+    const entries = (data && data.entries) || [];
+    /** @type {Map<string, any[]>} */
+    const byDay = new Map();
+    for (const e of entries) {
+      const label = historyDayLabel(e.time);
+      if (!byDay.has(label)) byDay.set(label, []);
+      byDay.get(label).push(e);
+    }
+    for (const [day, items] of byDay) {
+      const dayEl = document.createElement('div');
+      dayEl.className = 'history-day-header';
+      dayEl.dataset.role = 'history-day';
+      dayEl.textContent = day;
+      list.appendChild(dayEl);
+      for (const e of items) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'history-item-row';
+        row.dataset.role = 'history-item';
+        row.dataset.historyId = e.id || '';
+        row.title = historyTooltipUrl(e.url);
+        const img = document.createElement('img');
+        img.className = 'history-item-favicon';
+        img.alt = '';
+        img.src = e.favicon || faviconFor(e.url);
+        const lab = document.createElement('span');
+        lab.className = 'history-item-title';
+        lab.textContent = e.title || historyDomain(e.url) || 'Página';
+        const time = document.createElement('span');
+        time.className = 'history-item-time';
+        time.textContent = new Date(e.time || 0).toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        row.append(img, lab, time);
+        row.addEventListener('click', () => {
+          window.mhPopover.action({
+            type: 'history-open',
+            historyId: e.id,
+            url: e.url,
+            windowId: e.windowId,
+          });
+          if (!(data && data.pinned)) window.mhPopover.close('action');
+        });
+        list.appendChild(row);
+      }
+    }
+    if (!entries.length) {
+      const empty = document.createElement('div');
+      empty.className = 'history-popover-empty';
+      empty.textContent =
+        data && data.tab === 'closed'
+          ? 'Nenhuma janela fechada recentemente.'
+          : 'Nenhum item no histórico.';
+      list.appendChild(empty);
+    }
+    pop.appendChild(list);
+
+    search.addEventListener('input', () => {
+      window.mhPopover.action({ type: 'history-search', query: search.value });
+    });
+    searchToggle.addEventListener('click', () => {
+      search.focus();
+      search.select();
+    });
+
+    return pop;
+  }
+
   function renderFavoritesPopover(data) {
     const pop = document.createElement('div');
     pop.className = 'favorites-popover';
@@ -782,6 +975,7 @@
     else if (payload.kind === 'layout') node = renderLayout(payload.data || {});
     else if (payload.kind === 'ext-menu') node = renderExtMenu(payload.data || {});
     else if (payload.kind === 'favorites') node = renderFavoritesPopover(payload.data || {});
+    else if (payload.kind === 'history') node = renderHistoryPopover(payload.data || {});
     else if (payload.kind === 'mem') node = renderMem(payload.data || {});
     else if (payload.kind === 'ai-write') node = renderAiWrite(payload.data || {});
     if (node) root.appendChild(node);
@@ -825,6 +1019,11 @@
       } else if (current.kind === 'favorites' && data) {
         current.data = Object.assign({}, current.data || {}, data);
         const node = renderFavoritesPopover(current.data);
+        root.replaceChildren(node);
+        scheduleMeasure();
+      } else if (current.kind === 'history' && data) {
+        current.data = Object.assign({}, current.data || {}, data);
+        const node = renderHistoryPopover(current.data);
         root.replaceChildren(node);
         scheduleMeasure();
       } else if (data) current.data = Object.assign({}, current.data || {}, data);

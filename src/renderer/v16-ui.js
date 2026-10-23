@@ -466,17 +466,109 @@
     paint();
   }
 
+  function historyDayLabel(ts) {
+    const d = new Date(ts || 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const that = new Date(d);
+    that.setHours(0, 0, 0, 0);
+    const diff = Math.round((today.getTime() - that.getTime()) / 86400000);
+    const weekday = d.toLocaleDateString('pt-BR', { weekday: 'long' });
+    const full = d.toLocaleDateString('pt-BR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+    if (diff === 0) return `Hoje — ${weekday}, ${full}`;
+    if (diff === 1) return `Ontem — ${weekday}, ${full}`;
+    return `${weekday}, ${full}`;
+  }
+
+  function historyDomainOnly(url) {
+    try {
+      return new URL(String(url || '')).hostname || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function historyTooltipSafe(url) {
+    try {
+      const u = new URL(String(url || ''));
+      u.search = '';
+      u.hash = '';
+      return u.toString();
+    } catch {
+      return String(url || '').split(/[?#]/)[0];
+    }
+  }
+
+  function faviconUrlFor(url) {
+    try {
+      const host = new URL(String(url || '')).hostname;
+      return 'https://www.google.com/s2/favicons?sz=32&domain=' + encodeURIComponent(host);
+    } catch {
+      return '';
+    }
+  }
+
   async function renderHistory(body) {
+    body.classList.add('history-page');
     const accounts = getState().accounts || [];
-    const filter = h('select', { className: 'mgr-filter' },
+    /** @type {'all'|'closed'} */
+    let sideTab = 'all';
+    /** @type {Set<string>} */
+    let selected = new Set();
+    /** @type {string|null} */
+    let dateFilter = null;
+
+    const layout = h('div', { className: 'history-page-layout' });
+    const left = h('div', { className: 'history-page-left' });
+    const right = h('div', { className: 'history-page-right' });
+
+    left.appendChild(h('h3', { className: 'history-page-side-title', text: 'Histórico' }));
+    const search = h('input', {
+      type: 'search',
+      placeholder: 'Buscar no histórico',
+      className: 'mgr-search history-page-search',
+      'data-role': 'history-page-search',
+    });
+    left.appendChild(search);
+
+    const navAll = h('button', {
+      type: 'button',
+      className: 'history-page-nav is-active',
+      text: 'Tudo',
+      'data-role': 'history-nav-all',
+    });
+    const navClosed = h('button', {
+      type: 'button',
+      className: 'history-page-nav',
+      text: 'Fechadas recentemente',
+      'data-role': 'history-nav-closed',
+    });
+    left.append(navAll, navClosed);
+
+    const filter = h('select', { className: 'mgr-filter', 'data-role': 'history-window-filter' },
       h('option', { value: '', text: 'Todas as janelas' }),
       ...accounts.map((a) => h('option', { value: a.id, text: a.name }))
     );
-    const search = h('input', { type: 'search', placeholder: 'Buscar…', className: 'mgr-search' });
-    const toolbar = h('div', { className: 'mgr-toolbar' },
-      search, filter,
+
+    const topBar = h('div', { className: 'history-page-top mgr-toolbar' },
+      filter,
       h('button', {
-        type: 'button', className: 'btn ghost', text: 'Limpar…',
+        type: 'button', className: 'btn ghost', text: 'Filtrar por data',
+        'data-role': 'history-filter-date',
+        onClick: () => {
+          const v = prompt('Data (AAAA-MM-DD) ou vazio para limpar');
+          if (v == null) return;
+          dateFilter = v.trim() || null;
+          paint();
+        },
+      }),
+      h('button', {
+        type: 'button', className: 'btn ghost', text: 'Excluir dados de navegação',
+        'data-role': 'history-clear-data',
         onClick: async () => {
           const choice = await openHistoryClearDialog(!!filter.value);
           if (!choice) return;
@@ -489,52 +581,151 @@
           } else {
             await window.multiheiz.historyClear({ range: choice });
           }
-          renderManager();
+          selected.clear();
+          paint();
         },
       })
     );
-    body.appendChild(toolbar);
-    const list = h('div', { className: 'mgr-list' });
-    body.appendChild(list);
+    right.appendChild(topBar);
+
+    const selectBar = h('div', {
+      className: 'history-select-bar hidden',
+      'data-role': 'history-select-bar',
+    });
+    right.appendChild(selectBar);
+
+    const list = h('div', {
+      className: 'history-page-list mgr-list',
+      'data-role': 'history-page-list',
+    });
+    right.appendChild(list);
+    layout.append(left, right);
+    body.appendChild(layout);
+
+    function updateSelectBar() {
+      const n = selected.size;
+      selectBar.classList.toggle('hidden', n === 0);
+      selectBar.innerHTML = '';
+      if (!n) return;
+      selectBar.appendChild(h('span', { text: `${n} selecionados` }));
+      selectBar.appendChild(h('button', {
+        type: 'button',
+        className: 'btn ghost',
+        text: 'Excluir',
+        'data-role': 'history-multi-delete',
+        onClick: async () => {
+          const ids = [...selected];
+          if (window.multiheiz.historyDeleteMany) {
+            await window.multiheiz.historyDeleteMany(ids);
+          } else {
+            for (const id of ids) await window.multiheiz.historyDelete(id);
+          }
+          selected.clear();
+          paint();
+        },
+      }));
+    }
 
     async function paint() {
       const entries = await window.multiheiz.historyQuery({
-        search: search.value.trim(),
+        search: search.value.trim() || undefined,
         windowId: filter.value || undefined,
         limit: 500,
+        closed: sideTab === 'closed',
       });
+      let filtered = entries || [];
+      if (dateFilter) {
+        filtered = filtered.filter((e) => {
+          const d = new Date(e.time || 0);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          return key === dateFilter;
+        });
+      }
       list.innerHTML = '';
       /** @type {Map<string, any[]>} */
       const byDay = new Map();
-      for (const e of entries) {
-        const d = new Date(e.time || 0);
-        const key = d.toLocaleDateString('pt-BR');
+      for (const e of filtered) {
+        const key = historyDayLabel(e.time);
         if (!byDay.has(key)) byDay.set(key, []);
         byDay.get(key).push(e);
       }
       for (const [day, items] of byDay) {
-        list.appendChild(h('div', { className: 'mgr-folder-title', text: day }));
+        list.appendChild(h('div', {
+          className: 'mgr-folder-title history-day-header',
+          text: day,
+          'data-role': 'history-day',
+        }));
         for (const e of items) {
-          const time = new Date(e.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-          list.appendChild(h('div', { className: 'mgr-row' },
+          const time = new Date(e.time).toLocaleTimeString('pt-BR', {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          const domain = historyDomainOnly(e.url);
+          const tip = historyTooltipSafe(e.url);
+          const cb = h('input', {
+            type: 'checkbox',
+            className: 'history-row-check',
+            checked: selected.has(e.id),
+          });
+          cb.addEventListener('click', (ev) => ev.stopPropagation());
+          cb.addEventListener('change', () => {
+            if (cb.checked) selected.add(e.id);
+            else selected.delete(e.id);
+            updateSelectBar();
+          });
+          const fav = document.createElement('img');
+          fav.className = 'history-item-favicon';
+          fav.alt = '';
+          fav.src = e.favicon || faviconUrlFor(e.url);
+          const row = h('div', {
+            className: 'mgr-row history-page-row',
+            'data-role': 'history-page-row',
+            title: tip,
+          },
+            cb,
+            fav,
             h('button', {
-              type: 'button', className: 'mgr-row-main',
+              type: 'button',
+              className: 'mgr-row-main',
               onClick: () => openWithTarget(e.url, e.windowId),
             },
-              h('strong', { text: `${time} · ${e.title || e.url}` }),
-              h('span', { className: 'muted-note', text: `${e.windowName || ''} · ${e.url}` })
+              h('strong', { className: 'history-row-title', text: e.title || domain || 'Página' }),
+              h('span', { className: 'muted-note history-row-domain', text: domain })
             ),
+            h('span', { className: 'history-row-time', text: time }),
             h('button', {
-              type: 'button', className: 'btn ghost', text: 'Excluir',
+              type: 'button',
+              className: 'btn ghost history-row-delete',
+              text: '×',
+              title: 'Excluir',
+              'aria-label': 'Excluir',
               onClick: async () => {
                 await window.multiheiz.historyDelete(e.id);
+                selected.delete(e.id);
                 paint();
               },
             })
-          ));
+          );
+          list.appendChild(row);
         }
       }
+      updateSelectBar();
     }
+
+    navAll.addEventListener('click', () => {
+      sideTab = 'all';
+      navAll.classList.add('is-active');
+      navClosed.classList.remove('is-active');
+      selected.clear();
+      paint();
+    });
+    navClosed.addEventListener('click', () => {
+      sideTab = 'closed';
+      navClosed.classList.add('is-active');
+      navAll.classList.remove('is-active');
+      selected.clear();
+      paint();
+    });
     search.addEventListener('input', () => paint());
     filter.addEventListener('change', () => paint());
     await paint();
@@ -4531,7 +4722,13 @@
         openManager('favorites');
       }
     });
-    document.getElementById('btn-history')?.addEventListener('click', () => openManager('history'));
+    document.getElementById('btn-history')?.addEventListener('click', () => {
+      if (window.__multiheizUi && window.__multiheizUi.openHistoryPopover) {
+        window.__multiheizUi.openHistoryPopover();
+      } else {
+        openManager('history');
+      }
+    });
     document.getElementById('btn-downloads')?.addEventListener('click', () => openManager('downloads'));
 
     document.getElementById('form-history-clear')?.addEventListener('submit', (e) => {
@@ -4653,7 +4850,13 @@
         showSnooze(payload.reminder);
       }
       if (payload.type === 'ui:favorite') favoriteCurrentUrl();
-      if (payload.type === 'ui:history') openManager('history');
+      if (payload.type === 'ui:history') {
+        if (window.__multiheizUi && window.__multiheizUi.openHistoryPopover) {
+          window.__multiheizUi.openHistoryPopover();
+        } else {
+          openManager('history');
+        }
+      }
       if (payload.type === 'ui:downloads') openManager('downloads');
       if (payload.type === 'bookmarks:changed' && activeManager === 'favorites') renderManager();
       if (payload.type === 'history:changed' && activeManager === 'history') renderManager();
@@ -4682,6 +4885,12 @@
 
   api.init = init;
   api.openManager = openManager;
+  api.openHistoryClearFromPopover = async () => {
+    const choice = await openHistoryClearDialog(false);
+    if (!choice) return;
+    if (choice === 'window') return;
+    await window.multiheiz.historyClear({ range: choice });
+  };
   api.closeManager = closeManager;
   api.openModule = openModule;
   api.closeModule = closeModule;
