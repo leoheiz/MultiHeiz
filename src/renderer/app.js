@@ -501,9 +501,14 @@ function ensureTilesForVisible(visible) {
       changed = true;
     }
   }
-  const ids = new Set(visible.map((a) => a.id));
+  // Keep tiles for minimized accounts still in this workspace so restore
+  // reuses the exact free-layout position/size (and survives restart).
+  const keepIds = new Set(visible.map((a) => a.id));
+  for (const acc of accountsInWorkspace()) {
+    if (acc.minimized) keepIds.add(acc.id);
+  }
   for (const id of Object.keys(tiles)) {
-    if (!ids.has(id)) {
+    if (!keepIds.has(id)) {
       delete tiles[id];
       changed = true;
     }

@@ -310,6 +310,7 @@ const SELFTEST_DIAGNOSTICS = selftestMode === 'diagnostics';
 const SELFTEST_SHARED_SESSION = selftestMode === 'shared-session';
 const SELFTEST_SUSPEND = selftestMode === 'suspend';
 const SELFTEST_SHORTCUTS = selftestMode === 'shortcuts';
+const SELFTEST_MINIMIZE_RESTORE = selftestMode === 'minimize-restore';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -380,7 +381,8 @@ const ANY_SELFTEST =
   SELFTEST_DIAGNOSTICS ||
   SELFTEST_SHARED_SESSION ||
   SELFTEST_SUSPEND ||
-  SELFTEST_SHORTCUTS;
+  SELFTEST_SHORTCUTS ||
+  SELFTEST_MINIMIZE_RESTORE;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -732,6 +734,7 @@ function createWindow() {
     SELFTEST_REALHOVER_FULLSCREEN ||
     SELFTEST_CONTEXTMENU ||
     SELFTEST_SHORTCUTS ||
+    SELFTEST_MINIMIZE_RESTORE ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
@@ -775,6 +778,7 @@ function createWindow() {
   const offscreenSelftest =
     SELFTEST_ADBLOCK_REAL ||
     SELFTEST_SIDEBAR ||
+    SELFTEST_MINIMIZE_RESTORE ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
     SELFTEST_SUSPEND ||
@@ -856,6 +860,7 @@ function createWindow() {
         SELFTEST_REALHOVER_FULLSCREEN ||
         SELFTEST_CONTEXTMENU ||
         SELFTEST_SHORTCUTS ||
+        SELFTEST_MINIMIZE_RESTORE ||
         SELFTEST_SETTINGS_PERF ||
         SELFTEST_WORKSPACE_DELETE ||
         SELFTEST_SHARED_SESSION ||
@@ -2063,6 +2068,32 @@ function createWindow() {
             app,
             panelShortcuts,
             keymap,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_MINIMIZE_RESTORE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runMinimizeRestoreSelftest } = require('./selftest-minimize-restore');
+          runMinimizeRestoreSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
