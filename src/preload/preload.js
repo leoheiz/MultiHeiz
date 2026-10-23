@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld('multiheiz', {
     ipcRenderer.invoke('panel:pip-menu', { accountId, x, y }),
   panelMiniPlayerOpen: (accountId) => ipcRenderer.invoke('panel:mini-player-open', accountId),
   panelMiniPlayerClose: () => ipcRenderer.invoke('panel:mini-player-close'),
+  panelMiniPlayerUnlock: () => ipcRenderer.invoke('panel:mini-player-unlock'),
+  panelMiniPlayerLockState: () => ipcRenderer.invoke('panel:mini-player-lock-state'),
+  panelMiniPlayerToggleLock: () => ipcRenderer.invoke('panel:mini-player-toggle-lock'),
   panelFocus: (accountId) => ipcRenderer.invoke('panel:focus', accountId),
   panelReactivate: (accountId) => ipcRenderer.invoke('panel:reactivate', accountId),
   panelSuspend: (accountId) => ipcRenderer.invoke('panel:suspend', accountId),
@@ -199,6 +202,7 @@ contextBridge.exposeInMainWorld('multiheiz', {
 
   historyQuery: (opts) => ipcRenderer.invoke('history:query', opts),
   historyDelete: (id) => ipcRenderer.invoke('history:delete', id),
+  historyDeleteMany: (ids) => ipcRenderer.invoke('history:delete-many', ids),
   historyClear: (opts) => ipcRenderer.invoke('history:clear', opts),
   historyOpen: (opts) => ipcRenderer.invoke('history:open', opts),
 

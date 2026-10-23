@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('mhMini', {
   setOpacityPercent: (pct) => ipcRenderer.invoke('mini-player:set-opacity', pct),
   close: () => ipcRenderer.invoke('mini-player:close'),
   getInfo: () => ipcRenderer.invoke('mini-player:info'),
+  toggleLock: () => ipcRenderer.invoke('mini-player:toggle-lock'),
+  media: (cmd, value) => ipcRenderer.invoke('mini-player:media', { cmd, value }),
+  mediaState: () => ipcRenderer.invoke('mini-player:media-state'),
   onLockHint: (handler) => {
     const listener = (_e, payload) => {
       if (typeof handler === 'function') handler(payload);

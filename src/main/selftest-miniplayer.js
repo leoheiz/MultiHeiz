@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Selftest: experimental always-on-top mini player (lock, opacity, globalShortcut).
+ * Selftest: experimental always-on-top mini player (lock, opacity, isolation, unlock paths).
  * MULTIHEIZ_SELFTEST=miniplayer
  */
 
@@ -37,11 +37,30 @@ async function runMiniPlayerSelftest(ctx) {
     }
   }
 
-  const PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>mini</title></head>
-<body style="margin:0;background:#102030;color:#eee;font:16px sans-serif;padding:16px">
-<h1>mini player</h1>
-<video id="v" width="320" height="180" autoplay muted loop playsinline
-  style="display:block;width:320px;height:180px;background:#000"></video>
+  const PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>mini</title>
+<style>
+  body { margin:0; background:#102030; color:#eee; font:16px sans-serif; }
+  #header { height:80px; background:#c44; padding:12px; }
+  #sidebar { position:fixed; left:0; top:80px; bottom:0; width:180px; background:#246; padding:12px; }
+  #main { margin-left:180px; margin-top:80px; padding:16px; }
+  #comments { margin-top:24px; padding:12px; background:#1a2838; }
+  img.banner { width:100%; max-width:640px; height:120px; background:#555; display:block; }
+</style>
+</head>
+<body>
+<div id="header"><h1>Site header (should be hidden in mini)</h1><p>Nav links and ads</p></div>
+<aside id="sidebar"><p>Sidebar clutter</p><ul><li>A</li><li>B</li><li>C</li></ul></aside>
+<main id="main">
+  <img class="banner" alt="banner" width="640" height="120" />
+  <p>Lots of surrounding text that must not appear in the mini player.</p>
+  <video id="v" width="320" height="180" autoplay muted loop playsinline
+    style="display:block;width:320px;height:180px;background:#000"></video>
+  <section id="comments">
+    <h2>Comments</h2>
+    <p>Comment one about the video.</p>
+    <p>Comment two with more text.</p>
+  </section>
+</main>
 <canvas id="c" width="320" height="180" style="display:none"></canvas>
 <script>
 (function(){
@@ -59,6 +78,20 @@ async function runMiniPlayerSelftest(ctx) {
   v.srcObject = c.captureStream(24);
   v.play().catch(function(){});
   window.__miniReady = true;
+  window.__replaceVideo = function() {
+    var old = document.getElementById('v');
+    var parent = old.parentNode;
+    var nv = document.createElement('video');
+    nv.id = 'v';
+    nv.width = 320; nv.height = 180;
+    nv.autoplay = true; nv.muted = true; nv.loop = true;
+    nv.setAttribute('playsinline', '');
+    nv.style.cssText = 'display:block;width:320px;height:180px;background:#000';
+    nv.srcObject = c.captureStream(24);
+    parent.replaceChild(nv, old);
+    nv.play().catch(function(){});
+    return true;
+  };
 })();
 </script>
 </body></html>`;
@@ -121,7 +154,7 @@ async function runMiniPlayerSelftest(ctx) {
 
   const opened = await miniPlayer.open('acc-mini');
   assert(opened && opened.ok, 'open mini player', opened);
-  await sleep(600);
+  await sleep(800);
 
   let snap = miniPlayer.getSelftestSnapshot();
   assert(snap.open, 'mini open');
@@ -138,21 +171,54 @@ async function runMiniPlayerSelftest(ctx) {
   assert(Math.abs(snap.opacity - 0.55) < 0.05, 'opacity matches set value', snap);
   console.log('PASS: setOpacity');
 
-  miniPlayer.applyLock(true);
+  await miniPlayer.applyVideoIsolation();
+  await sleep(200);
+  let hit = await miniPlayer.selftestHitIsolation();
+  assert(hit && hit.ok, 'isolation hit-test all points are video', hit);
+  console.log('PASS: video-only isolation elementFromPoint');
+
+  await miniPlayer.contentExec(`(() => {
+    history.pushState({}, '', '/watch?v=spa1');
+    window.__replaceVideo();
+    return true;
+  })()`);
+  await sleep(400);
+  await miniPlayer.applyVideoIsolation();
+  await sleep(200);
+  hit = await miniPlayer.selftestHitIsolation();
+  assert(hit && hit.ok, 'isolation re-applied after SPA replace', hit);
+  console.log('PASS: SPA navigation re-isolates video');
+
+  // Lock via toolbar padlock path (toggleLock = mini-player:toggle-lock)
+  miniPlayer.toggleLock();
   await sleep(100);
   snap = miniPlayer.getSelftestSnapshot();
-  assert(snap.locked, 'locked flag');
+  assert(snap.locked, 'locked flag after toolbar');
   assert(snap.ignoreMouseEvents, 'ignoreMouseEvents when locked');
   assert(snap.focusable === false, 'not focusable when locked');
-  console.log('PASS: lock');
+  console.log('PASS: lock via toolbar button path');
 
-  miniPlayer.applyLock(false);
+  // Unlock via global shortcut handler (same toggleLock)
+  miniPlayer.toggleLock();
   await sleep(100);
   snap = miniPlayer.getSelftestSnapshot();
-  assert(!snap.locked, 'unlocked');
+  assert(!snap.locked, 'unlocked via shortcut handler');
   assert(!snap.ignoreMouseEvents, 'mouse events restored');
   assert(snap.focusable === true, 'focusable restored');
-  console.log('PASS: unlock');
+  console.log('PASS: unlock via shortcut handler');
+
+  // Lock then unlock via main-window IPC path (panel:mini-player-unlock → applyLock(false))
+  miniPlayer.applyLock(true);
+  await sleep(80);
+  snap = miniPlayer.getSelftestSnapshot();
+  assert(snap.locked, 'locked before main unlock');
+  miniPlayer.applyLock(false);
+  await sleep(80);
+  snap = miniPlayer.getSelftestSnapshot();
+  assert(!snap.locked, 'unlocked via main-window button/IPC');
+  assert(!snap.ignoreMouseEvents, 'mouse after main unlock');
+  assert(snap.focusable === true, 'focusable after main unlock');
+  console.log('PASS: unlock via main-window button/IPC path');
 
   miniPlayer.close();
   await sleep(200);
@@ -170,7 +236,6 @@ async function runMiniPlayerSelftest(ctx) {
     /* ignore */
   }
 
-  // Ensure no leftover global shortcuts from this test
   try {
     globalShortcut.unregisterAll();
   } catch {

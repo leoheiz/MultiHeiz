@@ -285,6 +285,7 @@ const SELFTEST_CERTIFICATES = selftestMode === 'certificates';
 const SELFTEST_FAVORITES = selftestMode === 'favorites';
 const SELFTEST_FAVORITES_E2E = selftestMode === 'favorites-e2e';
 const SELFTEST_FAVORITES_POPOVER = selftestMode === 'favorites-popover';
+const SELFTEST_HISTORY = selftestMode === 'history';
 const SELFTEST_CATALOG = selftestMode === 'catalog';
 const SELFTEST_CUSTOM_SITE = selftestMode === 'custom-site';
 const SELFTEST_EDIT_START_URL = selftestMode === 'edit-start-url';
@@ -361,6 +362,7 @@ const ANY_SELFTEST =
   SELFTEST_FAVORITES ||
   SELFTEST_FAVORITES_E2E ||
   SELFTEST_FAVORITES_POPOVER ||
+  SELFTEST_HISTORY ||
   SELFTEST_CATALOG ||
   SELFTEST_CUSTOM_SITE ||
 
@@ -766,6 +768,7 @@ function createWindow() {
     SELFTEST_FAVORITES ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
+    SELFTEST_HISTORY ||
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
     SELFTEST_EDIT_START_URL ||
@@ -808,6 +811,7 @@ function createWindow() {
     SELFTEST_MINIPLAYER ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
+    SELFTEST_HISTORY ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
@@ -896,6 +900,7 @@ function createWindow() {
         SELFTEST_MINIPLAYER ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_FAVORITES_POPOVER ||
+        SELFTEST_HISTORY ||
         SELFTEST_DIAG_CERTISIGN ||
         SELFTEST_SETTINGS_PERF ||
         SELFTEST_WORKSPACE_DELETE ||
@@ -1023,6 +1028,7 @@ function createWindow() {
   miniPlayer.configure({
     panels,
     getMainWindow: () => mainWindow,
+    emitToRenderer,
   });
   pictureInPicture.configure({
     panels,
@@ -2464,6 +2470,32 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_HISTORY) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runHistorySelftest } = require('./selftest-history');
+          runHistorySelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_CATALOG) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -3083,6 +3115,22 @@ function publicState() {
 async function removeAccountById(id) {
   panels.markAccountRemoving(id);
   try {
+    try {
+      const acc = (getState().accounts || []).find((a) => a && a.id === id);
+      const url = (acc && (acc.lastUrl || acc.startUrl)) || '';
+      if (url && !acc.privateHistory) {
+        const history = require('./history');
+        history.recordClosed({
+          url,
+          title: (acc && acc.name) || '',
+          favicon: '',
+          windowId: id,
+          windowName: (acc && acc.name) || '',
+        });
+      }
+    } catch {
+      /* ignore */
+    }
     await panels.clearAccountSession(id);
     updateState((s) => {
       s.accounts = s.accounts.filter((a) => a.id !== id);
@@ -4468,7 +4516,23 @@ function registerIpc() {
     return miniPlayer.open(accountId);
   });
   ipcMain.handle('panel:mini-player-close', () => miniPlayer.close());
+  ipcMain.handle('panel:mini-player-unlock', () => {
+    if (!miniPlayer.isOpen()) return { ok: false, reason: 'closed' };
+    miniPlayer.applyLock(false);
+    return { ok: true, locked: false };
+  });
+  ipcMain.handle('panel:mini-player-lock-state', () => {
+    const snap = miniPlayer.getSelftestSnapshot();
+    return { open: miniPlayer.isOpen(), locked: !!(snap && snap.locked) };
+  });
   ipcMain.handle('panel:mini-player-selftest', () => miniPlayer.getSelftestSnapshot());
+  ipcMain.handle('panel:mini-player-selftest-hit', () => miniPlayer.selftestHitIsolation());
+  ipcMain.handle('panel:mini-player-selftest-exec', (_e, js) => miniPlayer.contentExec(js));
+  ipcMain.handle('panel:mini-player-toggle-lock', () => {
+    if (!miniPlayer.isOpen()) return { ok: false, reason: 'closed' };
+    miniPlayer.toggleLock();
+    return { ok: true, locked: !!miniPlayer.getSelftestSnapshot().locked };
+  });
 
   ipcMain.handle('memory:metrics', () => memory.getLatestMetrics());
 

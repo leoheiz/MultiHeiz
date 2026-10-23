@@ -21,9 +21,9 @@
     .bar {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       height: 100%;
-      padding: 0 8px;
+      padding: 0 6px;
       box-sizing: border-box;
       -webkit-app-region: drag;
       background: linear-gradient(180deg, #1c2129 0%, #14181f 100%);
@@ -39,19 +39,28 @@
       flex: 0 0 auto;
       font-size: 10px;
       color: #9aa3b2;
-      margin-right: 4px;
+      margin-right: 2px;
     }
     input[type="range"] {
       flex: 1 1 auto;
-      min-width: 60px;
+      min-width: 40px;
       -webkit-app-region: no-drag;
       accent-color: #3d8bfd;
     }
+    input.seek {
+      flex: 1 1 80px;
+      min-width: 48px;
+    }
+    input.vol {
+      flex: 0 0 56px;
+      min-width: 40px;
+    }
     .pct {
-      width: 36px;
+      width: 32px;
       text-align: right;
       font-variant-numeric: tabular-nums;
       opacity: 0.9;
+      font-size: 11px;
     }
     button {
       -webkit-app-region: no-drag;
@@ -59,7 +68,7 @@
       background: transparent;
       color: #e8eaed;
       cursor: pointer;
-      padding: 4px 8px;
+      padding: 4px 6px;
       border-radius: 4px;
       font-size: 14px;
       line-height: 1;
@@ -83,10 +92,13 @@
 </head>
 <body>
   <div class="bar" id="bar">
-    <span class="label">Opacidade</span>
-    <span class="exp">Experimental (em testes)</span>
-    <input id="opacity" type="range" min="20" max="100" value="100" step="1" />
+    <button type="button" id="play" title="Reproduzir / pausar" aria-label="Reproduzir / pausar">▶</button>
+    <input id="seek" class="seek" type="range" min="0" max="1000" value="0" step="1" title="Posição" aria-label="Posição" />
+    <span class="label">Opac.</span>
+    <input id="opacity" type="range" min="20" max="100" value="100" step="1" title="Opacidade" aria-label="Opacidade" />
     <span class="pct" id="pct">100%</span>
+    <input id="vol" class="vol" type="range" min="0" max="100" value="100" step="1" title="Volume" aria-label="Volume" />
+    <button type="button" id="lock" title="Travar com o mouse (Ctrl+Alt+L)" aria-label="Travar">🔒</button>
     <button type="button" id="close" title="Fechar" aria-label="Fechar">×</button>
   </div>
   <div id="hint" aria-live="polite"></div>
@@ -94,9 +106,14 @@
     (function () {
       var range = document.getElementById('opacity');
       var pct = document.getElementById('pct');
+      var seek = document.getElementById('seek');
+      var vol = document.getElementById('vol');
+      var playBtn = document.getElementById('play');
       var hint = document.getElementById('hint');
       var hintTimer = null;
       var locked = false;
+      var seekDragging = false;
+      var pollTimer = null;
 
       function setPctLabel(v) {
         pct.textContent = String(v) + '%';
@@ -118,6 +135,50 @@
       document.getElementById('close').addEventListener('click', function () {
         if (window.mhMini && window.mhMini.close) window.mhMini.close();
       });
+      document.getElementById('lock').addEventListener('click', function () {
+        if (window.mhMini && window.mhMini.toggleLock) window.mhMini.toggleLock();
+      });
+      playBtn.addEventListener('click', function () {
+        if (locked) return;
+        if (window.mhMini && window.mhMini.media) {
+          window.mhMini.media('toggle').then(function (r) {
+            if (r && r.state) updateMediaUi(r.state);
+          }).catch(function () {});
+        }
+      });
+      seek.addEventListener('pointerdown', function () { seekDragging = true; });
+      seek.addEventListener('pointerup', function () { seekDragging = false; });
+      seek.addEventListener('change', function () {
+        if (locked) return;
+        if (!window.mhMini || !window.mhMini.mediaState) return;
+        window.mhMini.mediaState().then(function (st) {
+          if (!st || !st.duration) return;
+          var t = (Number(seek.value) / 1000) * st.duration;
+          return window.mhMini.media('seek', t);
+        }).catch(function () {});
+      });
+      vol.addEventListener('input', function () {
+        if (locked) return;
+        if (window.mhMini && window.mhMini.media) {
+          window.mhMini.media('volume', Number(vol.value) / 100).catch(function () {});
+        }
+      });
+
+      function updateMediaUi(st) {
+        if (!st) return;
+        playBtn.textContent = st.paused ? '▶' : '❚❚';
+        if (!seekDragging && st.duration > 0) {
+          seek.value = String(Math.round((st.currentTime / st.duration) * 1000));
+        }
+        if (typeof st.volume === 'number') {
+          vol.value = String(Math.round((st.muted ? 0 : st.volume) * 100));
+        }
+      }
+
+      function pollMedia() {
+        if (locked || !window.mhMini || !window.mhMini.mediaState) return;
+        window.mhMini.mediaState().then(updateMediaUi).catch(function () {});
+      }
 
       function showHint(text) {
         hint.textContent = text;
@@ -161,6 +222,8 @@
           });
         }
       }
+      pollTimer = setInterval(pollMedia, 500);
+      pollMedia();
     })();
   </script>
 </body>

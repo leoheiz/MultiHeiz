@@ -4,6 +4,7 @@
  * Experimental always-on-top mini player.
  * Frameless BrowserWindow + chrome WebContentsView + content WebContentsView
  * (same session/partition as the source panel). Source panel audio muted while open.
+ * Content view isolates the chosen <video> (PiP-like) via injected CSS/JS.
  */
 
 const path = require('node:path');
@@ -23,10 +24,155 @@ const CHROME_PRELOAD = path.resolve(__dirname, '..', 'preload', 'mini-player-pre
 const CHROME_H = 36;
 const DEFAULT_LOCK_COMBO = 'Ctrl+Alt+L';
 
+/** Injected into content view: hide page chrome, fill viewport with the video. */
+const ISOLATE_VIDEO_JS = `(() => {
+  const STYLE_ID = 'mh-mini-isolate-style';
+  const ATTR = 'data-mh-mini-video';
+  if (window.__mhMiniIsolateInstalled) {
+    try { window.__mhMiniIsolate.apply(); } catch (e) {}
+    return !!window.__mhMiniIsolate.lastOk;
+  }
+  window.__mhMiniIsolateInstalled = true;
+
+  function pickVideo() {
+    const list = Array.from(document.querySelectorAll('video'));
+    if (!list.length) return null;
+    const playing = list.find((v) => !v.paused && v.readyState >= 2);
+    if (playing) return playing;
+    let best = list[0];
+    let bestArea = 0;
+    for (const v of list) {
+      const r = v.getBoundingClientRect();
+      const a = Math.max(0, r.width) * Math.max(0, r.height);
+      if (a > bestArea) { best = v; bestArea = a; }
+    }
+    return best;
+  }
+
+  function ensureStyle() {
+    let style = document.getElementById(STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = STYLE_ID;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    style.textContent = [
+      'html, body { background:#000 !important; margin:0 !important; overflow:hidden !important; height:100% !important; width:100% !important; }',
+      'body * { visibility:hidden !important; pointer-events:none !important; }',
+      'video[' + ATTR + '], video[' + ATTR + '] * { visibility:visible !important; pointer-events:auto !important; }',
+      'video[' + ATTR + '] {',
+      '  position:fixed !important; inset:0 !important; width:100% !important; height:100% !important;',
+      '  max-width:none !important; max-height:none !important; object-fit:contain !important;',
+      '  z-index:2147483647 !important; background:#000 !important; margin:0 !important;',
+      '  transform:none !important; left:0 !important; top:0 !important;',
+      '}',
+    ].join('\\n');
+  }
+
+  function apply() {
+    ensureStyle();
+    const v = pickVideo();
+    document.querySelectorAll('video[' + ATTR + ']').forEach((el) => {
+      if (el !== v) el.removeAttribute(ATTR);
+    });
+    if (!v) {
+      window.__mhMiniIsolate.lastOk = false;
+      return false;
+    }
+    v.setAttribute(ATTR, '1');
+    try { v.setAttribute('playsinline', ''); } catch (e) {}
+    window.__mhMiniIsolate.lastOk = true;
+    window.__mhMiniIsolate.video = v;
+    return true;
+  }
+
+  function hitAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return { tag: null, isVideo: false };
+    const v = el.closest ? el.closest('video') : (el.tagName === 'VIDEO' ? el : null);
+    return {
+      tag: el.tagName || null,
+      isVideo: !!(v && v.getAttribute && v.getAttribute(ATTR) === '1') ||
+        (el.tagName === 'VIDEO' && el.getAttribute(ATTR) === '1'),
+    };
+  }
+
+  function mediaState() {
+    const v = window.__mhMiniIsolate.video || pickVideo();
+    if (!v) return null;
+    return {
+      paused: !!v.paused,
+      currentTime: Number(v.currentTime) || 0,
+      duration: Number(v.duration) || 0,
+      volume: Number(v.volume) || 0,
+      muted: !!v.muted,
+    };
+  }
+
+  function mediaCmd(cmd, value) {
+    const v = window.__mhMiniIsolate.video || pickVideo();
+    if (!v) return { ok: false };
+    if (cmd === 'toggle') {
+      if (v.paused) v.play().catch(function () {});
+      else v.pause();
+    } else if (cmd === 'play') v.play().catch(function () {});
+    else if (cmd === 'pause') v.pause();
+    else if (cmd === 'seek') {
+      const t = Number(value);
+      if (Number.isFinite(t)) v.currentTime = Math.max(0, t);
+    } else if (cmd === 'volume') {
+      const vol = Number(value);
+      if (Number.isFinite(vol)) {
+        v.volume = Math.max(0, Math.min(1, vol));
+        v.muted = v.volume === 0;
+      }
+    }
+    return { ok: true, state: mediaState() };
+  }
+
+  window.__mhMiniIsolate = { apply, pickVideo, hitAt, mediaState, mediaCmd, lastOk: false };
+
+  const _push = history.pushState;
+  history.pushState = function () {
+    const r = _push.apply(this, arguments);
+    setTimeout(apply, 50);
+    setTimeout(apply, 300);
+    return r;
+  };
+  const _replace = history.replaceState;
+  history.replaceState = function () {
+    const r = _replace.apply(this, arguments);
+    setTimeout(apply, 50);
+    setTimeout(apply, 300);
+    return r;
+  };
+  window.addEventListener('popstate', function () {
+    setTimeout(apply, 50);
+    setTimeout(apply, 300);
+  });
+  window.addEventListener('yt-navigate-finish', function () {
+    setTimeout(apply, 50);
+    setTimeout(apply, 300);
+  });
+  try {
+    const mo = new MutationObserver(function () {
+      if (!document.querySelector('video[' + ATTR + ']')) apply();
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+
+  apply();
+  setTimeout(apply, 200);
+  setTimeout(apply, 800);
+  return !!window.__mhMiniIsolate.lastOk;
+})()`;
+
 /** @type {object | null} */
 let panelsApi = null;
 /** @type {(() => import('electron').BrowserWindow | null) | null} */
 let getMainWindow = null;
+/** @type {((payload: object) => void) | null} */
+let emitToRenderer = null;
 
 /** @type {import('electron').BrowserWindow | null} */
 let miniWin = null;
@@ -46,6 +192,8 @@ let opacityPercent = 100;
 let registeredAccel = null;
 /** @type {boolean} */
 let ipcWired = false;
+/** @type {boolean} */
+let isolationApplied = false;
 
 /** Selftest flags */
 /** @type {{ ignoreMouseEvents: boolean, focusable: boolean, locked: boolean }} */
@@ -63,11 +211,13 @@ function selftestOn() {
  * @param {{
  *   panels: object,
  *   getMainWindow: () => import('electron').BrowserWindow | null,
+ *   emitToRenderer?: (payload: object) => void,
  * }} deps
  */
 function configure(deps) {
   panelsApi = deps.panels || null;
   getMainWindow = deps.getMainWindow || null;
+  emitToRenderer = typeof deps.emitToRenderer === 'function' ? deps.emitToRenderer : null;
   ensureIpc();
 }
 
@@ -226,13 +376,41 @@ function layoutChildren() {
   }
 }
 
+function notifyLockState() {
+  const payload = {
+    type: 'mini-player:lock-changed',
+    locked: !!locked,
+    open: isOpen(),
+  };
+  if (emitToRenderer) {
+    try {
+      emitToRenderer(payload);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (getMainWindow) {
+    try {
+      const win = getMainWindow();
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('event', payload);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 /**
  * @param {boolean} next
  */
 function applyLock(next) {
   locked = !!next;
   selftestFlags.locked = locked;
-  if (!miniWin || miniWin.isDestroyed()) return;
+  if (!miniWin || miniWin.isDestroyed()) {
+    notifyLockState();
+    return;
+  }
   try {
     if (locked) {
       miniWin.setIgnoreMouseEvents(true);
@@ -251,6 +429,7 @@ function applyLock(next) {
   layoutChildren();
   sendChrome('mini-player:lock-hint', { locked });
   sendChrome('mini-player:state', { locked, opacityPercent });
+  notifyLockState();
 }
 
 function toggleLock() {
@@ -308,11 +487,52 @@ function restoreSourceAudio() {
   sourceAccountId = null;
 }
 
+async function applyVideoIsolation() {
+  isolationApplied = false;
+  if (!contentView || contentView.webContents.isDestroyed()) return false;
+  try {
+    const ok = await contentView.webContents.executeJavaScript(ISOLATE_VIDEO_JS, true);
+    isolationApplied = !!ok;
+    return isolationApplied;
+  } catch {
+    isolationApplied = false;
+    return false;
+  }
+}
+
+/**
+ * @param {string} js
+ * @returns {Promise<any>}
+ */
+async function contentExec(js) {
+  if (!contentView || contentView.webContents.isDestroyed()) return null;
+  try {
+    return await contentView.webContents.executeJavaScript(js, true);
+  } catch {
+    return null;
+  }
+}
+
+function wireContentIsolation(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  const run = () => {
+    applyVideoIsolation().catch(() => {});
+  };
+  try {
+    wc.on('did-finish-load', run);
+    wc.on('did-navigate-in-page', run);
+    wc.on('dom-ready', run);
+  } catch {
+    /* ignore */
+  }
+}
+
 function destroyMini() {
   unregisterLockShortcut();
   persistGeometry();
   restoreSourceAudio();
   locked = false;
+  isolationApplied = false;
   selftestFlags = { ignoreMouseEvents: false, focusable: true, locked: false };
   const win = miniWin;
   if (chromeView && chromeView.webContents) {
@@ -325,6 +545,7 @@ function destroyMini() {
   chromeView = null;
   contentView = null;
   miniWin = null;
+  notifyLockState();
   if (win && !win.isDestroyed()) {
     try {
       win.destroy();
@@ -359,7 +580,39 @@ function getSelftestSnapshot() {
     shortcutRegistered: !!(registeredAccel && globalShortcut.isRegistered(registeredAccel)),
     registeredAccel,
     sourceAccountId,
+    isolationApplied,
   };
+}
+
+/**
+ * Hit-test isolation at several points (for selftest).
+ * @returns {Promise<{ ok: boolean, points?: object[] }>}
+ */
+async function selftestHitIsolation() {
+  if (!contentView || contentView.webContents.isDestroyed()) {
+    return { ok: false, reason: 'no-content' };
+  }
+  const result = await contentExec(`(() => {
+    const iso = window.__mhMiniIsolate;
+    if (!iso) return { ok: false, reason: 'no-iso' };
+    iso.apply();
+    const w = window.innerWidth || 0;
+    const h = window.innerHeight || 0;
+    const pts = [
+      [w / 2, h / 2],
+      [10, 10],
+      [w - 10, 10],
+      [10, h - 10],
+      [w - 10, h - 10],
+    ];
+    const points = pts.map(([x, y]) => {
+      const hit = iso.hitAt(x, y);
+      return { x, y, tag: hit.tag, isVideo: hit.isVideo };
+    });
+    const ok = points.every((p) => p.isVideo);
+    return { ok, points, isolationOk: !!iso.lastOk };
+  })()`);
+  return result || { ok: false, reason: 'exec-failed' };
 }
 
 /**
@@ -394,6 +647,7 @@ async function open(accountId) {
   const persisted = readPersisted();
   opacityPercent = persisted.opacityPercent;
   locked = false;
+  isolationApplied = false;
   selftestFlags = { ignoreMouseEvents: false, focusable: true, locked: false };
 
   const hide = selftestOn();
@@ -516,7 +770,9 @@ async function open(accountId) {
     unregisterLockShortcut();
     restoreSourceAudio();
     locked = false;
+    isolationApplied = false;
     selftestFlags = { ignoreMouseEvents: false, focusable: true, locked: false };
+    notifyLockState();
   });
 
   try {
@@ -525,6 +781,8 @@ async function open(accountId) {
   } catch {
     /* ignore */
   }
+
+  wireContentIsolation(contentView.webContents);
 
   async function loadWithTimeout(wc, target, ms) {
     if (!wc || wc.isDestroyed()) return;
@@ -555,6 +813,7 @@ async function open(accountId) {
 
   await loadWithTimeout(chromeView.webContents, pathToFileURL(CHROME_HTML).href, 8000);
   await loadWithTimeout(contentView.webContents, url, 12000);
+  await applyVideoIsolation();
 
   // Mute source so audio comes from the mini player only.
   try {
@@ -580,6 +839,7 @@ async function open(accountId) {
   }
 
   sendChrome('mini-player:state', { opacityPercent, locked: false });
+  notifyLockState();
   return { ok: true };
 }
 
@@ -587,10 +847,18 @@ function close() {
   if (!isOpen()) {
     unregisterLockShortcut();
     restoreSourceAudio();
+    notifyLockState();
     return { ok: true };
   }
   destroyMini();
   return { ok: true };
+}
+
+async function mediaCommand(cmd, value) {
+  const r = await contentExec(
+    `window.__mhMiniIsolate && window.__mhMiniIsolate.mediaCmd(${JSON.stringify(cmd)}, ${JSON.stringify(value)})`
+  );
+  return r || { ok: false };
 }
 
 function ensureIpc() {
@@ -610,6 +878,23 @@ function ensureIpc() {
     if (!chromeView || event.sender !== chromeView.webContents) return null;
     return { opacityPercent, locked, open: isOpen() };
   });
+  ipcMain.handle('mini-player:toggle-lock', (event) => {
+    if (!chromeView || event.sender !== chromeView.webContents) return { ok: false };
+    toggleLock();
+    return { ok: true, locked };
+  });
+  ipcMain.handle('mini-player:media', async (event, payload) => {
+    if (!chromeView || event.sender !== chromeView.webContents) return { ok: false };
+    const cmd = payload && payload.cmd;
+    const value = payload && payload.value;
+    return mediaCommand(String(cmd || ''), value);
+  });
+  ipcMain.handle('mini-player:media-state', async (event) => {
+    if (!chromeView || event.sender !== chromeView.webContents) return null;
+    return contentExec(
+      `window.__mhMiniIsolate && window.__mhMiniIsolate.mediaState && window.__mhMiniIsolate.mediaState()`
+    );
+  });
 }
 
 module.exports = {
@@ -624,4 +909,8 @@ module.exports = {
   resolveLockCombo,
   DEFAULT_LOCK_COMBO,
   ensureIpc,
+  applyVideoIsolation,
+  selftestHitIsolation,
+  contentExec,
+  mediaCommand,
 };
