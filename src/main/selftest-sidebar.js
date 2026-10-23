@@ -1364,6 +1364,166 @@ async function runSidebarSelftest(ctx) {
   }
   console.log('PASS: F11 from legacy + restore compact');
 
+  /* ---------- Minimize / restore / close (item 7) ---------- */
+  updateState((s) => {
+    s.settings = { ...(s.settings || {}), sidebarAlwaysActive: false, confirmOnRemove: false };
+    s.ui = {
+      ...(s.ui || {}),
+      sidebarCollapsed: false,
+      sidebarAutoHide: false,
+      sidebarWidth: 240,
+    };
+    s.layout = '2';
+    if (!s.layoutByWorkspace) s.layoutByWorkspace = {};
+    s.layoutByWorkspace[s.activeWorkspaceId] = '2';
+    s.maximizedAccountId = null;
+    s.accounts = [
+      {
+        id: 'acc-sb',
+        name: 'Painel SB',
+        color: '#2bb8a6',
+        startUrl: base + '/',
+        workspaceId: 'ws-sb',
+        muted: false,
+        lastUrl: null,
+        zoomFactor: 1,
+        minimized: false,
+      },
+      {
+        id: 'acc-sb-b',
+        name: 'Painel SB B',
+        color: '#3d8bfd',
+        startUrl: base + '/',
+        workspaceId: 'ws-sb',
+        muted: false,
+        lastUrl: null,
+        zoomFactor: 1,
+        minimized: false,
+      },
+    ];
+  });
+  flushSave();
+  emitToRenderer({ type: 'state:changed', state: publicState() });
+  await sleep(500);
+  await waitForLayoutSettle();
+  await waitForPanels(
+    (i) =>
+      i.panels.some((p) => p.accountId === 'acc-sb' && p.visible && !p.parked) &&
+      i.panels.some((p) => p.accountId === 'acc-sb-b' && p.visible && !p.parked)
+  );
+
+  const wcBefore = panels.getPanelCapture('acc-sb');
+  if (!wcBefore || (typeof wcBefore.isDestroyed === 'function' && wcBefore.isDestroyed())) {
+    console.log('FAIL: acc-sb webContents missing before minimize');
+    app.exit(1);
+    return;
+  }
+  const wcIdBefore = wcBefore.id;
+  const tilesBefore = await rendererEval('window.__multiheizUi.getLayoutTileCount()');
+  if (tilesBefore !== 2) {
+    console.log('FAIL: expected 2 tiles before minimize, got', tilesBefore);
+    app.exit(1);
+    return;
+  }
+
+  const minRes = await rendererEval('window.__multiheizUi.setAccountMinimized("acc-sb", true)');
+  await sleep(400);
+  await waitForLayoutSettle();
+  const tilesAfterMin = await rendererEval('window.__multiheizUi.getLayoutTileCount()');
+  if (tilesAfterMin !== 1) {
+    console.log('FAIL: tile count should drop to 1 after minimize', tilesAfterMin, minRes);
+    app.exit(1);
+    return;
+  }
+  const wcAfterMin = panels.getPanelCapture('acc-sb');
+  if (!wcAfterMin || (typeof wcAfterMin.isDestroyed === 'function' && wcAfterMin.isDestroyed())) {
+    console.log('FAIL: minimize destroyed webContents');
+    app.exit(1);
+    return;
+  }
+  if (wcAfterMin.id !== wcIdBefore) {
+    console.log('FAIL: webContents id changed on minimize', wcIdBefore, wcAfterMin.id);
+    app.exit(1);
+    return;
+  }
+  const infoMin = panels.getPanelDebugInfo();
+  const pMin = (infoMin.panels || []).find((p) => p.accountId === 'acc-sb');
+  if (!pMin || !pMin.parked) {
+    console.log('FAIL: minimized panel should be parked', pMin);
+    app.exit(1);
+    return;
+  }
+  const flags = await rendererEval('window.__multiheizUi.getSidebarMinimizedFlags()');
+  if (!Array.isArray(flags) || !flags.some((f) => f.accountId === 'acc-sb' && f.minimized)) {
+    console.log('FAIL: sidebar is-minimized look missing', flags);
+    app.exit(1);
+    return;
+  }
+  if (!publicState().accounts.find((a) => a.id === 'acc-sb' && a.minimized)) {
+    console.log('FAIL: minimized not persisted in state');
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: minimize keeps webContents id, parks, tile count drops');
+
+  await rendererEval('window.__multiheizUi.setAccountMinimized("acc-sb", false)');
+  await sleep(400);
+  await waitForLayoutSettle();
+  await waitForPanels((i) => i.panels.some((p) => p.accountId === 'acc-sb' && p.visible && !p.parked));
+  const tilesRestored = await rendererEval('window.__multiheizUi.getLayoutTileCount()');
+  if (tilesRestored !== 2) {
+    console.log('FAIL: restore should bring tile back', tilesRestored);
+    app.exit(1);
+    return;
+  }
+  const wcRestored = panels.getPanelCapture('acc-sb');
+  if (!wcRestored || wcRestored.id !== wcIdBefore) {
+    console.log('FAIL: restore should keep same webContents id', wcIdBefore, wcRestored && wcRestored.id);
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: restore brings panel back with same webContents');
+
+  // Persist minimized across flush (phase2-style state check without full restart for this flag)
+  await rendererEval('window.__multiheizUi.setAccountMinimized("acc-sb-b", true)');
+  await sleep(200);
+  flushSave();
+  const diskPath = path.join(app.getPath('userData'), 'multiheiz-state.json');
+  let diskOk = false;
+  try {
+    const raw = fs.readFileSync(diskPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    diskOk = !!(parsed.accounts || []).find((a) => a.id === 'acc-sb-b' && a.minimized);
+  } catch (err) {
+    console.log('FAIL: read multiheiz-state.json for minimized persist', err && err.message);
+    app.exit(1);
+    return;
+  }
+  if (!diskOk) {
+    console.log('FAIL: minimized not written to multiheiz-state.json');
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: minimized persists to disk');
+
+  await rendererEval('window.__multiheizUi.setAccountMinimized("acc-sb-b", false)');
+  await sleep(200);
+  const beforeClose = publicState().accounts.length;
+  await rendererEval('window.__multiheizUi.clickSidebarClose("acc-sb-b")');
+  await sleep(500);
+  const afterClose = publicState().accounts.length;
+  if (afterClose !== beforeClose - 1 || publicState().accounts.some((a) => a.id === 'acc-sb-b')) {
+    console.log('FAIL: close should remove account', { beforeClose, afterClose });
+    app.exit(1);
+    return;
+  }
+  if (panels.getPanelCapture('acc-sb-b')) {
+    console.log('FAIL: close left webContents alive');
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: close removes account and webContents');
+
   // Leave legacy ON + compact for phase 2 restart persistence.
   updateState((s) => {
     s.accounts = [];

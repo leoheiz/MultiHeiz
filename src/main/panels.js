@@ -2208,7 +2208,9 @@ function syncVisiblePanels(slots) {
       if (!entry) continue;
       // Overlay hide is not suspension — only park/schedule when truly off-page
       if (areOverlaysActive()) continue;
-      if (keepRunningInBackground(id)) {
+      const acc = getAccount(id);
+      // Minimized: keep webContents alive offscreen (session preserved)
+      if ((acc && acc.minimized) || keepRunningInBackground(id)) {
         clearSuspendTimer(id);
         parkPanelOffscreen(entry);
       } else {

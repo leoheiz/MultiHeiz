@@ -312,6 +312,8 @@ const ICO = {
   unmute: 'M11 5L6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 010 7M18 6a9 9 0 010 12',
   max: 'M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3',
   restore: 'M8 8h10v10H8zM6 6h10v2H8v8H6V6z',
+  minimize: 'M5 12h14',
+  close: 'M6 6l12 12M18 6L6 18',
   more: 'M12 12h.01M12 6h.01M12 18h.01',
   star: 'M12 3l2.5 6.5L21 10l-5 4.2L17.5 21 12 17.3 6.5 21 8 14.2 3 10l6.5-.5L12 3z',
   starFilled: 'M12 3l2.5 6.5L21 10l-5 4.2L17.5 21 12 17.3 6.5 21 8 14.2 3 10l6.5-.5L12 3z',
@@ -410,8 +412,13 @@ function accountsInWorkspace() {
   return state.accounts.filter((a) => a.workspaceId === state.activeWorkspaceId);
 }
 
+/** Accounts that participate in the split/tiles layout (excludes minimized). */
+function layoutAccountsInWorkspace() {
+  return accountsInWorkspace().filter((a) => !a.minimized);
+}
+
 function visiblePageAccounts() {
-  const all = accountsInWorkspace();
+  const all = layoutAccountsInWorkspace();
   if (state.maximizedAccountId) {
     const one = all.find((a) => a.id === state.maximizedAccountId);
     return one ? [one] : all.slice(0, 1);
@@ -424,10 +431,25 @@ function visiblePageAccounts() {
 }
 
 function pageCount() {
-  const all = accountsInWorkspace();
+  const all = layoutAccountsInWorkspace();
   if (state.maximizedAccountId || state.layout === 'livre') return 1;
   const slots = slotsForLayout(state.layout, all.length || 1);
   return Math.max(1, Math.ceil(all.length / slots) || 1);
+}
+
+/**
+ * @param {string} accountId
+ * @param {boolean} minimized
+ */
+async function setAccountMinimized(accountId, minimized) {
+  const st = await window.multiheiz.updateAccount({
+    id: accountId,
+    minimized: !!minimized,
+  });
+  if (st) applyState(st);
+  renderGrid();
+  renderSidebar();
+  scheduleSync();
 }
 
 function workspaceTiles() {
@@ -520,6 +542,16 @@ function canIncrementalApply(prev, next) {
   const idsPrev = (prev.accounts || []).map((a) => a.id).join('\0');
   const idsNext = (next.accounts || []).map((a) => a.id).join('\0');
   if (idsPrev !== idsNext) return false;
+  // Minimize/restore changes which tiles are on the grid — needs full render.
+  const minPrev = (prev.accounts || [])
+    .filter((a) => a.minimized)
+    .map((a) => a.id)
+    .join('\0');
+  const minNext = (next.accounts || [])
+    .filter((a) => a.minimized)
+    .map((a) => a.id)
+    .join('\0');
+  if (minPrev !== minNext) return false;
   return true;
 }
 
@@ -1660,6 +1692,7 @@ function renderPager() {
 
 function windowStatus(acc) {
   if (forceSuspended.has(acc.id)) return 'suspensa';
+  if (acc.minimized) return 'minimizada';
   if (acc.muted) return 'mudo';
   const onPage = visiblePageAccounts().some((a) => a.id === acc.id);
   if (onPage && state.activeWorkspaceId === acc.workspaceId) return 'ativa';
@@ -1696,7 +1729,10 @@ function buildSidebarItem(acc) {
   const item = document.createElement('button');
   item.type = 'button';
   item.dataset.accountId = acc.id;
-  item.className = 'sidebar-item' + (focusedAccountId === acc.id ? ' active' : '');
+  item.className =
+    'sidebar-item' +
+    (focusedAccountId === acc.id ? ' active' : '') +
+    (acc.minimized ? ' is-minimized' : '');
 
   const stripe = document.createElement('div');
   stripe.className = 'sidebar-color';
@@ -1742,7 +1778,15 @@ function buildSidebarItem(acc) {
   const m = panelMetrics(acc.id);
   const st = windowStatus(acc);
   const stLabel =
-    st === 'ativa' ? 'ativa' : st === 'segundo' ? 'em segundo plano' : st === 'suspensa' ? 'suspensa' : 'mudo';
+    st === 'ativa'
+      ? 'ativa'
+      : st === 'segundo'
+        ? 'em segundo plano'
+        : st === 'suspensa'
+          ? 'suspensa'
+          : st === 'minimizada'
+            ? 'minimizada'
+            : 'mudo';
   const blocked = adblockPageCounts.get(acc.id) || 0;
   const blockBit = blocked > 0 ? ` · blk ${blocked}` : '';
   meta.textContent = m
@@ -1784,8 +1828,41 @@ function buildSidebarItem(acc) {
     bindVolumeHover(audioBtn, acc.id);
   }
 
+  const actions = document.createElement('span');
+  actions.className = 'sidebar-item-actions';
+  const btnMin = document.createElement('button');
+  btnMin.type = 'button';
+  btnMin.className = 'sidebar-item-action';
+  btnMin.dataset.role = 'sidebar-minimize';
+  btnMin.title = acc.minimized ? 'Restaurar' : 'Minimizar';
+  btnMin.setAttribute('aria-label', btnMin.title);
+  btnMin.innerHTML = svg(acc.minimized ? ICO.restore : ICO.minimize);
+  btnMin.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await setAccountMinimized(acc.id, !acc.minimized);
+  });
+  const btnClose = document.createElement('button');
+  btnClose.type = 'button';
+  btnClose.className = 'sidebar-item-action is-close';
+  btnClose.dataset.role = 'sidebar-close';
+  btnClose.title = 'Fechar';
+  btnClose.setAttribute('aria-label', 'Fechar');
+  btnClose.innerHTML = svg(ICO.close);
+  btnClose.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const doRemove = async () => {
+      applyState(await window.multiheiz.removeAccount(acc.id));
+    };
+    if (state.settings && state.settings.confirmOnRemove === false) {
+      void doRemove();
+    } else {
+      confirmAction(`Remover a janela “${acc.name}”?`, doRemove);
+    }
+  });
+  actions.append(btnMin, btnClose);
+
   const dot = document.createElement('span');
-  dot.className = `status-dot ${st}`;
+  dot.className = `status-dot ${st === 'minimizada' ? 'segundo' : st}`;
   dot.title = stLabel;
   dot.setAttribute('aria-hidden', 'true');
 
@@ -1798,20 +1875,27 @@ function buildSidebarItem(acc) {
   const parts = [stripe, favWrap, body];
   if (proxyBadge) parts.push(proxyBadge);
   if (audioBtn) parts.push(audioBtn);
+  parts.push(actions);
   parts.push(dot);
   item.append(...parts);
   item.addEventListener('click', async () => {
+    if (acc.minimized) {
+      await setAccountMinimized(acc.id, false);
+    }
     focusedAccountId = acc.id;
     await window.multiheiz.panelFocus(acc.id);
     if (state.layout !== 'livre' && !visiblePageAccounts().some((a) => a.id === acc.id)) {
-      const all = accountsInWorkspace();
+      const all = layoutAccountsInWorkspace();
       const slots = slotsForLayout(state.layout, all.length || 1);
       const idx = all.findIndex((a) => a.id === acc.id);
       if (idx >= 0) applyState(await window.multiheiz.setPage(Math.floor(idx / slots)));
     }
     renderSidebar();
   });
-  item.addEventListener('dblclick', () => toggleMaximize(acc.id));
+  item.addEventListener('dblclick', () => {
+    if (acc.minimized) return;
+    toggleMaximize(acc.id);
+  });
   item.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     showAccountMenu(e.clientX, e.clientY, acc);
@@ -5240,6 +5324,42 @@ window.__multiheizUi = {
     await pickCatalogFavorite(it);
     return { ok: true, id: bookmarkId };
   },
+  setAccountMinimized: async (accountId, minimized) => {
+    await setAccountMinimized(accountId, !!minimized);
+    return {
+      ok: true,
+      minimized: !!(state.accounts || []).find((a) => a.id === accountId && a.minimized),
+      tileCount: document.querySelectorAll('.panel-slot').length,
+    };
+  },
+  getSidebarMinimizedFlags: () =>
+    [...document.querySelectorAll('.sidebar-item')].map((n) => ({
+      accountId: n.dataset.accountId || '',
+      minimized: n.classList.contains('is-minimized'),
+    })),
+  getLayoutTileCount: () => document.querySelectorAll('.panel-slot').length,
+  clickSidebarClose: async (accountId) => {
+    const btn = document.querySelector(
+      `.sidebar-item[data-account-id="${CSS.escape(accountId)}"] [data-role="sidebar-close"]`
+    );
+    if (!btn) return { ok: false, reason: 'missing' };
+    btn.click();
+    return { ok: true };
+  },
+  confirmDialogOk: () => {
+    const ok = document.getElementById('confirm-ok');
+    if (ok) {
+      ok.click();
+      return true;
+    }
+    const form = document.getElementById('form-confirm');
+    if (form) {
+      form.requestSubmit();
+      return true;
+    }
+    return false;
+  },
+  isConfirmOpen: () => !!(document.getElementById('dlg-confirm') && document.getElementById('dlg-confirm').open),
   pickCatalogById: async (id) => {
     if (id === 'custom') {
       openCustomSiteFromCatalog();

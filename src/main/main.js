@@ -3639,6 +3639,7 @@ function registerIpc() {
       volume: 100,
       pauseInBackground,
       keepAliveInBackground,
+      minimized: false,
       privateHistory: !!(data && data.privateHistory),
       adblockEnabled: data && data.adblockEnabled === false ? false : true,
       showUnread: data && data.showUnread === false ? false : true,
@@ -3721,6 +3722,14 @@ function registerIpc() {
       if (typeof fields.showUnread === 'boolean') {
         a.showUnread = fields.showUnread;
       }
+      if (typeof fields.minimized === 'boolean') {
+        a.minimized = fields.minimized;
+        if (a.minimized && s.maximizedAccountId === id) {
+          s.maximizedAccountId = null;
+          if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
+          s.maximizedByWorkspace[s.activeWorkspaceId] = null;
+        }
+      }
     });
     panels.applyThrottling();
     if (typeof fields.adblockEnabled === 'boolean') {
@@ -3729,6 +3738,22 @@ function registerIpc() {
     if (typeof fields.showUnread === 'boolean') {
       try {
         unread.refreshAfterAccountChange();
+      } catch {
+        /* ignore */
+      }
+    }
+    if (typeof fields.minimized === 'boolean') {
+      try {
+        const info = panels.getPanelDebugInfo();
+        if (info.lastSlots && info.lastSlots.length) {
+          // Re-sync so minimized panels park off-layout without destroy
+          panels.syncVisiblePanels(
+            (info.lastSlots || []).filter((slot) => {
+              const acc = getState().accounts.find((x) => x.id === slot.accountId);
+              return !(acc && acc.minimized);
+            })
+          );
+        }
       } catch {
         /* ignore */
       }
@@ -5481,12 +5506,34 @@ function popupAccountMenu(opts) {
       label: maximized ? 'Restaurar' : 'Maximizar',
       click: () => {
         updateState((s) => {
+          const a = s.accounts.find((x) => x.id === accountId);
+          if (a && a.minimized) a.minimized = false;
           s.maximizedAccountId = maximized ? null : accountId;
           if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
           s.maximizedByWorkspace[s.activeWorkspaceId] = s.maximizedAccountId;
         });
         emitToRenderer({ type: 'state:changed', state: publicState() });
       },
+    },
+    {
+      label: acc.minimized ? 'Restaurar da barra' : 'Minimizar',
+      click: () => {
+        updateState((s) => {
+          const a = s.accounts.find((x) => x.id === accountId);
+          if (!a) return;
+          a.minimized = !a.minimized;
+          if (a.minimized && s.maximizedAccountId === accountId) {
+            s.maximizedAccountId = null;
+            if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
+            s.maximizedByWorkspace[s.activeWorkspaceId] = null;
+          }
+        });
+        emitToRenderer({ type: 'state:changed', state: publicState() });
+      },
+    },
+    {
+      label: 'Fechar',
+      click: () => emitToRenderer({ type: 'ui:confirm-remove-account', accountId }),
     },
     {
       label: 'Início',

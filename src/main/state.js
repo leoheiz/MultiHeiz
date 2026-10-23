@@ -311,6 +311,7 @@ function migrate(parsed) {
             ...a,
             pauseInBackground,
             keepAliveInBackground,
+            minimized: !!(a && a.minimized),
             privateHistory: !!(a && a.privateHistory),
             adblockEnabled: a && a.adblockEnabled === false ? false : true,
             showUnread: a && a.showUnread === false ? false : true,
