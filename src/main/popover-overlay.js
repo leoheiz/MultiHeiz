@@ -366,8 +366,8 @@ function applyMeasuredSize(size) {
   if (!current || !overlayView) return current && current.bounds;
   const w = Math.max(40, Math.ceil(Number(size.width) || 0));
   let h = Math.max(24, Math.ceil(Number(size.height) || 0));
-  // Memory monitor: floor so the first (pre-list) measure cannot stick collapsed;
-  // also cap so a long list stays within the window (box scrolls at 520px).
+  // Memory monitor / favorites: floor so the first (pre-list) measure cannot
+  // stick collapsed; also cap so a long list stays within the window.
   if (current.kind === 'mem') {
     const rows =
       (current.payload &&
@@ -377,6 +377,15 @@ function applyMeasuredSize(size) {
       0;
     h = Math.max(h, Math.max(120, 64 + rows * 48));
     h = Math.min(h, 520);
+  }
+  if (current.kind === 'favorites') {
+    const data =
+      (current.payload && current.payload.data) || {};
+    const folders = (data.folders && data.folders.length) || 0;
+    const items = (data.items && data.items.length) || 0;
+    const minH = Math.max(160, 96 + folders * 28 + items * 36);
+    h = Math.max(h, Math.min(minH, 420));
+    h = Math.min(h, 420);
   }
   const anchor = (current.payload && current.payload.anchor) || { x: current.bounds.x, y: current.bounds.y };
   const prefer = (current.payload && current.payload.prefer) || 'below';
@@ -413,6 +422,14 @@ function estimateSize(kind, data) {
   if (kind === 'mem') {
     const n = (data && data.rows && data.rows.length) || 0;
     return { width: 300, height: Math.max(160, 72 + n * 56) };
+  }
+  if (kind === 'favorites') {
+    const folders = (data && data.folders && data.folders.length) || 0;
+    const items = (data && data.items && data.items.length) || 0;
+    return {
+      width: 300,
+      height: Math.min(420, Math.max(180, 96 + folders * 28 + items * 36)),
+    };
   }
   if (kind === 'ai-write') return { width: 320, height: 280 };
   return { width: 220, height: 120 };

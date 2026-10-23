@@ -102,7 +102,10 @@
 
   .favorites-popover {
     width: 300px;
-    max-height: 70vh;
+    /* Fixed px cap (not 70vh): vh of a short WebContentsView collapsed the
+       first measure to title+search+actions with an empty-looking tree. */
+    max-height: 420px;
+    min-height: 160px;
     padding: 10px;
     display: flex;
     flex-direction: column;

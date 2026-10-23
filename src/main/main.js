@@ -282,6 +282,7 @@ const SELFTEST_PERMISSIONS = selftestMode === 'permissions';
 const SELFTEST_CERTIFICATES = selftestMode === 'certificates';
 const SELFTEST_FAVORITES = selftestMode === 'favorites';
 const SELFTEST_FAVORITES_E2E = selftestMode === 'favorites-e2e';
+const SELFTEST_FAVORITES_POPOVER = selftestMode === 'favorites-popover';
 const SELFTEST_CATALOG = selftestMode === 'catalog';
 const SELFTEST_CUSTOM_SITE = selftestMode === 'custom-site';
 const SELFTEST_EDIT_START_URL = selftestMode === 'edit-start-url';
@@ -355,6 +356,7 @@ const ANY_SELFTEST =
   SELFTEST_CERTIFICATES ||
   SELFTEST_FAVORITES ||
   SELFTEST_FAVORITES_E2E ||
+  SELFTEST_FAVORITES_POPOVER ||
   SELFTEST_CATALOG ||
   SELFTEST_CUSTOM_SITE ||
 
@@ -752,6 +754,7 @@ function createWindow() {
     SELFTEST_CERTIFICATES ||
     SELFTEST_FAVORITES ||
     SELFTEST_FAVORITES_E2E ||
+    SELFTEST_FAVORITES_POPOVER ||
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
     SELFTEST_EDIT_START_URL ||
@@ -791,6 +794,7 @@ function createWindow() {
     SELFTEST_MINIMIZE_RESTORE ||
     SELFTEST_SHORTCUT_CUSTOM ||
     SELFTEST_FAVORITES_E2E ||
+    SELFTEST_FAVORITES_POPOVER ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
@@ -876,6 +880,7 @@ function createWindow() {
         SELFTEST_SHORTCUT_CUSTOM ||
         SELFTEST_MINIMIZE_RESTORE ||
         SELFTEST_FAVORITES_E2E ||
+        SELFTEST_FAVORITES_POPOVER ||
         SELFTEST_DIAG_CERTISIGN ||
         SELFTEST_SETTINGS_PERF ||
         SELFTEST_WORKSPACE_DELETE ||
@@ -2332,6 +2337,32 @@ function createWindow() {
         try {
           const { runFavoritesE2eSelftest } = require('./selftest-favorites-e2e');
           runFavoritesE2eSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_FAVORITES_POPOVER) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runFavoritesPopoverSelftest } = require('./selftest-favorites-popover');
+          runFavoritesPopoverSelftest({
             mainWindow,
             panels,
             getState,

@@ -93,11 +93,8 @@ async function runFavoritesSelftest(ctx) {
 
   const searchOk = await rendererEval(
     `(async function(){
-      await window.multiheiz.popoverUpdate({ data: { query: 'Alpha' } });
-      // trigger via action path
-      if (window.__multiheizUi && window.__multiheizUi.openFavoritesPopover) {
-        /* keep */
-      }
+      // Flat payload (same as volume/mem) — wrapped { data } is ignored by overlay.
+      await window.multiheiz.popoverUpdate({ query: 'Alpha' });
       return true;
     })()`
   );

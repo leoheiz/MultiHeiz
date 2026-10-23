@@ -4256,12 +4256,45 @@ async function buildFavoritesPopoverData() {
   };
 }
 
+/**
+ * On open, expand every folder that has items so Barra + Outros both show
+ * (user can still collapse via the arrow; refresh won't force re-open).
+ */
+function ensureFavoritesFoldersWithItemsExpanded(data) {
+  const withItems = new Set(
+    (data.items || [])
+      .map((it) => (it && it.folderId ? String(it.folderId) : ''))
+      .filter(Boolean)
+  );
+  const set = new Set(favoritesExpandedFolders);
+  let changed = false;
+  for (const id of withItems) {
+    if (!set.has(id)) {
+      set.add(id);
+      changed = true;
+    }
+  }
+  if (changed) favoritesExpandedFolders = [...set];
+  return changed;
+}
+
 async function openFavoritesPopover() {
   const btn = document.getElementById('btn-favorites');
   const r = btn
     ? btn.getBoundingClientRect()
     : { left: 120, top: 8, width: 32, height: 28 };
-  const data = await buildFavoritesPopoverData();
+  favoritesPopoverQuery = '';
+  let data = await buildFavoritesPopoverData();
+  if (ensureFavoritesFoldersWithItemsExpanded(data)) {
+    data = { ...data, expandedFolders: favoritesExpandedFolders };
+    if (window.multiheiz.bookmarksSetExpanded) {
+      try {
+        await window.multiheiz.bookmarksSetExpanded(favoritesExpandedFolders);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   showLightPopover({
     id: 'favorites-popover',
     kind: 'favorites',
@@ -4280,7 +4313,8 @@ async function refreshFavoritesPopover() {
   if (activePopoverId !== 'favorites-popover') return;
   const data = await buildFavoritesPopoverData();
   if (window.multiheiz.popoverUpdate) {
-    await window.multiheiz.popoverUpdate({ data });
+    // Flat payload (same as volume/mem) — wrapped { data } never updated expand/search.
+    await window.multiheiz.popoverUpdate(data);
   }
 }
 

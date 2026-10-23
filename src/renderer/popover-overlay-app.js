@@ -41,6 +41,15 @@
       const minH = Math.max(120, 64 + rows * 48);
       h = Math.max(h, minH);
     }
+    // Favorites: never open as chrome-only (title/search/actions, empty tree).
+    if (current && current.kind === 'favorites') {
+      const folders =
+        (current.data && current.data.folders && current.data.folders.length) || 0;
+      const items =
+        (current.data && current.data.items && current.data.items.length) || 0;
+      const minH = Math.max(160, 96 + folders * 28 + items * 36);
+      h = Math.max(h, Math.min(minH, 420));
+    }
     if (window.mhPopover && window.mhPopover.measure) {
       window.mhPopover.measure({ width: w, height: h });
     }
