@@ -169,10 +169,17 @@ contextBridge.exposeInMainWorld('multiheiz', {
   bookmarksAdd: (data) => ipcRenderer.invoke('bookmarks:add', data),
   bookmarksUpdate: (data) => ipcRenderer.invoke('bookmarks:update', data),
   bookmarksRemove: (id) => ipcRenderer.invoke('bookmarks:remove', id),
-  bookmarksFolderCreate: (name) => ipcRenderer.invoke('bookmarks:folder-create', name),
+  bookmarksFolderCreate: (name, parentId) =>
+    ipcRenderer.invoke(
+      'bookmarks:folder-create',
+      parentId != null ? { name, parentId } : name
+    ),
   bookmarksFolderRename: (id, name) =>
     ipcRenderer.invoke('bookmarks:folder-rename', { id, name }),
   bookmarksFolderDelete: (id) => ipcRenderer.invoke('bookmarks:folder-delete', id),
+  bookmarksMove: (id, folderId) =>
+    ipcRenderer.invoke('bookmarks:move', { id, folderId }),
+  bookmarksSetExpanded: (ids) => ipcRenderer.invoke('bookmarks:set-expanded', ids),
   bookmarksExport: () => ipcRenderer.invoke('bookmarks:export'),
   bookmarksImport: (raw) => ipcRenderer.invoke('bookmarks:import', raw),
   bookmarksOpen: (opts) => ipcRenderer.invoke('bookmarks:open', opts),

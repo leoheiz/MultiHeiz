@@ -33,7 +33,8 @@
   .panel-ext-menu,
   .layout-menu,
   .mem-popover-box,
-  .ai-write-popover {
+  .ai-write-popover,
+  .favorites-popover {
     box-sizing: border-box;
     border-radius: 8px;
     border: 1px solid var(--border, #3a4654);
@@ -97,6 +98,105 @@
     flex-wrap: wrap;
     gap: 6px;
     justify-content: flex-end;
+  }
+
+  .favorites-popover {
+    width: 300px;
+    max-height: 70vh;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .favorites-popover-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .favorites-popover-pin {
+    background: transparent;
+    border: 1px solid var(--border, #3a4654);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    color: inherit;
+  }
+  .favorites-popover-pin.is-pinned { border-color: var(--accent, #3d6df0); }
+  .favorites-popover-search {
+    width: 100%;
+    box-sizing: border-box;
+    background: color-mix(in srgb, var(--bg, #121820) 80%, #000);
+    border: 1px solid var(--border, #3a4654);
+    color: inherit;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font: inherit;
+  }
+  .favorites-popover-tree {
+    overflow: auto;
+    max-height: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .favorites-folder-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.85;
+  }
+  .favorites-folder-arrow {
+    width: 20px;
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  .favorites-item-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 6px 8px 6px 22px;
+    border-radius: 6px;
+  }
+  .favorites-item-row:hover {
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+  }
+  .favorites-item-favicon {
+    width: 16px;
+    height: 16px;
+    border-radius: 2px;
+  }
+  .favorites-popover-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-top: 1px solid var(--border, #3a4654);
+    padding-top: 8px;
+  }
+  .favorites-popover-action {
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 6px 4px;
+    border-radius: 4px;
+  }
+  .favorites-popover-action:hover {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
   }
 
   .volume-popover {

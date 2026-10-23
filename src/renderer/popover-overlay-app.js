@@ -453,6 +453,152 @@
     return menu;
   }
 
+  function faviconFor(url) {
+    try {
+      const u = new URL(url);
+      return 'https://www.google.com/s2/favicons?sz=32&domain=' + encodeURIComponent(u.hostname);
+    } catch {
+      return '';
+    }
+  }
+
+  function renderFavoritesPopover(data) {
+    const pop = document.createElement('div');
+    pop.className = 'favorites-popover';
+    pop.dataset.role = 'favorites-popover';
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', 'Favoritos');
+
+    const head = document.createElement('div');
+    head.className = 'favorites-popover-head';
+    const title = document.createElement('strong');
+    title.textContent = 'Favoritos';
+    const pinBtn = document.createElement('button');
+    pinBtn.type = 'button';
+    pinBtn.className = 'favorites-popover-pin' + (data && data.pinned ? ' is-pinned' : '');
+    pinBtn.dataset.role = 'favorites-pin';
+    pinBtn.title = data && data.pinned ? 'Desafixar' : 'Fixar';
+    pinBtn.textContent = data && data.pinned ? 'Fixado' : 'Fixar';
+    pinBtn.addEventListener('click', () => {
+      window.mhPopover.action({ type: 'favorites-pin', pinned: !(data && data.pinned) });
+    });
+    head.append(title, pinBtn);
+    pop.appendChild(head);
+
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'favorites-popover-search';
+    search.dataset.role = 'favorites-search';
+    search.placeholder = 'Pesquisar favoritos';
+    search.value = (data && data.query) || '';
+    pop.appendChild(search);
+
+    const tree = document.createElement('div');
+    tree.className = 'favorites-popover-tree';
+    tree.dataset.role = 'favorites-tree';
+
+    const q = String((data && data.query) || '')
+      .trim()
+      .toLowerCase();
+    const folders = (data && data.folders) || [];
+    const items = (data && data.items) || [];
+    const expanded = new Set((data && data.expandedFolders) || []);
+
+    function matches(it) {
+      if (!q) return true;
+      return (
+        String(it.name || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(it.title || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(it.url || '')
+          .toLowerCase()
+          .includes(q)
+      );
+    }
+
+    for (const folder of folders) {
+      const folderItems = items.filter((it) => it.folderId === folder.id && matches(it));
+      if (q && !folderItems.length && !String(folder.name || '').toLowerCase().includes(q)) {
+        continue;
+      }
+      const isOpen = q ? true : expanded.has(folder.id);
+      const row = document.createElement('div');
+      row.className = 'favorites-folder-row';
+      row.dataset.folderId = folder.id || '';
+      const arrow = document.createElement('button');
+      arrow.type = 'button';
+      arrow.className = 'favorites-folder-arrow';
+      arrow.textContent = isOpen ? '▾' : '▸';
+      arrow.addEventListener('click', () => {
+        window.mhPopover.action({ type: 'favorites-toggle-folder', folderId: folder.id });
+      });
+      const name = document.createElement('span');
+      name.className = 'favorites-folder-name';
+      name.textContent = folder.name || 'Pasta';
+      row.append(arrow, name);
+      tree.appendChild(row);
+      if (isOpen) {
+        for (const it of folderItems) {
+          const itemBtn = document.createElement('button');
+          itemBtn.type = 'button';
+          itemBtn.className = 'favorites-item-row';
+          itemBtn.dataset.bookmarkId = it.id || '';
+          itemBtn.dataset.role = 'favorites-item';
+          const img = document.createElement('img');
+          img.className = 'favorites-item-favicon';
+          img.alt = '';
+          img.src = faviconFor(it.url);
+          const lab = document.createElement('span');
+          lab.textContent = it.name || it.title || it.url || 'Favorito';
+          itemBtn.append(img, lab);
+          itemBtn.addEventListener('click', () => {
+            window.mhPopover.action({
+              type: 'favorites-open',
+              bookmarkId: it.id,
+              url: it.url,
+            });
+            if (!(data && data.pinned)) window.mhPopover.close('action');
+          });
+          tree.appendChild(itemBtn);
+        }
+      }
+    }
+    pop.appendChild(tree);
+
+    const actions = document.createElement('div');
+    actions.className = 'favorites-popover-actions';
+    const mkBtn = (label, type, role) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'favorites-popover-action';
+      b.dataset.role = role;
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        window.mhPopover.action({ type });
+        if (type !== 'favorites-add-folder' && type !== 'favorites-add' && !(data && data.pinned)) {
+          /* keep open for add flows handled by chrome */
+        }
+        if (type === 'favorites-open-page') window.mhPopover.close('action');
+      });
+      return b;
+    };
+    actions.append(
+      mkBtn('Adicionar favorito', 'favorites-add', 'favorites-add'),
+      mkBtn('Adicionar pasta', 'favorites-add-folder', 'favorites-add-folder'),
+      mkBtn('Abrir página de favoritos', 'favorites-open-page', 'favorites-open-page')
+    );
+    pop.appendChild(actions);
+
+    search.addEventListener('input', () => {
+      window.mhPopover.action({ type: 'favorites-search', query: search.value });
+    });
+
+    return pop;
+  }
+
   function renderMem(data) {
     const box = document.createElement('div');
     box.className = 'mem-popover-box';
@@ -626,6 +772,7 @@
     else if (payload.kind === 'menu') node = renderMenu(payload.data || {});
     else if (payload.kind === 'layout') node = renderLayout(payload.data || {});
     else if (payload.kind === 'ext-menu') node = renderExtMenu(payload.data || {});
+    else if (payload.kind === 'favorites') node = renderFavoritesPopover(payload.data || {});
     else if (payload.kind === 'mem') node = renderMem(payload.data || {});
     else if (payload.kind === 'ai-write') node = renderAiWrite(payload.data || {});
     if (node) root.appendChild(node);
@@ -664,6 +811,11 @@
       else if (current.kind === 'ext-menu' && data) {
         current.data = Object.assign({}, current.data || {}, data);
         const node = renderExtMenu(current.data);
+        root.replaceChildren(node);
+        scheduleMeasure();
+      } else if (current.kind === 'favorites' && data) {
+        current.data = Object.assign({}, current.data || {}, data);
+        const node = renderFavoritesPopover(current.data);
         root.replaceChildren(node);
         scheduleMeasure();
       } else if (data) current.data = Object.assign({}, current.data || {}, data);

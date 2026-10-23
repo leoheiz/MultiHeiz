@@ -23,6 +23,7 @@ const LIGHT_OVERLAY_IDS = new Set([
   'mem-popover',
   'store-bar-menu',
   'ai-write-popover',
+  'favorites-popover',
 ]);
 
 /** @type {import('electron').BrowserWindow | null} */

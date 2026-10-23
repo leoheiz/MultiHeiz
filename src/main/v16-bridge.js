@@ -68,8 +68,14 @@ function initV16(ctx) {
       emitToRenderer({ type: 'bookmarks:changed', ...bookmarks.list() });
       return true;
     });
-    ipcMain.handle('bookmarks:folder-create', (_e, name) => {
-      const f = bookmarks.createFolder(name);
+    ipcMain.handle('bookmarks:folder-create', (_e, nameOrOpts) => {
+      const name =
+        typeof nameOrOpts === 'string'
+          ? nameOrOpts
+          : nameOrOpts && nameOrOpts.name;
+      const parentId =
+        nameOrOpts && typeof nameOrOpts === 'object' ? nameOrOpts.parentId : null;
+      const f = bookmarks.createFolder(name, parentId);
       emitToRenderer({ type: 'bookmarks:changed', ...bookmarks.list() });
       return f;
     });
@@ -82,6 +88,16 @@ function initV16(ctx) {
       const r = bookmarks.deleteFolder(id);
       emitToRenderer({ type: 'bookmarks:changed', ...bookmarks.list() });
       return r;
+    });
+    ipcMain.handle('bookmarks:move', (_e, { id, folderId }) => {
+      const item = bookmarks.moveFavorite(id, folderId);
+      emitToRenderer({ type: 'bookmarks:changed', ...bookmarks.list() });
+      return item;
+    });
+    ipcMain.handle('bookmarks:set-expanded', (_e, ids) => {
+      const list = bookmarks.setExpandedFolders(ids);
+      emitToRenderer({ type: 'bookmarks:changed', ...list });
+      return list;
     });
     ipcMain.handle('bookmarks:export', () => bookmarks.exportJson());
     ipcMain.handle('bookmarks:import', (_e, raw) => {

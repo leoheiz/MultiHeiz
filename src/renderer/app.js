@@ -1629,6 +1629,57 @@ async function handlePopoverAction(payload) {
     openSettingsSection('extensoes');
     return;
   }
+  if (type === 'favorites-pin') {
+    favoritesPopoverPinned = !!payload.pinned;
+    await refreshFavoritesPopover();
+    return;
+  }
+  if (type === 'favorites-search') {
+    favoritesPopoverQuery = String(payload.query || '');
+    await refreshFavoritesPopover();
+    return;
+  }
+  if (type === 'favorites-toggle-folder') {
+    const id = String(payload.folderId || '');
+    if (!id) return;
+    const set = new Set(favoritesExpandedFolders);
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    favoritesExpandedFolders = [...set];
+    if (window.multiheiz.bookmarksSetExpanded) {
+      await window.multiheiz.bookmarksSetExpanded(favoritesExpandedFolders);
+    }
+    await refreshFavoritesPopover();
+    return;
+  }
+  if (type === 'favorites-open') {
+    const url = payload.url;
+    if (url && window.multiheiz.bookmarksOpen) {
+      await window.multiheiz.bookmarksOpen({ url, mode: 'current' });
+    }
+    return;
+  }
+  if (type === 'favorites-add') {
+    if (window.MultiHeizV16 && window.MultiHeizV16.favoriteCurrentUrl) {
+      await window.MultiHeizV16.favoriteCurrentUrl();
+    }
+    await refreshFavoritesPopover();
+    return;
+  }
+  if (type === 'favorites-add-folder') {
+    const name = prompt('Nome da pasta');
+    if (name && window.multiheiz.bookmarksFolderCreate) {
+      await window.multiheiz.bookmarksFolderCreate(name);
+    }
+    await refreshFavoritesPopover();
+    return;
+  }
+  if (type === 'favorites-open-page') {
+    if (window.MultiHeizV16 && window.MultiHeizV16.openManager) {
+      window.MultiHeizV16.openManager('favorites');
+    }
+    return;
+  }
   if (type === 'mem-suspend' && payload.accountId) {
     await window.multiheiz.panelSuspend(payload.accountId);
     if (latestMetrics && Array.isArray(latestMetrics.panels)) {
@@ -4139,6 +4190,55 @@ function openMemPopover() {
   });
 }
 
+/** @type {boolean} */
+let favoritesPopoverPinned = false;
+/** @type {string} */
+let favoritesPopoverQuery = '';
+/** @type {string[]} */
+let favoritesExpandedFolders = [];
+
+async function buildFavoritesPopoverData() {
+  const data = (await window.multiheiz.bookmarksList()) || {};
+  if (!favoritesExpandedFolders.length && Array.isArray(data.expandedFolders)) {
+    favoritesExpandedFolders = data.expandedFolders.slice();
+  }
+  return {
+    folders: data.folders || [],
+    items: data.items || [],
+    expandedFolders: favoritesExpandedFolders,
+    query: favoritesPopoverQuery,
+    pinned: favoritesPopoverPinned,
+  };
+}
+
+async function openFavoritesPopover() {
+  const btn = document.getElementById('btn-favorites');
+  const r = btn
+    ? btn.getBoundingClientRect()
+    : { left: 120, top: 8, width: 32, height: 28 };
+  const data = await buildFavoritesPopoverData();
+  showLightPopover({
+    id: 'favorites-popover',
+    kind: 'favorites',
+    prefer: 'below',
+    anchor: {
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+    },
+    data,
+  });
+}
+
+async function refreshFavoritesPopover() {
+  if (activePopoverId !== 'favorites-popover') return;
+  const data = await buildFavoritesPopoverData();
+  if (window.multiheiz.popoverUpdate) {
+    await window.multiheiz.popoverUpdate({ data });
+  }
+}
+
 function closeMemPopover() {
   if (el.memPopover && !el.memPopover.classList.contains('hidden')) {
     el.memPopover.classList.add('hidden');
@@ -4992,12 +5092,15 @@ if (typeof ResizeObserver === 'function') {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('#layout-select') || e.target.closest('#btn-mem-total')) return;
+  if (e.target.closest('#btn-favorites')) return;
   if (e.target.closest('[data-role="panel-volume"]') || e.target.closest('[data-role="sidebar-volume"]')) {
     return;
   }
   // Click on chrome outside light popovers closes them (panels close via overlay blur).
   if (activePopoverId) {
+    if (activePopoverId === 'favorites-popover' && favoritesPopoverPinned) return;
     setTimeout(() => {
+      if (activePopoverId === 'favorites-popover' && favoritesPopoverPinned) return;
       if (activePopoverId) hideLightPopover('chrome-click');
     }, 0);
   }
@@ -5005,6 +5108,9 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    if (activePopoverId === 'favorites-popover' && favoritesPopoverPinned) {
+      favoritesPopoverPinned = false;
+    }
     if (activePopoverId) hideLightPopover('escape');
     else closeMenus();
   }
@@ -5018,9 +5124,19 @@ window.multiheiz.onEvent((payload) => {
     return;
   }
   if (payload.type === 'popover:close-request' || payload.type === 'popover:closed') {
+    if (
+      payload.type === 'popover:close-request' &&
+      payload.id === 'favorites-popover' &&
+      favoritesPopoverPinned
+    ) {
+      return;
+    }
     if (payload.id === 'volume-popover') {
       if (volumePopover && volumePopover.hideTimer) clearTimeout(volumePopover.hideTimer);
       volumePopover = null;
+    }
+    if (payload.id === 'favorites-popover' && payload.type === 'popover:closed') {
+      favoritesPopoverPinned = false;
     }
     if (activePopoverId === payload.id) activePopoverId = null;
     return;
@@ -6534,7 +6650,9 @@ if (window.MultiHeizV16 && window.MultiHeizV16.init) {
 }
 
 Object.assign(window.__multiheizUi, {
-  openFavorites: () => window.MultiHeizV16 && window.MultiHeizV16.openManager('favorites'),
+  openFavorites: () => openFavoritesPopover(),
+  openFavoritesPage: () => window.MultiHeizV16 && window.MultiHeizV16.openManager('favorites'),
+  openFavoritesPopover: () => openFavoritesPopover(),
   openHistory: () => window.MultiHeizV16 && window.MultiHeizV16.openManager('history'),
   openDownloads: () => window.MultiHeizV16 && window.MultiHeizV16.openManager('downloads'),
   openModule: (id) => window.MultiHeizV16 && window.MultiHeizV16.openModule(id),

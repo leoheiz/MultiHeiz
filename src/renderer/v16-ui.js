@@ -264,16 +264,23 @@
   }
 
   async function renderFavorites(body) {
+    body.classList.add('favorites-page');
     const data = await window.multiheiz.bookmarksList();
-    const search = h('input', { type: 'search', placeholder: 'Buscar favoritos…', className: 'mgr-search' });
-    const toolbar = h('div', { className: 'mgr-toolbar' },
-      search,
+    let selectedFolderId =
+      (data.folders && data.folders[0] && data.folders[0].id) || 'folder-other';
+    let expanded = new Set(data.expandedFolders || data.folders.map((f) => f.id));
+
+    const top = h('div', { className: 'favorites-page-top mgr-toolbar' },
       h('button', {
-        type: 'button', className: 'btn ghost', text: 'Nova pasta',
+        type: 'button', className: 'btn primary', text: 'Adicionar favorito',
+        onClick: () => favoriteCurrentUrl(),
+      }),
+      h('button', {
+        type: 'button', className: 'btn ghost', text: 'Adicionar pasta',
         onClick: async () => {
           const name = prompt('Nome da pasta');
           if (!name) return;
-          await window.multiheiz.bookmarksFolderCreate(name);
+          await window.multiheiz.bookmarksFolderCreate(name, selectedFolderId);
           renderManager();
         },
       }),
@@ -300,50 +307,156 @@
         },
       })
     );
-    body.appendChild(toolbar);
-    const list = h('div', { className: 'mgr-list' });
-    body.appendChild(list);
+    body.appendChild(top);
 
-    function paint(q) {
-      list.innerHTML = '';
-      const folders = data.folders || [];
-      for (const folder of folders) {
-        const items = (data.items || []).filter((it) => it.folderId === folder.id);
-        const filtered = q
-          ? items.filter((it) =>
-              (it.name || '').toLowerCase().includes(q) ||
-              (it.url || '').toLowerCase().includes(q)
-            )
-          : items;
-        if (q && !filtered.length && !folder.name.toLowerCase().includes(q)) continue;
-        list.appendChild(h('div', { className: 'mgr-folder-title', text: folder.name }));
-        for (const it of filtered) {
-          const row = h('div', { className: 'mgr-row' },
-            h('button', {
-              type: 'button', className: 'mgr-row-main',
-              onClick: () => openWithTarget(it.url, it.defaultWindowId),
-            },
-              h('strong', { text: it.name || it.url }),
-              h('span', { className: 'muted-note', text: it.url })
-            ),
-            h('button', {
-              type: 'button', className: 'btn ghost', text: 'Editar',
-              onClick: () => openFavoriteDialog(it),
-            }),
-            h('button', {
-              type: 'button', className: 'btn ghost', text: 'Remover',
-              onClick: async () => {
-                await window.multiheiz.bookmarksRemove(it.id);
-                renderManager();
-              },
-            })
-          );
-          list.appendChild(row);
-        }
+    const layout = h('div', { className: 'favorites-page-layout' });
+    const left = h('div', { className: 'favorites-page-left' });
+    const right = h('div', { className: 'favorites-page-right' });
+    layout.append(left, right);
+    body.appendChild(layout);
+
+    const search = h('input', {
+      type: 'search',
+      placeholder: 'Pesquisar favoritos',
+      className: 'mgr-search favorites-page-search',
+    });
+    left.appendChild(search);
+    const tree = h('div', { className: 'favorites-page-tree', 'data-role': 'favorites-page-tree' });
+    left.appendChild(tree);
+    const list = h('div', {
+      className: 'favorites-page-list mgr-list',
+      'data-role': 'favorites-page-list',
+    });
+    right.appendChild(list);
+
+    function faviconUrl(url) {
+      try {
+        return (
+          'https://www.google.com/s2/favicons?sz=32&domain=' +
+          encodeURIComponent(new URL(url).hostname)
+        );
+      } catch {
+        return '';
       }
     }
-    search.addEventListener('input', () => paint(search.value.trim().toLowerCase()));
-    paint('');
+
+    function paint() {
+      const q = search.value.trim().toLowerCase();
+      const folders = data.folders || [];
+      tree.innerHTML = '';
+      for (const folder of folders) {
+        const isOpen = expanded.has(folder.id);
+        const row = h('div', {
+          className:
+            'favorites-page-folder' + (folder.id === selectedFolderId ? ' is-selected' : ''),
+          'data-folder-id': folder.id,
+        });
+        const arrow = h('button', {
+          type: 'button',
+          className: 'favorites-folder-arrow',
+          text: isOpen ? '▾' : '▸',
+          onClick: (e) => {
+            e.stopPropagation();
+            if (expanded.has(folder.id)) expanded.delete(folder.id);
+            else expanded.add(folder.id);
+            if (window.multiheiz.bookmarksSetExpanded) {
+              window.multiheiz.bookmarksSetExpanded([...expanded]);
+            }
+            paint();
+          },
+        });
+        const nameBtn = h('button', {
+          type: 'button',
+          className: 'favorites-page-folder-name',
+          text: folder.name,
+          onClick: () => {
+            selectedFolderId = folder.id;
+            paint();
+          },
+        });
+        row.append(arrow, nameBtn);
+        tree.appendChild(row);
+      }
+
+      list.innerHTML = '';
+      const items = (data.items || []).filter((it) => {
+        if (it.folderId !== selectedFolderId) return false;
+        if (!q) return true;
+        return (
+          (it.name || '').toLowerCase().includes(q) ||
+          (it.title || '').toLowerCase().includes(q) ||
+          (it.url || '').toLowerCase().includes(q)
+        );
+      });
+      if (!items.length) {
+        list.appendChild(
+          h('p', {
+            className: 'muted-note',
+            text: q ? 'Nenhum favorito encontrado.' : 'Pasta vazia.',
+          })
+        );
+        return;
+      }
+      for (const it of items) {
+        const row = h('div', {
+          className: 'mgr-row favorites-page-row',
+          'data-bookmark-id': it.id || '',
+          draggable: 'true',
+        });
+        row.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/bookmark-id', it.id);
+        });
+        const img = document.createElement('img');
+        img.className = 'favorites-item-favicon';
+        img.alt = '';
+        img.src = faviconUrl(it.url);
+        const main = h(
+          'button',
+          {
+            type: 'button',
+            className: 'mgr-row-main',
+            onClick: () => openWithTarget(it.url, it.defaultWindowId),
+            onDblClick: () => openFavoriteDialog(it),
+          },
+          h('strong', { text: it.name || it.title || it.url }),
+          h('span', { className: 'muted-note', text: it.url })
+        );
+        const remove = h('button', {
+          type: 'button',
+          className: 'btn icon ghost',
+          text: '×',
+          title: 'Remover',
+          onClick: async () => {
+            await window.multiheiz.bookmarksRemove(it.id);
+            const next = await window.multiheiz.bookmarksList();
+            data.folders = next.folders;
+            data.items = next.items;
+            paint();
+          },
+        });
+        row.append(img, main, remove);
+        list.appendChild(row);
+      }
+    }
+
+    // Drop on folder tree to move
+    tree.addEventListener('dragover', (e) => e.preventDefault());
+    tree.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const id = e.dataTransfer.getData('text/bookmark-id');
+      const folderEl = e.target.closest('.favorites-page-folder');
+      const folderId = folderEl && folderEl.getAttribute('data-folder-id');
+      if (!id || !folderId || !window.multiheiz.bookmarksMove) return;
+      await window.multiheiz.bookmarksMove(id, folderId);
+      const next = await window.multiheiz.bookmarksList();
+      data.folders = next.folders;
+      data.items = next.items;
+      selectedFolderId = folderId;
+      paint();
+    });
+
+    search.addEventListener('input', () => paint());
+    paint();
   }
 
   async function renderHistory(body) {
@@ -4080,7 +4193,13 @@
       }
     });
 
-    document.getElementById('btn-favorites')?.addEventListener('click', () => openManager('favorites'));
+    document.getElementById('btn-favorites')?.addEventListener('click', () => {
+      if (window.__multiheizUi && window.__multiheizUi.openFavoritesPopover) {
+        window.__multiheizUi.openFavoritesPopover();
+      } else {
+        openManager('favorites');
+      }
+    });
     document.getElementById('btn-history')?.addEventListener('click', () => openManager('history'));
     document.getElementById('btn-downloads')?.addEventListener('click', () => openManager('downloads'));
 

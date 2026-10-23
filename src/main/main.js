@@ -278,6 +278,7 @@ const SELFTEST_DOH = selftestMode === 'doh';
 const SELFTEST_SETTINGS_PERF = selftestMode === 'settings-perf';
 const SELFTEST_PERMISSIONS = selftestMode === 'permissions';
 const SELFTEST_CERTIFICATES = selftestMode === 'certificates';
+const SELFTEST_FAVORITES = selftestMode === 'favorites';
 const SELFTEST_CATALOG = selftestMode === 'catalog';
 const SELFTEST_CUSTOM_SITE = selftestMode === 'custom-site';
 const SELFTEST_EDIT_START_URL = selftestMode === 'edit-start-url';
@@ -345,8 +346,10 @@ const ANY_SELFTEST =
   SELFTEST_SETTINGS_PERF ||
   SELFTEST_PERMISSIONS ||
   SELFTEST_CERTIFICATES ||
+  SELFTEST_FAVORITES ||
   SELFTEST_CATALOG ||
   SELFTEST_CUSTOM_SITE ||
+
   SELFTEST_EDIT_START_URL ||
   SELFTEST_UI_INPUT_LAG ||
   SELFTEST_SHOTS_TOOLS ||
@@ -724,6 +727,7 @@ function createWindow() {
     SELFTEST_SUSPEND ||
     SELFTEST_PERMISSIONS ||
     SELFTEST_CERTIFICATES ||
+    SELFTEST_FAVORITES ||
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
     SELFTEST_EDIT_START_URL ||
@@ -2141,6 +2145,32 @@ function createWindow() {
             waitForPanels,
             app,
             certificates,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_FAVORITES) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runFavoritesSelftest } = require('./selftest-favorites');
+          runFavoritesSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
