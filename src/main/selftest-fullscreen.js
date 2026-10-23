@@ -788,6 +788,58 @@ async function runFullscreenSelftest(ctx) {
     console.log('PASS: Esc exits HTML5 then F11');
   }
 
+  /* ---------- 1.3.1 one-shot: false without marker → ON ---------- */
+  {
+    const stateMod = require('./state');
+    const migrated = stateMod.migrate({
+      version: 1,
+      workspaces: [{ id: 'ws-default', name: 'Default' }],
+      activeWorkspaceId: 'ws-default',
+      accounts: [],
+      layout: '1',
+      settings: {
+        fullscreenTopbarReveal: false,
+        migrations: { keepAlive120: true },
+      },
+      ui: {},
+    });
+    if (migrated.settings.fullscreenTopbarReveal !== true) {
+      console.log('FAIL: false without marker should migrate to true', {
+        value: migrated.settings.fullscreenTopbarReveal,
+      });
+      app.exit(1);
+      return;
+    }
+    if (!migrated.settings.migrations.fullscreenTopbarRevealMigrated131) {
+      console.log('FAIL: migration marker fullscreenTopbarRevealMigrated131 missing');
+      app.exit(1);
+      return;
+    }
+    const kept = stateMod.migrate({
+      version: 1,
+      workspaces: [{ id: 'ws-default', name: 'Default' }],
+      activeWorkspaceId: 'ws-default',
+      accounts: [],
+      layout: '1',
+      settings: {
+        fullscreenTopbarReveal: false,
+        migrations: {
+          keepAlive120: true,
+          fullscreenTopbarRevealMigrated131: true,
+        },
+      },
+      ui: {},
+    });
+    if (kept.settings.fullscreenTopbarReveal !== false) {
+      console.log('FAIL: marker + false should stay false', {
+        value: kept.settings.fullscreenTopbarReveal,
+      });
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: fullscreenTopbarRevealMigrated131 one-shot');
+  }
+
   /* ---------- F11 topbar edge-reveal (setting ON by default) ---------- */
   {
     let mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');

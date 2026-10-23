@@ -439,6 +439,17 @@ function migrate(parsed) {
   if (typeof next.settings.fullscreenTopbarReveal !== 'boolean') {
     next.settings.fullscreenTopbarReveal = true;
   }
+  // 1.3.1 one-shot: early 1.3.1 test builds defaulted OFF and wrote false into
+  // state. Force ON once; after the marker is set, user toggles persist.
+  {
+    if (!next.settings.migrations || typeof next.settings.migrations !== 'object') {
+      next.settings.migrations = {};
+    }
+    if (!next.settings.migrations.fullscreenTopbarRevealMigrated131) {
+      next.settings.fullscreenTopbarReveal = true;
+      next.settings.migrations.fullscreenTopbarRevealMigrated131 = true;
+    }
+  }
   {
     const { normalizeDoh, defaultDohSettings } = require('./doh');
     const rawDoh =
