@@ -1,11 +1,12 @@
 'use strict';
 
 /**
- * Real OS mouse hover for F11 sidebar edge-reveal.
+ * Real OS mouse hover for F11 sidebar edge-reveal + topbar top-edge reveal.
  * Uso: npm run check:realhover-fullscreen
  *
  * Starts Electron with MULTIHEIZ_SELFTEST=realhover-fullscreen, waits for ready.json
- * steps (edge / center / pin click), runs tools/realhover.ps1, writes done.json.
+ * steps (sidebar edge/center/pin + topbar-edge/leave for F11 / HTML5 / F11+video),
+ * runs tools/realhover.ps1, writes done.json.
  * Log: _local/realhover-fullscreen.log
  */
 
@@ -138,8 +139,8 @@ async function main() {
   });
 
   const seenTokens = new Set();
-  // default + legacy modes × several steps each (edge, center, pin, unpin, …)
-  const maxSteps = 24;
+  // sidebar (default+legacy) + topbar×3 scenarios (away/edge/leave each)
+  const maxSteps = 48;
 
   const hoverLoop = (async () => {
     for (let i = 0; i < maxSteps; i++) {

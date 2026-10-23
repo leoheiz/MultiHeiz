@@ -755,7 +755,7 @@ function isChromeHiddenMode() {
 }
 
 /**
- * Setting: reveal top bar on top-edge hover while F11 chrome-hidden (OFF by default).
+ * Setting: reveal top bar on top-edge hover while F11 chrome-hidden (ON by default).
  * No always-visible / pinned mode.
  */
 function isFullscreenTopbarRevealEnabled() {

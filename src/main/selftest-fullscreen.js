@@ -788,34 +788,26 @@ async function runFullscreenSelftest(ctx) {
     console.log('PASS: Esc exits HTML5 then F11');
   }
 
-  /* ---------- F11 topbar edge-reveal (setting OFF by default / ON hover) ---------- */
+  /* ---------- F11 topbar edge-reveal (setting ON by default) ---------- */
   {
     let mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
-    if (!mode || mode.setting !== false) {
-      console.log('FAIL: fullscreenTopbarReveal should default OFF', mode);
+    if (!mode || mode.setting !== true) {
+      console.log('FAIL: fullscreenTopbarReveal should default ON', mode);
       app.exit(1);
       return;
     }
-    chromeFullscreen.enter();
-    await sleep(500);
-    await waitForLayoutSettle();
-    const visOff = await rendererEval('window.__multiheizUi.getChromeVisibility()');
-    if (
-      !visOff ||
-      !visOff.chromeHidden ||
-      (visOff.topbar.display !== 'none' && visOff.topbar.offsetHeight !== 0)
-    ) {
-      console.log('FAIL: topbar should stay hidden when setting OFF', visOff);
-      app.exit(1);
-      return;
-    }
-    // Cursor at top edge must not reveal when OFF
     const sidebarCursor = ctx.sidebarCursor;
     function setCursorContent(cx, cy) {
       const pt = sidebarCursor.contentPointToScreen(cx, cy);
       if (!pt) throw new Error('contentPointToScreen failed');
       sidebarCursor.setCursorOverride(pt);
     }
+
+    // Prove OFF still keeps topbar hidden
+    await rendererEval('window.__multiheizUi.setFullscreenTopbarReveal(false)');
+    chromeFullscreen.enter();
+    await sleep(500);
+    await waitForLayoutSettle();
     setCursorContent(200, 3);
     await sleep(400);
     mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
@@ -824,7 +816,7 @@ async function runFullscreenSelftest(ctx) {
       app.exit(1);
       return;
     }
-    console.log('PASS: topbar reveal OFF by default in F11');
+    console.log('PASS: topbar reveal stays OFF when setting disabled');
 
     mode = await rendererEval('window.__multiheizUi.setFullscreenTopbarReveal(true)');
     if (!mode || !mode.setting || !mode.active) {
@@ -854,6 +846,47 @@ async function runFullscreenSelftest(ctx) {
       overlayH: openTop.topbarOverlayHeight,
     });
 
+    // HTML5 video fullscreen must inset under revealed topbar
+    try {
+      await panels.getPanelCapture('acc-fs-a').executeJavaScript(
+        'window.__fsVideo && window.__fsVideo.enter()',
+        true
+      );
+    } catch (err) {
+      console.log('FAIL: enter HTML5 fullscreen', err && err.message);
+      app.exit(1);
+      return;
+    }
+    await sleep(600);
+    await waitForLayoutSettle();
+    setCursorContent(200, 3);
+    await sleep(300);
+    await waitForLayoutSettle();
+    const htmlInfo = panels.getPanelDebugInfo();
+    const htmlPanel = (htmlInfo.panels || []).find((p) => p.accountId === 'acc-fs-a');
+    const overlayH = htmlInfo.topbarOverlayHeight || 0;
+    if (!(overlayH >= 40) || !htmlPanel || !(htmlPanel.bounds && htmlPanel.bounds.y >= overlayH - 2)) {
+      console.log('FAIL: HTML5 FS panel must sit below topbar overlay', {
+        overlayH,
+        bounds: htmlPanel && htmlPanel.bounds,
+      });
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: HTML5 FS respects topbar overlay inset', {
+      overlayH,
+      y: htmlPanel.bounds.y,
+    });
+    try {
+      await panels.getPanelCapture('acc-fs-a').executeJavaScript(
+        'window.__fsVideo && window.__fsVideo.exit()',
+        true
+      );
+    } catch {
+      /* ignore */
+    }
+    await sleep(400);
+
     setCursorContent(400, 400);
     await sleep(900);
     await waitForLayoutSettle();
@@ -864,7 +897,6 @@ async function runFullscreenSelftest(ctx) {
       return;
     }
     sidebarCursor.setCursorOverride(null);
-    await rendererEval('window.__multiheizUi.setFullscreenTopbarReveal(false)');
     chromeFullscreen.exit();
     await sleep(400);
     console.log('PASS: topbar hide after cursor leave');

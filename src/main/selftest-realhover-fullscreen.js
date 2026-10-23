@@ -1,9 +1,11 @@
 'use strict';
 
 /**
- * Selftest: real OS mouse hover for F11 sidebar edge-reveal
+ * Selftest: real OS mouse hover for F11 sidebar edge-reveal AND topbar top-edge reveal
  * (MULTIHEIZ_SELFTEST=realhover-fullscreen).
  * Handshake via files in MULTIHEIZ_REALCLICK_DIR (tools/realhover-fullscreen.js).
+ * Topbar scenarios: F11 normal, HTML5 video FS, F11+video — assert topbar visible
+ * (display/height + panel inset), then hidden after leave.
  */
 
 const fs = require('node:fs');
@@ -103,8 +105,44 @@ async function runRealhoverFullscreenSelftest(ctx) {
   let server = null;
   let port = 0;
   const PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>rh</title></head>
-<body style="margin:0;height:100vh;background:#1a3040;color:#fff;font:20px system-ui">
-<div style="padding:24px">REALHOVER FS PANEL</div>
+<body style="margin:0;background:#1a3040;color:#fff;font:16px system-ui;padding:24px">
+<h1>REALHOVER FS</h1>
+<div id="stage" style="width:320px;height:180px;background:#0a2030;position:relative">
+<video id="v" width="320" height="180" autoplay muted loop playsinline style="display:block;width:100%;height:100%"></video>
+<canvas id="c" width="320" height="180" style="display:none"></canvas>
+</div>
+<script>
+(function(){
+  var c = document.getElementById('c');
+  var ctx = c.getContext('2d');
+  var t0 = performance.now();
+  function frame(t) {
+    var x = ((t - t0) / 16) % 320;
+    ctx.fillStyle = '#0a2030';
+    ctx.fillRect(0, 0, 320, 180);
+    ctx.fillStyle = '#2bb8a6';
+    ctx.fillRect(x, 60, 40, 60);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  var stream = c.captureStream(30);
+  var v = document.getElementById('v');
+  v.srcObject = stream;
+  v.play().catch(function(){});
+  var stage = document.getElementById('stage');
+  window.__fsVideo = {
+    enter: function() {
+      if (!stage.requestFullscreen) return Promise.reject(new Error('no-fs'));
+      return stage.requestFullscreen();
+    },
+    exit: function() {
+      if (!document.fullscreenElement) return Promise.resolve();
+      return document.exitFullscreen();
+    },
+    active: function() { return !!document.fullscreenElement; }
+  };
+})();
+</script>
 </body></html>`;
 
   await new Promise((resolve, reject) => {
@@ -150,6 +188,7 @@ async function runRealhoverFullscreenSelftest(ctx) {
       openLastPage: false,
       homepage: base + '/',
       sidebarAlwaysActive: false,
+      fullscreenTopbarReveal: true,
     };
   });
   flushSave();
@@ -379,9 +418,126 @@ async function runRealhoverFullscreenSelftest(ctx) {
     return true;
   }
 
+  /**
+   * Top-edge real hover → topbar visible, then leave → hidden.
+   * @param {string} stepPrefix
+   * @param {boolean} withHtml5
+   */
+  async function runTopbarScenario(stepPrefix, withHtml5) {
+    mainWindow.show();
+    mainWindow.focus();
+    try {
+      mainWindow.moveTop();
+    } catch {
+      /* ignore */
+    }
+    await rendererEval('window.__multiheizUi.setFullscreenTopbarReveal(true)');
+    await rendererEval('window.__multiheizUi.setSidebarAlwaysActive(false)');
+    const m0 = await rendererEval('window.__multiheizUi.getSidebarMode()');
+    if (m0 && m0.autoHide) {
+      await rendererEval('window.__multiheizUi.toggleSidebarAutoHide()');
+    }
+    try {
+      if (mainWindow.isFullScreen()) {
+        chromeFullscreen.exit();
+        await ctxSleep(400);
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      mainWindow.setBounds({ x: WIN_X, y: WIN_Y, width: WIN_W, height: WIN_H });
+    } catch {
+      /* ignore */
+    }
+    await ctxSleep(200);
+
+    chromeFullscreen.enter();
+    await ctxSleep(600);
+    await waitForLayoutSettle();
+    if (!mainWindow.isFullScreen() || !chromeFullscreen.isChromeHidden()) {
+      throw new Error(stepPrefix + ': failed F11');
+    }
+
+    if (withHtml5) {
+      const wc = panels.getPanelCapture('acc-rh');
+      await wc.executeJavaScript('window.__fsVideo && window.__fsVideo.enter()', true);
+      await ctxSleep(700);
+      await waitForLayoutSettle();
+    }
+
+    const bounds = mainWindow.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const scale = Number(display.scaleFactor) || 1;
+    const topPhysY = Math.round(bounds.y * scale) + 2;
+    const midPhysX = Math.round((bounds.x + bounds.width / 2) * scale);
+    const centerPhysY = Math.round((bounds.y + bounds.height / 2) * scale);
+
+    // Ensure hidden first (cursor away)
+    await requestHover(stepPrefix, 'topbar-away', { x: midPhysX, y: centerPhysY }, scale, false);
+    await ctxSleep(900);
+    let mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
+    if (mode.open) {
+      throw new Error(stepPrefix + ': topbar should start closed: ' + JSON.stringify(mode));
+    }
+
+    await requestHover(stepPrefix, 'topbar-edge', { x: midPhysX, y: topPhysY }, scale, false);
+    await ctxSleep(400);
+    await waitForLayoutSettle();
+    mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
+    const vis = await rendererEval('window.__multiheizUi.getChromeVisibility()');
+    const info = panels.getPanelDebugInfo();
+    if (!mode.open || !vis.topbar.revealOpen || !(vis.topbar.offsetHeight >= 40)) {
+      throw new Error(
+        stepPrefix + ': topbar not visible on top edge: ' + JSON.stringify({ mode, vis, overlayH: info.topbarOverlayHeight })
+      );
+    }
+    if (!(info.topbarOverlayHeight >= 40)) {
+      throw new Error(stepPrefix + ': missing topbar overlay height');
+    }
+    if (withHtml5) {
+      const p = (info.panels || []).find((x) => x.accountId === 'acc-rh');
+      if (!p || !(p.bounds && p.bounds.y >= info.topbarOverlayHeight - 2)) {
+        throw new Error(
+          stepPrefix + ': HTML5 panel still covers topbar: ' + JSON.stringify(p && p.bounds)
+        );
+      }
+    }
+    console.log('PASS', stepPrefix, 'topbar visible', {
+      overlayH: info.topbarOverlayHeight,
+      h: vis.topbar.offsetHeight,
+    });
+
+    await requestHover(stepPrefix, 'topbar-leave', { x: midPhysX, y: centerPhysY }, scale, false);
+    await ctxSleep(900);
+    await waitForLayoutSettle();
+    mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
+    if (mode.open) {
+      throw new Error(stepPrefix + ': topbar should hide after leave: ' + JSON.stringify(mode));
+    }
+    console.log('PASS', stepPrefix, 'topbar hide after leave');
+
+    if (withHtml5) {
+      try {
+        const wc = panels.getPanelCapture('acc-rh');
+        await wc.executeJavaScript('window.__fsVideo && window.__fsVideo.exit()', true);
+      } catch {
+        /* ignore */
+      }
+      await ctxSleep(300);
+    }
+    chromeFullscreen.exit();
+    await ctxSleep(400);
+    results.push({ mode: stepPrefix, ok: true });
+  }
+
   try {
     await runMode('default-fixed', 'default');
     await runMode('legacy', 'legacy');
+    // Topbar: F11 normal, HTML5 under F11, F11+video again after exit/reenter
+    await runTopbarScenario('topbar-f11', false);
+    await runTopbarScenario('topbar-html5-f11', true);
+    await runTopbarScenario('topbar-f11-video', true);
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
     console.log('FAIL:', msg);

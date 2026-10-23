@@ -512,6 +512,7 @@ function raisePanelView(view) {
 
 /**
  * Expand the panel to the whole content area for HTML5 element fullscreen.
+ * Respects topbar overlay inset so F11 top-edge reveal is not covered by the view.
  * @param {string} accountId
  */
 function applyHtmlFullscreenBounds(accountId) {
@@ -519,8 +520,15 @@ function applyHtmlFullscreenBounds(accountId) {
   if (!entry) return;
   const full = contentAreaBounds();
   if (!full) return;
+  let bounds = full;
+  if (sidebarOverlayWidth > 0) {
+    bounds = viewBoundsForSidebarOverlay(bounds, sidebarOverlayWidth) || bounds;
+  }
+  if (topbarOverlayHeight > 0) {
+    bounds = viewBoundsForTopbarOverlay(bounds, topbarOverlayHeight) || bounds;
+  }
   try {
-    entry.view.setBounds(full);
+    entry.view.setBounds(bounds);
     entry.parked = false;
     setViewVisible(entry, true);
     raisePanelView(entry.view);

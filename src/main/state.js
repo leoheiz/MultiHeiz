@@ -145,9 +145,9 @@ function defaultState() {
       sidebarAlwaysActive: false,
       /**
        * F11: reveal the top bar when the cursor is near the top edge (overlay).
-       * OFF by default. No always-visible / pinned mode.
+       * ON by default. No always-visible / pinned mode.
        */
-      fullscreenTopbarReveal: false,
+      fullscreenTopbarReveal: true,
       /**
        * DNS over HTTPS (app-wide). mode: off | automatic | secure.
        * provider: cloudflare | google | quad9 | adguard | custom (+ customUrl https).
@@ -437,7 +437,7 @@ function migrate(parsed) {
     next.settings.sidebarAlwaysActive = false;
   }
   if (typeof next.settings.fullscreenTopbarReveal !== 'boolean') {
-    next.settings.fullscreenTopbarReveal = false;
+    next.settings.fullscreenTopbarReveal = true;
   }
   {
     const { normalizeDoh, defaultDohSettings } = require('./doh');
