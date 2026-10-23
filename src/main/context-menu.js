@@ -338,6 +338,12 @@ function buildContextMenuTemplate(params, nav = {}, extra = {}) {
 
   items.push({ type: 'separator' });
   items.push({
+    id: 'print',
+    label: 'Imprimir…',
+    enabled: true,
+  });
+  items.push({ type: 'separator' });
+  items.push({
     id: 'inspect',
     label: 'Inspecionar elemento',
     enabled: true,
@@ -525,6 +531,20 @@ function runContextAction(d, wc, params, openInNewWindow) {
         });
       } catch {
         /* ignore */
+      }
+      break;
+    }
+    case 'print': {
+      try {
+        const panelShortcuts = require('./panel-shortcuts');
+        panelShortcuts.printFromWebContents(wc);
+      } catch {
+        try {
+          if (process.env.MULTIHEIZ_SELFTEST) return;
+          wc.print({ silent: false, printBackground: true });
+        } catch {
+          /* ignore */
+        }
       }
       break;
     }

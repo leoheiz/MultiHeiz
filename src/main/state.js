@@ -180,6 +180,13 @@ function defaultState() {
         baseUrl: '',
         apiKeyEnc: null,
       },
+      /**
+       * Atalhos de teclado: só overrides (combo/disabled).
+       * Vazio = todos os padrões do keymap (usuários existentes sem mudança).
+       */
+      keyboardShortcuts: {
+        overrides: {},
+      },
       backgroundPreset: 'balanced', // balanced | always | max-save
       preferHighPerfGpu: false,
       frameCapHidden: 30,
@@ -467,6 +474,16 @@ function migrate(parsed) {
         ? next.settings.aiWrite
         : null;
     next.settings.aiWrite = rawAi ? normalizeAiWrite(rawAi) : defaultAiWriteSettings();
+  }
+  {
+    const { normalizeKeyboardShortcuts, defaultKeyboardShortcuts } = require('./keymap');
+    const rawKs =
+      next.settings.keyboardShortcuts && typeof next.settings.keyboardShortcuts === 'object'
+        ? next.settings.keyboardShortcuts
+        : null;
+    next.settings.keyboardShortcuts = rawKs
+      ? normalizeKeyboardShortcuts(rawKs)
+      : defaultKeyboardShortcuts();
   }
   if (!next.settings.backgroundPreset) next.settings.backgroundPreset = 'balanced';
   if (typeof next.settings.preferHighPerfGpu !== 'boolean') {

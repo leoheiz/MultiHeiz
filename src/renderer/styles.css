@@ -3127,6 +3127,73 @@ dialog label.check-row input[type='checkbox'],
 .settings-saved.hidden { display: none; }
 .settings-pane { display: none; }
 .settings-pane.active { display: block; }
+.keymap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.keymap-group-title {
+  margin: 0;
+  padding: 8px 12px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 80%, var(--surface));
+}
+.keymap-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.keymap-row:first-child,
+.keymap-group-title + .keymap-row {
+  border-top: none;
+}
+.keymap-name {
+  font-size: 13px;
+}
+.keymap-combo {
+  min-width: 7.5rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  text-align: center;
+}
+.keymap-combo.recording {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.keymap-combo.disabled-combo {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+.keymap-row .btn.tiny {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.keymap-disable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
 .row-inline { display: flex; gap: 8px; align-items: center; }
 .row-inline input { flex: 1; }
 .settings-sep {

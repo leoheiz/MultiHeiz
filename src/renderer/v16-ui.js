@@ -2798,7 +2798,199 @@
         if (section === 'adblock') refreshAdblockUi();
         if (section === 'extensoes') refreshExtensionsUi();
         if (section === 'certificados') refreshCertificatesUi();
+        if (section === 'atalhos') refreshKeymapUi();
       });
+    });
+
+    /** @type {string|null} */
+    let keymapRecordingId = null;
+    /** @type {((e: KeyboardEvent) => void)|null} */
+    let keymapRecordHandler = null;
+
+    function stopKeymapRecording() {
+      keymapRecordingId = null;
+      if (keymapRecordHandler) {
+        window.removeEventListener('keydown', keymapRecordHandler, true);
+        keymapRecordHandler = null;
+      }
+      const hint = document.getElementById('keymap-record-hint');
+      if (hint) {
+        hint.hidden = true;
+        hint.textContent = '';
+      }
+      document.querySelectorAll('.keymap-combo.recording').forEach((el) => {
+        el.classList.remove('recording');
+      });
+    }
+
+    function comboFromKeyboardEvent(e) {
+      const parts = [];
+      if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
+      if (e.altKey) parts.push('Alt');
+      if (e.shiftKey) parts.push('Shift');
+      let key = e.key;
+      if (key === ' ') key = 'Space';
+      else if (key === 'Escape') key = 'Escape';
+      else if (key === 'ArrowLeft') key = 'Left';
+      else if (key === 'ArrowRight') key = 'Right';
+      else if (key === 'ArrowUp') key = 'Up';
+      else if (key === 'ArrowDown') key = 'Down';
+      else if (key === '+' || key === 'Add') key = 'Plus';
+      else if (key === '=' ) key = '=';
+      else if (key.length === 1) key = key.toUpperCase();
+      else if (/^f\d{1,2}$/i.test(key)) key = key.toUpperCase();
+      else if (key === 'Home' || key === 'End') {
+        /* keep */
+      } else {
+        return null;
+      }
+      // Ignore bare modifier presses
+      if (
+        key === 'Control' ||
+        key === 'Shift' ||
+        key === 'Alt' ||
+        key === 'Meta' ||
+        key === 'OS'
+      ) {
+        return null;
+      }
+      parts.push(key);
+      return parts.join('+');
+    }
+
+    async function applyKeymapSet(id, combo, swap) {
+      if (!window.multiheiz.keymapSet) return;
+      const r = await window.multiheiz.keymapSet({ id, combo, swap: !!swap });
+      if (r && r.conflict && !swap) {
+        const ok = window.confirm(
+          `A combinação já é usada por “${r.conflict.name}”. Trocar?`
+        );
+        if (ok) {
+          await applyKeymapSet(id, combo, true);
+        }
+        return;
+      }
+      if (r && r.ok === false) {
+        toast((r && r.error) || 'Não foi possível gravar o atalho');
+        return;
+      }
+      if (r && r.state && hooks().applyState) hooks().applyState(r.state, { soft: true });
+      await refreshKeymapUi(r && r.list);
+      showSaved();
+    }
+
+    async function refreshKeymapUi(preloaded) {
+      const listEl = document.getElementById('keymap-list');
+      if (!listEl || !window.multiheiz.keymapList) return;
+      stopKeymapRecording();
+      let list = preloaded;
+      if (!Array.isArray(list)) {
+        try {
+          list = await window.multiheiz.keymapList();
+        } catch {
+          list = [];
+        }
+      }
+      listEl.textContent = '';
+      let lastGroup = '';
+      for (const item of list || []) {
+        if (item.group !== lastGroup) {
+          lastGroup = item.group;
+          const gh = document.createElement('div');
+          gh.className = 'keymap-group-title';
+          gh.textContent = item.group;
+          listEl.appendChild(gh);
+        }
+        const row = document.createElement('div');
+        row.className = 'keymap-row';
+        row.setAttribute('role', 'listitem');
+        const name = document.createElement('div');
+        name.className = 'keymap-name';
+        name.textContent = item.name;
+        const comboBtn = document.createElement('button');
+        comboBtn.type = 'button';
+        comboBtn.className = 'keymap-combo' + (item.disabled ? ' disabled-combo' : '');
+        comboBtn.textContent = item.disabled ? 'Desativado' : item.combo || '—';
+        comboBtn.title = 'Clique para gravar um novo atalho';
+        comboBtn.addEventListener('click', () => {
+          if (keymapRecordingId === item.id) {
+            stopKeymapRecording();
+            return;
+          }
+          stopKeymapRecording();
+          keymapRecordingId = item.id;
+          comboBtn.classList.add('recording');
+          comboBtn.textContent = 'Pressione as teclas…';
+          const hint = document.getElementById('keymap-record-hint');
+          if (hint) {
+            hint.hidden = false;
+            hint.textContent =
+              'Gravando “' + item.name + '”. Esc cancela. Clique de novo para cancelar.';
+          }
+          keymapRecordHandler = (e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              stopKeymapRecording();
+              refreshKeymapUi();
+              return;
+            }
+            const combo = comboFromKeyboardEvent(e);
+            if (!combo) return;
+            e.preventDefault();
+            e.stopPropagation();
+            stopKeymapRecording();
+            void applyKeymapSet(item.id, combo, false);
+          };
+          window.addEventListener('keydown', keymapRecordHandler, true);
+        });
+        const restore = document.createElement('button');
+        restore.type = 'button';
+        restore.className = 'btn ghost tiny';
+        restore.textContent = 'Padrão';
+        restore.disabled = !!item.isDefault && !item.disabled;
+        restore.title = 'Restaurar padrão';
+        restore.addEventListener('click', async () => {
+          if (!window.multiheiz.keymapRestore) return;
+          const r = await window.multiheiz.keymapRestore(item.id);
+          if (r && r.state && hooks().applyState) hooks().applyState(r.state, { soft: true });
+          await refreshKeymapUi(r && r.list);
+          showSaved();
+        });
+        const disLabel = document.createElement('label');
+        disLabel.className = 'keymap-disable';
+        const dis = document.createElement('input');
+        dis.type = 'checkbox';
+        dis.checked = !!item.disabled;
+        dis.addEventListener('change', async () => {
+          if (!window.multiheiz.keymapSet) return;
+          if (dis.checked) {
+            const r = await window.multiheiz.keymapSet({ id: item.id, disabled: true });
+            if (r && r.state && hooks().applyState) hooks().applyState(r.state, { soft: true });
+            await refreshKeymapUi(r && r.list);
+          } else {
+            const r = await window.multiheiz.keymapRestore(item.id);
+            if (r && r.state && hooks().applyState) hooks().applyState(r.state, { soft: true });
+            await refreshKeymapUi(r && r.list);
+          }
+          showSaved();
+        });
+        disLabel.appendChild(dis);
+        disLabel.appendChild(document.createTextNode('Desativar'));
+        row.appendChild(name);
+        row.appendChild(comboBtn);
+        row.appendChild(restore);
+        row.appendChild(disLabel);
+        listEl.appendChild(row);
+      }
+    }
+
+    document.getElementById('btn-keymap-restore-all')?.addEventListener('click', async () => {
+      if (!window.multiheiz.keymapRestoreAll) return;
+      const r = await window.multiheiz.keymapRestoreAll();
+      if (r && r.state && hooks().applyState) hooks().applyState(r.state, { soft: true });
+      await refreshKeymapUi(r && r.list);
+      showSaved();
     });
 
     function refreshCertificatesUi() {

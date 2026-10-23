@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('multiheiz', {
   setWorkspace: (id) => ipcRenderer.invoke('state:set-workspace', id),
   setMaximized: (accountId) => ipcRenderer.invoke('state:set-maximized', accountId),
   updateSettings: (partial) => ipcRenderer.invoke('settings:update', partial),
+  keymapList: () => ipcRenderer.invoke('keymap:list'),
+  keymapSet: (payload) => ipcRenderer.invoke('keymap:set', payload || {}),
+  keymapRestore: (id) => ipcRenderer.invoke('keymap:restore', id),
+  keymapRestoreAll: () => ipcRenderer.invoke('keymap:restore-all'),
+  keymapFindConflict: (combo, exceptId) =>
+    ipcRenderer.invoke('keymap:find-conflict', { combo, exceptId }),
   languagetoolFocusedOrigin: () => ipcRenderer.invoke('languagetool:focused-origin'),
   aiGetPublic: () => ipcRenderer.invoke('ai:get-public'),
   aiSetApiKey: (key) => ipcRenderer.invoke('ai:set-api-key', { key: key || '' }),

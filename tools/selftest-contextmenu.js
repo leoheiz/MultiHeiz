@@ -75,7 +75,8 @@ function runNodeTemplateChecks() {
     assert(!ids.includes('open-link'), 'no link');
     assert(!ids.includes('cut'), 'no edit');
     const sepCount = t.filter((x) => x.type === 'separator').length;
-    assert(sepCount === 1, 'one separator before inspect, got ' + sepCount);
+    assert(ids.includes('print'), 'print item');
+    assert(sepCount === 2, 'separators around print/inspect, got ' + sepCount);
     console.log('PASS: página simples');
   }
 

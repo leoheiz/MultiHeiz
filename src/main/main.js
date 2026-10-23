@@ -51,6 +51,8 @@ const popoverOverlay = require('./popover-overlay');
 const unread = require('./unread');
 const partition = require('./partition');
 const autostart = require('./autostart');
+const keymap = require('./keymap');
+const panelShortcuts = require('./panel-shortcuts');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -307,6 +309,7 @@ const SELFTEST_DIFF_UPDATE = selftestMode === 'diff-update';
 const SELFTEST_DIAGNOSTICS = selftestMode === 'diagnostics';
 const SELFTEST_SHARED_SESSION = selftestMode === 'shared-session';
 const SELFTEST_SUSPEND = selftestMode === 'suspend';
+const SELFTEST_SHORTCUTS = selftestMode === 'shortcuts';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -376,7 +379,8 @@ const ANY_SELFTEST =
   SELFTEST_DIFF_UPDATE ||
   SELFTEST_DIAGNOSTICS ||
   SELFTEST_SHARED_SESSION ||
-  SELFTEST_SUSPEND;
+  SELFTEST_SUSPEND ||
+  SELFTEST_SHORTCUTS;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -473,13 +477,43 @@ function notifyDisplayOrChromeChange() {
   emitToRenderer({ type: 'layout:recompute' });
 }
 
+/**
+ * Accelerator from keymap for a shortcut id (empty if disabled).
+ * @param {string} id
+ * @returns {string|undefined}
+ */
+function menuAccel(id) {
+  const ks = (getState().settings && getState().settings.keyboardShortcuts) || null;
+  const r = keymap.resolveShortcut(ks, id);
+  if (r.disabled || !r.combo) return undefined;
+  return keymap.comboToAccelerator(r.combo);
+}
+
 function setupApplicationMenu() {
   const focusedPanel = () => panels.getFocusedAccountId();
+  /** Run panel action via shared panel-shortcuts (same as before-input). */
+  const runPanel = (actionId) => {
+    const id = focusedPanel();
+    if (id) panelShortcuts.runAction(id, actionId);
+  };
 
   const template = [
     {
       label: 'Arquivo',
-      submenu: [{ role: 'quit', label: 'Sair' }],
+      submenu: [
+        {
+          label: 'Imprimir…',
+          accelerator: menuAccel('print'),
+          click: () => runPanel('print'),
+        },
+        {
+          label: 'Salvar página…',
+          accelerator: menuAccel('savePage'),
+          click: () => runPanel('savePage'),
+        },
+        { type: 'separator' },
+        { role: 'quit', label: 'Sair' },
+      ],
     },
     {
       label: 'Editar',
@@ -493,17 +527,14 @@ function setupApplicationMenu() {
         { role: 'selectAll', label: 'Selecionar tudo', accelerator: 'CmdOrCtrl+A' },
         { type: 'separator' },
         {
+          label: 'Localizar…',
+          accelerator: menuAccel('find'),
+          click: () => runPanel('find'),
+        },
+        {
           label: 'IA: melhorar texto…',
-          accelerator: 'CmdOrCtrl+Shift+Space',
-          click: () => {
-            try {
-              const cfg = aiWrite.currentConfig();
-              if (!cfg.enabled) return;
-              void aiWrite.openFromFocused({});
-            } catch {
-              /* ignore */
-            }
-          },
+          accelerator: menuAccel('aiWrite'),
+          click: () => runPanel('aiWrite'),
         },
       ],
     },
@@ -512,65 +543,54 @@ function setupApplicationMenu() {
       submenu: [
         {
           label: 'Recarregar painel',
-          accelerator: 'CmdOrCtrl+R',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelReload(id);
-          },
+          accelerator: menuAccel('reload'),
+          click: () => runPanel('reload'),
         },
         {
           label: 'Recarregar painel',
-          accelerator: 'F5',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelReload(id);
-          },
+          accelerator: menuAccel('reloadF5'),
+          click: () => runPanel('reloadF5'),
         },
         {
           label: 'Recarregar forçado',
-          accelerator: 'CmdOrCtrl+Shift+R',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelHardReload(id);
-          },
+          accelerator: menuAccel('hardReload'),
+          click: () => runPanel('hardReload'),
+        },
+        {
+          label: 'Recarregar forçado',
+          accelerator: menuAccel('hardReloadCtrlF5'),
+          click: () => runPanel('hardReloadCtrlF5'),
         },
         { type: 'separator' },
         {
           label: 'Aumentar zoom do painel',
-          accelerator: 'CmdOrCtrl+Plus',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelZoom(id, 0.1);
-          },
+          accelerator: menuAccel('zoomIn'),
+          click: () => runPanel('zoomIn'),
         },
         {
           label: 'Aumentar zoom do painel',
-          accelerator: 'CmdOrCtrl+=',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelZoom(id, 0.1);
-          },
+          accelerator: (() => {
+            const ks = (getState().settings && getState().settings.keyboardShortcuts) || null;
+            const r = keymap.resolveShortcut(ks, 'zoomIn');
+            if (r.disabled || !r.altCombo) return undefined;
+            return keymap.comboToAccelerator(r.altCombo);
+          })(),
+          click: () => runPanel('zoomIn'),
         },
         {
           label: 'Diminuir zoom do painel',
-          accelerator: 'CmdOrCtrl+-',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelZoom(id, -0.1);
-          },
+          accelerator: menuAccel('zoomOut'),
+          click: () => runPanel('zoomOut'),
         },
         {
           label: 'Zoom padrão do painel',
-          accelerator: 'CmdOrCtrl+0',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelZoom(id, 0);
-          },
+          accelerator: menuAccel('zoomReset'),
+          click: () => runPanel('zoomReset'),
         },
         { type: 'separator' },
         {
           label: 'Tela cheia',
-          accelerator: 'F11',
+          accelerator: menuAccel('fullscreen'),
           click: () => {
             chromeFullscreen.toggle();
           },
@@ -578,23 +598,17 @@ function setupApplicationMenu() {
         { type: 'separator' },
         {
           label: 'Ferramentas de desenvolvedor (painel)',
-          accelerator: 'F12',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelOpenDevTools(id);
-          },
+          accelerator: menuAccel('devtools'),
+          click: () => runPanel('devtools'),
         },
         {
           label: 'Ferramentas de desenvolvedor (painel)',
-          accelerator: 'CmdOrCtrl+Shift+I',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelOpenDevTools(id);
-          },
+          accelerator: menuAccel('devtoolsPanel'),
+          click: () => runPanel('devtoolsPanel'),
         },
         {
           label: 'Ferramentas de desenvolvedor (app)',
-          accelerator: 'CmdOrCtrl+Shift+Alt+I',
+          accelerator: menuAccel('devtoolsApp'),
           click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -608,47 +622,43 @@ function setupApplicationMenu() {
       submenu: [
         {
           label: 'Focar barra de URL',
-          accelerator: 'CmdOrCtrl+L',
+          accelerator: menuAccel('focusUrl'),
           click: () => emitToRenderer({ type: 'focus:url' }),
         },
         {
           label: 'Voltar',
-          accelerator: 'Alt+Left',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelBack(id);
-          },
+          accelerator: menuAccel('back'),
+          click: () => runPanel('back'),
         },
         {
           label: 'Avançar',
-          accelerator: 'Alt+Right',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelForward(id);
-          },
+          accelerator: menuAccel('forward'),
+          click: () => runPanel('forward'),
         },
         { type: 'separator' },
         {
           label: 'Início',
-          accelerator: 'Alt+Home',
-          click: () => {
-            const id = focusedPanel();
-            if (id) panels.panelGoHome(id);
-          },
+          accelerator: menuAccel('home'),
+          click: () => runPanel('home'),
+        },
+        {
+          label: 'Ver código-fonte',
+          accelerator: menuAccel('viewSource'),
+          click: () => runPanel('viewSource'),
         },
         {
           label: 'Favoritar página',
-          accelerator: 'CmdOrCtrl+D',
+          accelerator: menuAccel('favorite'),
           click: () => emitToRenderer({ type: 'ui:favorite' }),
         },
         {
           label: 'Histórico',
-          accelerator: 'CmdOrCtrl+H',
+          accelerator: menuAccel('history'),
           click: () => emitToRenderer({ type: 'ui:history' }),
         },
         {
           label: 'Downloads',
-          accelerator: 'CmdOrCtrl+J',
+          accelerator: menuAccel('downloads'),
           click: () => emitToRenderer({ type: 'ui:downloads' }),
         },
       ],
@@ -658,7 +668,7 @@ function setupApplicationMenu() {
       submenu: [
         {
           label: 'Nova janela',
-          accelerator: 'CmdOrCtrl+T',
+          accelerator: menuAccel('newWindow'),
           click: () => emitToRenderer({ type: 'ui:new-account' }),
         },
         {
@@ -721,6 +731,7 @@ function createWindow() {
     SELFTEST_REALDRAG_TOPBAR ||
     SELFTEST_REALHOVER_FULLSCREEN ||
     SELFTEST_CONTEXTMENU ||
+    SELFTEST_SHORTCUTS ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
@@ -844,6 +855,7 @@ function createWindow() {
         SELFTEST_REALDRAG_TOPBAR ||
         SELFTEST_REALHOVER_FULLSCREEN ||
         SELFTEST_CONTEXTMENU ||
+        SELFTEST_SHORTCUTS ||
         SELFTEST_SETTINGS_PERF ||
         SELFTEST_WORKSPACE_DELETE ||
         SELFTEST_SHARED_SESSION ||
@@ -959,6 +971,14 @@ function createWindow() {
       }
     },
   });
+  panelShortcuts.configure({
+    getMainWindow: () => mainWindow,
+    emitToRenderer,
+    panels,
+    chromeFullscreen,
+    rebuildApplicationMenu: () => setupApplicationMenu(),
+  });
+  panelShortcuts.ensureIpc();
   sidebarCursor.init(mainWindow, emitToRenderer, {
     isChromeHidden: () => chromeFullscreen.isChromeHidden(),
   });
@@ -2021,6 +2041,34 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_SHORTCUTS) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runShortcutsSelftest } = require('./selftest-shortcuts');
+          runShortcutsSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            panelShortcuts,
+            keymap,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_PROXY) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -3066,6 +3114,71 @@ function registerIpc() {
     return publicState();
   });
 
+  ipcMain.handle('keymap:list', () => {
+    const ks = (getState().settings && getState().settings.keyboardShortcuts) || null;
+    return keymap.listShortcuts(ks);
+  });
+
+  ipcMain.handle('keymap:find-conflict', (_e, payload) => {
+    const ks = (getState().settings && getState().settings.keyboardShortcuts) || null;
+    const combo = payload && payload.combo;
+    const exceptId = payload && payload.exceptId;
+    return keymap.findConflict(ks, combo, exceptId);
+  });
+
+  ipcMain.handle('keymap:set', (_e, payload) => {
+    const id = payload && payload.id;
+    if (!id || !keymap.getDef(id)) return { ok: false, error: 'Atalho desconhecido' };
+    const ks = (getState().settings && getState().settings.keyboardShortcuts) || null;
+    if (payload.disabled === true) {
+      const next = keymap.applyOverride(ks, id, { disabled: true });
+      updateState((s) => {
+        s.settings.keyboardShortcuts = next;
+      });
+      panelShortcuts.onShortcutsChanged();
+      return { ok: true, state: publicState(), list: keymap.listShortcuts(next) };
+    }
+    if (payload.combo != null) {
+      const combo = keymap.normalizeComboString(String(payload.combo));
+      if (!combo) return { ok: false, error: 'Combinação inválida' };
+      const conflict = keymap.findConflict(ks, combo, id);
+      if (conflict && !payload.swap) {
+        return { ok: false, conflict, pendingCombo: combo };
+      }
+      let next = keymap.applyOverride(ks, id, { combo });
+      if (conflict && payload.swap) {
+        next = keymap.applyOverride(next, conflict.id, { restore: true });
+        next = keymap.applyOverride(next, id, { combo });
+      }
+      updateState((s) => {
+        s.settings.keyboardShortcuts = next;
+      });
+      panelShortcuts.onShortcutsChanged();
+      return { ok: true, state: publicState(), list: keymap.listShortcuts(next) };
+    }
+    return { ok: false, error: 'Nada a alterar' };
+  });
+
+  ipcMain.handle('keymap:restore', (_e, id) => {
+    if (!id || !keymap.getDef(id)) return { ok: false, error: 'Atalho desconhecido' };
+    const ks = (getState().settings && getState().settings.keyboardShortcuts) || null;
+    const next = keymap.applyOverride(ks, id, { restore: true });
+    updateState((s) => {
+      s.settings.keyboardShortcuts = next;
+    });
+    panelShortcuts.onShortcutsChanged();
+    return { ok: true, state: publicState(), list: keymap.listShortcuts(next) };
+  });
+
+  ipcMain.handle('keymap:restore-all', () => {
+    const next = keymap.restoreAllDefaults();
+    updateState((s) => {
+      s.settings.keyboardShortcuts = next;
+    });
+    panelShortcuts.onShortcutsChanged();
+    return { ok: true, state: publicState(), list: keymap.listShortcuts(next) };
+  });
+
   ipcMain.handle('settings:update', async (_e, partial) => {
     const prof = settingsApply.shouldProfileSettings()
       ? settingsApply.createSettingsProfile()
@@ -3093,6 +3206,10 @@ function registerIpc() {
     const aiWritePartial =
       effects.needAiWrite && changed.aiWrite && typeof changed.aiWrite === 'object'
         ? changed.aiWrite
+        : null;
+    const keyboardShortcutsPartial =
+      changed.keyboardShortcuts && typeof changed.keyboardShortcuts === 'object'
+        ? changed.keyboardShortcuts
         : null;
 
     let dohError = null;
@@ -3159,6 +3276,7 @@ function registerIpc() {
       delete next.doh;
       delete next.languageTool;
       delete next.aiWrite;
+      delete next.keyboardShortcuts;
       if (next.homepage != null) {
         next.homepage = sanitizeUserStartUrl(
           next.homepage,
@@ -3223,8 +3341,25 @@ function registerIpc() {
           apiKeyEnc: prevAi.apiKeyEnc,
         });
       }
+      if (keyboardShortcutsPartial) {
+        s.settings.keyboardShortcuts = keymap.normalizeKeyboardShortcuts({
+          ...(s.settings.keyboardShortcuts || {}),
+          ...keyboardShortcutsPartial,
+          overrides: {
+            ...((s.settings.keyboardShortcuts && s.settings.keyboardShortcuts.overrides) || {}),
+            ...((keyboardShortcutsPartial && keyboardShortcutsPartial.overrides) || {}),
+          },
+        });
+      }
     });
     if (prof) prof.mark('state');
+    if (keyboardShortcutsPartial) {
+      try {
+        panelShortcuts.onShortcutsChanged();
+      } catch {
+        /* ignore */
+      }
+    }
 
     // Adblock rebuild is heavy — never block the IPC return path.
     if (adblockPartial) {

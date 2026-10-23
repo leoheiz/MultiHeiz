@@ -27,6 +27,7 @@ const volumeControl = require('./volume-control');
 const popoverOverlay = require('./popover-overlay');
 const unread = require('./unread');
 const partition = require('./partition');
+const panelShortcuts = require('./panel-shortcuts');
 
 /** @type {Map<string, { view: import('electron').WebContentsView, accountId: string, visible: boolean, parked: boolean }>} */
 const panels = new Map();
@@ -1671,13 +1672,14 @@ function createPanel(accountId) {
     setFocusedAccount(accountId);
   });
   // Click / key inside page also focuses this panel (sidebar + URL follow).
-  // F11 / Esc for chrome-fullscreen focus mode (preventDefault only when handled).
+  // Browser shortcuts (print/find/zoom/…) + F11/Esc via panel-shortcuts keymap.
   view.webContents.on('before-input-event', (e, input) => {
     if (input && (input.type === 'keyDown' || input.type === 'mouseDown')) {
       setFocusedAccount(accountId);
     }
-    chromeFullscreen.handleBeforeInput(e, input, accountId);
+    panelShortcuts.handleBeforeInput(e, input, accountId);
   });
+  panelShortcuts.wireFindInPage(view.webContents, accountId);
   try {
     view.webContents.on('input-event', (_e, input) => {
       if (input && (input.type === 'mouseDown' || input.type === 'rawKeyDown')) {

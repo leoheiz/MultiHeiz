@@ -96,7 +96,8 @@ function diffSettingsPartial(prev, nextPartial) {
       key === 'modules' ||
       key === 'extensions' ||
       key === 'languageTool' ||
-      key === 'aiWrite'
+      key === 'aiWrite' ||
+      key === 'keyboardShortcuts'
     ) {
       if (!stableEqual(p[key], n[key])) out[key] = n[key];
       continue;

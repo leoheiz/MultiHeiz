@@ -1407,3 +1407,166 @@ try {
   }
   requestAnimationFrame(tick);
 })();
+
+/** Find-in-page bar (Ctrl+F) — DOM in isolated world, same page document. */
+(function findBarUi() {
+  if (!isTopFrame()) return;
+  const HOST_ID = 'mh-find-bar-host';
+  let host = null;
+  let input = null;
+  let countEl = null;
+  let debounce = null;
+
+  function ensureHost() {
+    if (host && host.isConnected) return host;
+    host = document.getElementById(HOST_ID);
+    if (host) {
+      input = host.querySelector('input');
+      countEl = host.querySelector('[data-role="count"]');
+      return host;
+    }
+    host = document.createElement('div');
+    host.id = HOST_ID;
+    host.setAttribute('data-mh-find-bar', '1');
+    host.style.cssText =
+      'all:initial;position:fixed;top:8px;right:12px;z-index:2147483646;' +
+      'display:none;font-family:Segoe UI,system-ui,sans-serif;font-size:13px;';
+    const box = document.createElement('div');
+    box.style.cssText =
+      'display:flex;align-items:center;gap:6px;padding:6px 8px;' +
+      'background:#1e2430;color:#e8eaed;border-radius:8px;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.35);border:1px solid #3a4254;';
+    input = document.createElement('input');
+    input.type = 'search';
+    input.placeholder = 'Localizar na página';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.style.cssText =
+      'width:180px;padding:4px 8px;border-radius:4px;border:1px solid #4a5568;' +
+      'background:#0f1419;color:#e8eaed;outline:none;font:inherit;';
+    countEl = document.createElement('span');
+    countEl.setAttribute('data-role', 'count');
+    countEl.style.cssText = 'min-width:4.5em;text-align:center;opacity:.85;font-variant-numeric:tabular-nums;';
+    countEl.textContent = '';
+    function mkBtn(label, title) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.title = title;
+      b.style.cssText =
+        'padding:2px 8px;border-radius:4px;border:1px solid #4a5568;' +
+        'background:#2a3344;color:#e8eaed;cursor:pointer;font:inherit;';
+      return b;
+    }
+    const prev = mkBtn('↑', 'Anterior');
+    const next = mkBtn('↓', 'Próximo');
+    const close = mkBtn('×', 'Fechar');
+    prev.addEventListener('click', () => {
+      try {
+        ipcRenderer.send('mh-find-bar:from-panel', { type: 'prev' });
+      } catch {
+        /* ignore */
+      }
+    });
+    next.addEventListener('click', () => {
+      try {
+        ipcRenderer.send('mh-find-bar:from-panel', { type: 'next' });
+      } catch {
+        /* ignore */
+      }
+    });
+    close.addEventListener('click', () => {
+      try {
+        ipcRenderer.send('mh-find-bar:from-panel', { type: 'close' });
+      } catch {
+        /* ignore */
+      }
+    });
+    input.addEventListener('input', () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        try {
+          ipcRenderer.send('mh-find-bar:from-panel', { type: 'query', query: input.value });
+        } catch {
+          /* ignore */
+        }
+      }, 80);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          ipcRenderer.send('mh-find-bar:from-panel', { type: 'close' });
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          ipcRenderer.send('mh-find-bar:from-panel', {
+            type: e.shiftKey ? 'prev' : 'next',
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+    box.appendChild(input);
+    box.appendChild(countEl);
+    box.appendChild(prev);
+    box.appendChild(next);
+    box.appendChild(close);
+    host.appendChild(box);
+    const root = document.documentElement || document.body;
+    if (root) root.appendChild(host);
+    return host;
+  }
+
+  function show(query) {
+    const h = ensureHost();
+    if (!h) return;
+    h.style.display = 'block';
+    if (input) {
+      if (query != null) input.value = String(query);
+      try {
+        input.focus();
+        input.select();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function hide() {
+    if (host) host.style.display = 'none';
+    if (input) {
+      try {
+        input.blur();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function setResult(active, matches) {
+    if (!countEl) return;
+    const a = Number(active) || 0;
+    const m = Number(matches) || 0;
+    countEl.textContent = m > 0 ? a + ' / ' + m : '0 / 0';
+  }
+
+  try {
+    ipcRenderer.on('mh-find-bar', (_e, msg) => {
+      if (!msg || !msg.type) return;
+      if (msg.type === 'open') show(msg.query || '');
+      else if (msg.type === 'close') hide();
+      else if (msg.type === 'result') setResult(msg.active, msg.matches);
+    });
+  } catch {
+    /* ignore */
+  }
+})();

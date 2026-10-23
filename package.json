@@ -52,6 +52,7 @@
     "selftest:abu-yt": "node tools/selftest-abu-yt.js",
     "selftest:builtin-yt": "node tools/selftest-builtin-yt.js",
     "selftest:contextmenu": "node tools/selftest-contextmenu.js",
+    "selftest:shortcuts": "node tools/selftest-shortcuts.js",
     "selftest:proxy": "node tools/selftest-proxy.js",
     "selftest:doh": "node tools/selftest-doh.js",
     "selftest:autostart": "node tools/selftest-autostart.js",

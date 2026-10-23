@@ -284,6 +284,7 @@
         <aside class="settings-nav" aria-label="Seções">
           <button type="button" class="settings-nav-btn active" data-section="geral">Geral</button>
           <button type="button" class="settings-nav-btn" data-section="navegacao">Navegação</button>
+          <button type="button" class="settings-nav-btn" data-section="atalhos">Atalhos de teclado</button>
           <button type="button" class="settings-nav-btn" data-section="rede">Rede</button>
           <button type="button" class="settings-nav-btn" data-section="certificados">Certificados</button>
           <button type="button" class="settings-nav-btn" data-section="escrita">Escrita</button>
@@ -385,6 +386,21 @@
               >Modelo personalizado
               <input name="searchTemplate" id="search-template" placeholder="https://...?q=%s" />
             </label>
+          </section>
+
+          <section class="settings-pane" data-pane="atalhos">
+            <h3 class="settings-subhead">Atalhos de teclado</h3>
+            <p class="muted-note">
+              Clique em uma combinação para gravar outra. Conflitos pedem confirmação para trocar.
+              Desative um atalho se o site precisar da tecla.
+            </p>
+            <div class="settings-actions-row">
+              <button type="button" class="btn ghost" id="btn-keymap-restore-all">
+                Restaurar todos os padrões
+              </button>
+            </div>
+            <div id="keymap-list" class="keymap-list" role="list"></div>
+            <p class="muted-note" id="keymap-record-hint" hidden role="status"></p>
           </section>
 
           <section class="settings-pane" data-pane="rede">
