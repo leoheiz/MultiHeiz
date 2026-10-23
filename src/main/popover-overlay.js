@@ -467,11 +467,30 @@ function isOpen() {
 
 function getCurrent() {
   if (!current) return null;
+  const data =
+    current.payload && current.payload.data && typeof current.payload.data === 'object'
+      ? current.payload.data
+      : undefined;
   return {
     id: current.id,
     kind: current.kind,
     bounds: { ...current.bounds },
+    data,
   };
+}
+
+/**
+ * Run JS in the popover overlay document (selftests / diagnostics).
+ * @param {string} code
+ */
+async function evalOverlay(code) {
+  if (!overlayView) return null;
+  try {
+    if (overlayView.webContents.isDestroyed()) return null;
+    return await overlayView.webContents.executeJavaScript(code, true);
+  } catch {
+    return null;
+  }
 }
 
 function getView() {
@@ -656,6 +675,7 @@ module.exports = {
   requestClose,
   isOpen,
   getCurrent,
+  evalOverlay,
   getView,
   getZOrderIndex,
   applyMeasuredSize,

@@ -17,7 +17,7 @@ function defaultBookmarks() {
       { id: FOLDER_OTHER, name: 'Outros favoritos', order: 1, builtIn: 'other' },
     ],
     items: [],
-    expandedFolders: [FOLDER_BAR],
+    expandedFolders: [FOLDER_BAR, FOLDER_OTHER],
   };
 }
 
@@ -130,9 +130,23 @@ function migrateBookmarksData(raw) {
   }
   items = items.filter((it) => it && typeof it.url === 'string' && it.url.trim());
 
-  const expandedFolders = Array.isArray(parsed.expandedFolders)
-    ? parsed.expandedFolders
-    : [FOLDER_BAR];
+  let expandedFolders = Array.isArray(parsed.expandedFolders)
+    ? parsed.expandedFolders.map(String)
+    : [FOLDER_BAR, FOLDER_OTHER];
+
+  // After migrating legacy data into folder-other, expand folders that actually
+  // have items so the popover/page are not stuck on an empty "Barra de favoritos".
+  const foldersWithItems = new Set(
+    items.filter((it) => it && it.folderId).map((it) => it.folderId)
+  );
+  if (wasFlat || Number(parsed.version) < 2 || !Array.isArray(parsed.expandedFolders)) {
+    for (const id of foldersWithItems) {
+      if (!expandedFolders.includes(id)) expandedFolders.push(id);
+    }
+    if (!expandedFolders.length) {
+      expandedFolders = [FOLDER_BAR, FOLDER_OTHER];
+    }
+  }
 
   const data = {
     ...parsed,
@@ -143,6 +157,38 @@ function migrateBookmarksData(raw) {
   };
 
   return { data, migrated: wasFlat || Number(parsed.version) < 2 };
+}
+
+/**
+ * Heal already-migrated profiles: empty expanded bar + items only in "other"
+ * looked like zero favorites in the popover/page.
+ * @param {object} data
+ */
+function healExpandedFolders(data) {
+  if (!data || typeof data !== 'object') return data;
+  const items = Array.isArray(data.items) ? data.items : [];
+  let expanded = Array.isArray(data.expandedFolders) ? data.expandedFolders.map(String) : [];
+  const withItems = new Set(
+    items.filter((it) => it && it.folderId).map((it) => String(it.folderId))
+  );
+  let changed = false;
+  if (withItems.size) {
+    const anyVisible = [...withItems].some((id) => expanded.includes(id));
+    if (!anyVisible) {
+      for (const id of withItems) {
+        if (!expanded.includes(id)) {
+          expanded.push(id);
+          changed = true;
+        }
+      }
+    }
+  }
+  if (!expanded.length) {
+    expanded = [FOLDER_BAR, FOLDER_OTHER];
+    changed = true;
+  }
+  if (changed) data.expandedFolders = expanded;
+  return data;
 }
 
 function backupOnce(filePath) {
@@ -180,12 +226,14 @@ function load() {
   // Array / flat: migrate before json-store object-merge
   if (raw != null && (Array.isArray(raw) || (raw && typeof raw === 'object'))) {
     const { data: migrated, migrated: did } = migrateBookmarksData(raw);
+    healExpandedFolders(migrated);
     if (did && filePath) backupOnce(filePath);
     store.set(migrated);
     return migrated;
   }
   const data = store.load();
   const { data: migrated, migrated: did } = migrateBookmarksData(data);
+  healExpandedFolders(migrated);
   if (did && filePath) backupOnce(filePath);
   store.set(migrated);
   return migrated;
@@ -226,7 +274,7 @@ function addFavorite({ url, title, folderId, defaultWindowId, name }) {
   const fid =
     folderId && folders.some((f) => f.id === folderId)
       ? folderId
-      : FOLDER_OTHER;
+      : FOLDER_BAR;
   const item = {
     id: makeId('bm'),
     url: String(url || '').trim(),

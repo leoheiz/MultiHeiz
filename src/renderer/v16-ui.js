@@ -266,9 +266,16 @@
   async function renderFavorites(body) {
     body.classList.add('favorites-page');
     const data = await window.multiheiz.bookmarksList();
+    const folders0 = data.folders || [];
+    const items0 = data.items || [];
+    const folderWithItems = folders0.find((f) =>
+      items0.some((it) => it && it.folderId === f.id)
+    );
     let selectedFolderId =
-      (data.folders && data.folders[0] && data.folders[0].id) || 'folder-other';
-    let expanded = new Set(data.expandedFolders || data.folders.map((f) => f.id));
+      (folderWithItems && folderWithItems.id) ||
+      (folders0[0] && folders0[0].id) ||
+      'folder-other';
+    let expanded = new Set(data.expandedFolders || folders0.map((f) => f.id));
 
     const top = h('div', { className: 'favorites-page-top mgr-toolbar' },
       h('button', {
@@ -665,8 +672,10 @@
     if (existing) {
       form.name.value = existing.name || '';
       form.url.value = existing.url || '';
-      folderSel.value = existing.folderId || '';
+      folderSel.value = existing.folderId || 'folder-bar';
       winSel.value = existing.defaultWindowId || '';
+    } else if (folders[0]) {
+      folderSel.value = 'folder-bar';
     }
     pushOverlay('dlg-favorite');
     document.getElementById('dlg-favorite').showModal();

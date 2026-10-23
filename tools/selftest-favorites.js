@@ -76,6 +76,10 @@ function runNodeChecks() {
   assert(data.folders.some((f) => f.builtIn === 'other'), 'other folder');
   assert(data.items.length === 2, '2 items');
   assert(data.items.every((it) => it.folderId === 'folder-other'), 'items in other');
+  assert(
+    (data.expandedFolders || []).includes('folder-other'),
+    'migrated expanded includes folder-other'
+  );
 
   const v1 = {
     version: 1,
@@ -85,6 +89,10 @@ function runNodeChecks() {
   const m2 = bookmarks.migrateBookmarksData(v1);
   assert(m2.data.items[0].folderId === 'folder-other', 'legacy folder-default mapped');
   assert(m2.data.folders.every((f) => f.id !== 'folder-default'), 'no legacy id');
+  assert(
+    (m2.data.expandedFolders || []).includes('folder-other'),
+    'v1 migrate expands folder-other'
+  );
 
   console.log('PASS: node bookmarks migration');
 }
