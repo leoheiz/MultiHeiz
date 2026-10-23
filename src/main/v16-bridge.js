@@ -211,7 +211,13 @@ function initV16(ctx) {
     changelog.setEmit(emitToRenderer);
     ipcMain.handle('changelog:get', () => {
       try {
-        return { ok: true, data: changelog.loadChangelog(), version: app.getVersion() };
+        const data = changelog.loadChangelog();
+        return {
+          ok: true,
+          data,
+          view: changelog.getNovidadesViewModel(data),
+          version: app.getVersion(),
+        };
       } catch (err) {
         return { ok: false, error: (err && err.message) || String(err) };
       }

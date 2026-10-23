@@ -14,7 +14,8 @@ const APP_USER_MODEL_ID = 'com.leo.multiheiz';
 /** Dev/selftest AUMID — never share production ID (avoids Start Menu merge with installed app). */
 const APP_USER_MODEL_ID_DEV = 'com.leo.multiheiz.dev';
 const APP_DISPLAY_NAME = 'MultiHeiz';
-const RELEASES_URL = 'https://github.com/leoheiz/MultiHeiz/releases/latest';
+/** Página de todas as versões no GitHub (Sobre + notas de atualização). */
+const RELEASES_URL = 'https://github.com/leoheiz/MultiHeiz/releases';
 
 /**
  * AUMID for the current process. Unpackaged (npm start / selftests) uses .dev so

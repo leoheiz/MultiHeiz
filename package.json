@@ -68,6 +68,7 @@
     "selftest:favorites-e2e": "node tools/selftest-favorites-e2e.js",
     "selftest:favorites-popover": "node tools/selftest-favorites-popover.js",
     "selftest:history": "node tools/selftest-history.js",
+    "selftest:changelog": "node tools/selftest-changelog.js",
     "selftest:catalog": "node tools/selftest-catalog.js",
     "selftest:custom-site": "node tools/selftest-custom-site.js",
     "selftest:edit-start-url": "node tools/selftest-edit-start-url.js",

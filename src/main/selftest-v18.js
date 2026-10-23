@@ -1102,6 +1102,10 @@ window.__iframeEarly = window.__mhEarlyOk === true;
       const versions = list
         ? [...list.querySelectorAll('.novidades-version')].map((n) => n.dataset.version)
         : [];
+      const groups = list
+        ? [...list.querySelectorAll('.novidades-group')].map((n) => n.textContent)
+        : [];
+      const allLink = list ? list.querySelector('#novidades-all-releases') : null;
       const open = !!(dlg && dlg.open);
       if (ui.closeNovidadesAndMaybeMark) ui.closeNovidadesAndMaybeMark();
       await new Promise((res) => setTimeout(res, 200));
@@ -1109,20 +1113,35 @@ window.__iframeEarly = window.__mhEarlyOk === true;
         ok: !!(r && r.ok && open),
         count: r && r.count,
         tags: [...new Set(tags)],
-        has100: versions.includes('1.0.0'),
-        has101: versions.includes('1.0.1'),
-        has110: versions.includes('1.1.0'),
-        allVersions:
-          versions.includes('1.0.0') &&
-          versions.includes('1.0.1') &&
-          versions.includes('1.1.0'),
+        versions,
+        groups: [...new Set(groups)],
+        has131: versions.includes('1.3.1'),
+        has130: versions.includes('1.3.0'),
+        onlyTwo: versions.length === 2,
+        hasAllLink: !!(
+          allLink &&
+          /Ver todas as notas de versão/.test(allLink.textContent || '') &&
+          /github\\.com\\/leoheiz\\/MultiHeiz\\/releases/.test(allLink.getAttribute('href') || '')
+        ),
+        linkHref: allLink ? allLink.getAttribute('href') : null,
         tagNovo: tags.includes('Novo'),
         tagMelhoria: tags.includes('Melhoria'),
         tagCorrecao: tags.includes('Correção'),
+        hasNovidadesGroup: groups.includes('Novidades'),
+        hasCorrecoesGroup: groups.includes('Correções'),
       };
     })()
   `);
-  if (!uiNov || !uiNov.ok || !uiNov.has100 || !uiNov.has101 || !uiNov.has110 || !uiNov.allVersions) {
+  if (
+    !uiNov ||
+    !uiNov.ok ||
+    !uiNov.onlyTwo ||
+    !uiNov.has131 ||
+    !uiNov.has130 ||
+    !uiNov.hasAllLink ||
+    !uiNov.hasNovidadesGroup ||
+    !uiNov.hasCorrecoesGroup
+  ) {
     console.log('FAIL: novidades UI', uiNov);
     app.exit(1);
     return;

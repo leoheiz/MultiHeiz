@@ -2771,12 +2771,12 @@
     const intro = document.getElementById('novidades-intro');
     if (!dlg || !list) return { ok: false, reason: 'missing-ui' };
 
-    let data = null;
+    let view = null;
     let version = hooks().getAppVersion ? hooks().getAppVersion() : '';
     try {
       const r = await window.multiheiz.changelogGet();
       if (r && r.ok) {
-        data = r.data;
+        view = r.view || null;
         if (r.version) version = r.version;
       }
     } catch {
@@ -2788,7 +2788,7 @@
         : 'Log de atualizações do MultiHeiz';
     }
     list.replaceChildren();
-    const versions = (data && data.versions) || [];
+    const versions = (view && view.versions) || [];
     for (const ver of versions) {
       const block = document.createElement('section');
       block.className = 'novidades-version';
@@ -2799,27 +2799,58 @@
         ? `${ver.version}${titleBit} · ${ver.date}`
         : `${ver.version || ''}${titleBit}`;
       block.appendChild(h);
-      const ul = document.createElement('ul');
-      for (const entry of ver.entries || []) {
-        const li = document.createElement('li');
-        const tag = document.createElement('span');
-        tag.className = tagClass(entry.tag);
-        tag.textContent = String(entry.tag || '');
-        const text = document.createElement('span');
-        text.textContent = String(entry.text || '');
-        li.appendChild(tag);
-        li.appendChild(text);
-        ul.appendChild(li);
+      for (const group of ver.groups || []) {
+        const gh = document.createElement('h4');
+        gh.className = 'novidades-group';
+        gh.textContent = String(group.name || '');
+        block.appendChild(gh);
+        const ul = document.createElement('ul');
+        for (const entry of group.entries || []) {
+          const li = document.createElement('li');
+          const tag = document.createElement('span');
+          const entryTag =
+            group.name === 'Correções'
+              ? 'Correção'
+              : String(entry.tag || 'Novo');
+          tag.className = tagClass(entryTag);
+          tag.textContent = entryTag;
+          const text = document.createElement('span');
+          text.className = 'novidades-entry-text';
+          text.textContent = String(entry.text || '');
+          li.appendChild(tag);
+          li.appendChild(text);
+          ul.appendChild(li);
+        }
+        block.appendChild(ul);
       }
-      block.appendChild(ul);
       list.appendChild(block);
     }
+
+    const releasesUrl =
+      (view && view.releasesUrl) || 'https://github.com/leoheiz/MultiHeiz/releases';
+    const linkLabel =
+      (view && view.allReleasesLabel) || 'Ver todas as notas de versão';
+    const footer = document.createElement('p');
+    footer.className = 'novidades-all-wrap';
+    const a = document.createElement('a');
+    a.id = 'novidades-all-releases';
+    a.className = 'novidades-all-releases';
+    a.href = releasesUrl;
+    a.textContent = linkLabel;
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.multiheiz && window.multiheiz.updatesOpenReleases) {
+        window.multiheiz.updatesOpenReleases();
+      }
+    });
+    footer.appendChild(a);
+    list.appendChild(footer);
 
     if (!dlg.open) {
       if (hooks().pushOverlay) hooks().pushOverlay('dlg-novidades');
       dlg.showModal();
     }
-    return { ok: true, count: versions.length, version };
+    return { ok: true, count: versions.length, version, releasesUrl };
   }
 
   function closeNovidadesAndMaybeMark() {

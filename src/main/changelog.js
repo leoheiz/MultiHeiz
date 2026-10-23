@@ -40,6 +40,56 @@ function loadChangelog() {
   return cached;
 }
 
+/** How many versions the in-app Novidades dialog shows. */
+const NOVIDADES_DISPLAY_LIMIT = 2;
+
+const ALL_RELEASES_LABEL = 'Ver todas as notas de versão';
+
+/**
+ * View model for the in-app update notes: only the N most recent versions,
+ * entries grouped as Novidades / Correções, plus GitHub releases link.
+ * @param {object} [data]
+ * @param {{ limit?: number, releasesUrl?: string }} [opts]
+ */
+function getNovidadesViewModel(data, opts) {
+  const limit =
+    opts && opts.limit != null ? Number(opts.limit) : NOVIDADES_DISPLAY_LIMIT;
+  let releasesUrl = opts && opts.releasesUrl;
+  if (!releasesUrl) {
+    try {
+      releasesUrl = require('./config').RELEASES_URL;
+    } catch {
+      releasesUrl = 'https://github.com/leoheiz/MultiHeiz/releases';
+    }
+  }
+  const raw = ((data || loadChangelog()).versions || []).slice(
+    0,
+    Number.isFinite(limit) && limit > 0 ? limit : NOVIDADES_DISPLAY_LIMIT
+  );
+  const versions = raw.map((ver) => {
+    const novidades = [];
+    const correcoes = [];
+    for (const e of ver.entries || []) {
+      if (String(e.tag || '') === 'Correção') correcoes.push(e);
+      else novidades.push(e);
+    }
+    const groups = [];
+    if (novidades.length) groups.push({ name: 'Novidades', entries: novidades });
+    if (correcoes.length) groups.push({ name: 'Correções', entries: correcoes });
+    return {
+      version: String(ver.version || ''),
+      date: ver.date || '',
+      title: ver.title || '',
+      groups,
+    };
+  });
+  return {
+    versions,
+    releasesUrl: String(releasesUrl || ''),
+    allReleasesLabel: ALL_RELEASES_LABEL,
+  };
+}
+
 function reloadChangelogForTest() {
   cached = null;
   return loadChangelog();
@@ -213,8 +263,11 @@ function maybeEmitNovidades(opts) {
 module.exports = {
   SKEW_MS,
   TAGS,
+  NOVIDADES_DISPLAY_LIMIT,
+  ALL_RELEASES_LABEL,
   loadChangelog,
   reloadChangelogForTest,
+  getNovidadesViewModel,
   compareSemver,
   shouldShowNovidades,
   markChangelogSeen,

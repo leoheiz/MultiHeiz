@@ -6,235 +6,155 @@
       "title": "Volume, atualização automática e favoritos",
       "entries": [
         {
-          "tag": "Correção",
-          "text": "Volume 0–200% em rádio web (ex. htzfm): funciona com áudio fora da página; se o site não permitir passar de 100%, o app avisa e não deixa o som mudo."
-        },
-        {
           "tag": "Novo",
           "text": "Atualização automática em segundo plano: baixa em silêncio e avisa quando estiver pronta (Reiniciar agora / Depois). Controles em Sobre."
         },
         {
           "tag": "Novo",
-          "text": "Atalhos no painel focado (imprimir, localizar, zoom, recarregar…) e Configurações → Atalhos de teclado para personalizar."
+          "text": "Atalhos no painel focado e personalização em Configurações → Atalhos de teclado."
         },
         {
           "tag": "Novo",
-          "text": "Favoritos no estilo Edge (menu rápido + página com pastas) e nova janela a partir dos favoritos no catálogo."
+          "text": "Favoritos com menu rápido e página completa (pastas, busca); nova janela a partir dos favoritos."
         },
         {
           "tag": "Novo",
-          "text": "Certificados: escolher e-CPF/e-CNPJ, cadeado com info do site e página clara em erro de certificado (continuar só em rede local)."
+          "text": "Certificados de cliente, cadeado com info do site e página clara em erro de certificado."
         },
         {
           "tag": "Novo",
-          "text": "Minimizar e Fechar na barra lateral; várias janelas suspensas na mesma área; opção de limpar memória de tempos em tempos."
+          "text": "Minimizar e Fechar na barra lateral; várias janelas suspensas na mesma área."
         },
         {
-          "tag": "Correção",
-          "text": "Vídeo em tela cheia do site não bagunça mais o layout; opção de mostrar a barra superior ao levar o mouse ao topo (desligada por padrão)."
+          "tag": "Novo",
+          "text": "Vídeo em janela flutuante (Picture-in-Picture) pela barra, atalho ou menu do botão direito."
+        },
+        {
+          "tag": "Novo",
+          "text": "Experimental (em testes): mini player sempre no topo, com transparência e travamento."
+        },
+        {
+          "tag": "Novo",
+          "text": "Mini player: botão de cadeado para travar com o mouse e botão para destravar na janela principal."
+        },
+        {
+          "tag": "Novo",
+          "text": "Histórico redesenhado: agrupado por dia, com busca e exclusão; parâmetros sensíveis de links não são guardados."
+        },
+        {
+          "tag": "Novo",
+          "text": "Extensões com página redesenhada — Experimental (em testes)."
         },
         {
           "tag": "Melhoria",
-          "text": "Corretor nativo ligado por padrão; LanguageTool desligado por padrão (com aviso se ligar). Página de extensões redesenhada (Experimental em testes)."
+          "text": "Corretor nativo ligado por padrão; LanguageTool desligado por padrão (com aviso se ligar)."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Opção de limpar memória periodicamente; barra superior ao levar o mouse ao topo em tela cheia (ligada por padrão)."
+        },
+        {
+          "tag": "Correção",
+          "text": "Volume 0–200% volta a funcionar mesmo com áudio criado fora da página; se o site não permitir passar de 100%, o app avisa."
+        },
+        {
+          "tag": "Correção",
+          "text": "Vídeo em tela cheia do site não bagunça mais o layout."
+        },
+        {
+          "tag": "Correção",
+          "text": "Monitor de memória abre com altura certa; minimizar/restaurar preserva posição (modo livre) e ordem (grid)."
+        },
+        {
+          "tag": "Correção",
+          "text": "Favoritos de versões anteriores voltam a aparecer no menu rápido e nas páginas de favoritos."
+        },
+        {
+          "tag": "Correção",
+          "text": "Atalhos personalizados aceitam mais teclas; ver código-fonte abre em janela separada."
+        },
+        {
+          "tag": "Correção",
+          "text": "Corrigido: o mini player mostrava a página inteira em vez de só o vídeo em alguns sites."
         }
       ]
     },
     {
       "version": "1.3.0",
       "date": "2026-10-19",
-      "title": "AdBlocker Ultimate no YouTube e sandbox",
+      "title": "Extensões, rede e catálogo",
       "entries": [
         {
           "tag": "Novo",
-          "text": "AdBlocker Ultimate agora bloqueia anúncios do YouTube sozinho (scriptlets, cosmético e rede), ainda Experimental (em testes)."
+          "text": "Bloqueador de anúncios e AdBlocker Ultimate melhorados — Experimental (em testes)."
         },
         {
           "tag": "Novo",
-          "text": "Bloqueador embutido agora tira anúncios do YouTube sozinho (scriptlets no início da página, em todas as frames, incluindo vídeos incorporados)."
+          "text": "Instalar extensões pelas lojas oficiais (barra Instalar) ou por arquivo/pasta em Avançado."
         },
         {
           "tag": "Novo",
-          "text": "Instalar extensões direto da Chrome Web Store e da loja do Edge (barra Instalar no MultiHeiz, botões em Configurações → Extensões; instalação por arquivo/pasta em Avançado)."
+          "text": "Proxy por janela; DNS criptografado em Configurações → Rede."
         },
         {
-          "tag": "Melhoria",
-          "text": "Compatibilidade MV3: shims de webNavigation/webRequest/tabs, cache early-replay e warm-up oculto para o YouTube."
+          "tag": "Novo",
+          "text": "Menu de contexto nativo nos painéis; permissões de site (microfone, câmera, etc.)."
         },
         {
-          "tag": "Melhoria",
-          "text": "Sandbox do Chromium forçado (enableSandbox) para preloads de service worker; DNR com redirect/modifyHeaders."
+          "tag": "Novo",
+          "text": "Catálogo de apps prontos ao criar janela, além de site personalizado."
+        },
+        {
+          "tag": "Novo",
+          "text": "Volume fino por janela (0–200%); contador de não lidas na barra lateral."
+        },
+        {
+          "tag": "Novo",
+          "text": "Notas com título, cores e fixadas; planilha com abas e redimensionamento."
+        },
+        {
+          "tag": "Novo",
+          "text": "Barra lateral fixa por padrão, com opção de esconder automaticamente."
+        },
+        {
+          "tag": "Novo",
+          "text": "Módulo de IA — Experimental (em testes), desligado por padrão (chave própria ou local)."
         },
         {
           "tag": "Melhoria",
           "text": "Extensões de terceiros continuam rotuladas Experimental (em testes)."
         },
         {
-          "tag": "Correção",
-          "text": "F11 em tela cheia volta a trazer a janela MultiHeiz para frente no Windows."
-        },
-        {
-          "tag": "Correção",
-          "text": "Atualização do portátil salva o novo .exe na pasta do MultiHeiz (ou em Downloads se não houver permissão)."
-        },
-        {
-          "tag": "Correção",
-          "text": "Lojas Chrome/Edge: botões nativos escondidos; CRX do Edge por HTTPS; barra Instalar sem mensagem antiga."
-        },
-        {
-          "tag": "Novo",
-          "text": "Barra lateral: padrão fixa; a seta alterna para esconder automaticamente (zona quente + overlay). Em Configurações → Aparência: \"Manter barra lateral sempre ativa (modo legado)\" restaura o recolhimento antigo."
-        },
-        {
-          "tag": "Correção",
-          "text": "Auto-esconder da barra lateral no Windows: zona quente mais fácil (polling no processo principal, inclusive sobre painéis); a barra não fecha ao ir até o pino (cabeçalho sem região de arraste + atraso de 700 ms); fixar pelo pino com a barra revelada não pisca."
-        },
-        {
-          "tag": "Correção",
-          "text": "Excluir uma área de trabalho agora fecha e remove todas as janelas dela (em vez de movê-las para outra área), com confirmação mostrando a quantidade."
-        },
-        {
-          "tag": "Correção",
-          "text": "Modo legado da barra lateral: a seta do topo volta a recolher/expandir (cabeçalho sem região de arraste no Windows)."
-        },
-        {
-          "tag": "Correção",
-          "text": "Modo legado da barra lateral volta ao compacto/expandido original (pré-1.3.0): inicia estreita (só ícones), a seta alterna para largura total com nomes; estado persiste; em F11 revela no estado salvo; nunca auto-esconde."
-        },
-        {
-          "tag": "Novo",
-          "text": "Menu de contexto nativo (botão direito) nos painéis."
-        },
-        {
-          "tag": "Novo",
-          "text": "Proxy por janela (HTTP/HTTPS/SOCKS, autenticação com safeStorage, badge na barra lateral)."
-        },
-        {
-          "tag": "Novo",
-          "text": "DNS criptografado (DNS sobre HTTPS) em Configurações → Rede: Desligado / Automático / Sempre criptografado, com Cloudflare, Google, Quad9, AdGuard ou URL personalizada."
-        },
-        {
-          "tag": "Correção",
-          "text": "Pino/seta da barra lateral responde a clique real do mouse no Windows (sidebar/pino sem região de arraste; topbar recuada sob o overlay para o clique não ser engolido)."
-        },
-        {
-          "tag": "Correção",
-          "text": "Barra superior volta a arrastar a janela (e duplo clique maximiza/restaura): área vazia com região de arraste; no-drag só nos controles e na barra lateral."
-        },
-        {
-          "tag": "Correção",
-          "text": "Menu de contexto do botão direito aparece na posição e no painel corretos; campos editáveis mostram Desfazer/Recortar/Copiar/Colar/Selecionar tudo."
-        },
-        {
-          "tag": "Correção",
-          "text": "Aplicar configurações não trava mais a interface: só aplica o que mudou, DoH sem recarregar painéis, trabalho pesado (adblock) em segundo plano."
-        },
-        {
-          "tag": "Correção",
-          "text": "Em tela cheia (F11) a barra lateral volta a abrir pela borda esquerda (zona quente / overlay), com pino temporário; ao sair, o modo anterior é restaurado sem alterar a preferência salva."
-        },
-        {
-          "tag": "Novo",
-          "text": "Permissões de site (microfone, câmera, notificações, localização, área de transferência, compartilhar tela): prompt no painel, ícone de informações do site na barra de endereço e indicador quando mic/câmera estão em uso."
-        },
-        {
-          "tag": "Novo",
-          "text": "Catálogo de apps prontos ao criar janela: WhatsApp, Telegram, Discord, Slack, Instagram, Messenger, Facebook, X, Gmail, Outlook, Teams, Spotify, YouTube Music, Notion, ChatGPT, Gemini, LinkedIn e TikTok, com busca, ícone e nome prontos, além de Site personalizado."
-        },
-        {
           "tag": "Melhoria",
-          "text": "Notas no estilo Google Keep: título editável no cartão e no editor, paleta de cores por nota (tema claro/escuro), Fixadas acima de Outras, com migração das notas antigas."
+          "text": "Corretor LanguageTool disponível em Configurações → Escrita (dados sensíveis ficam de fora)."
         },
         {
           "tag": "Correção",
-          "text": "Alarmes e lembretes com layout refeito: lista alinhada (hora, rótulo, repetição legível, interruptor, editar/excluir), formulário com validação, estado vazio e uso estreito sem overflow."
-        },
-        {
-          "tag": "Melhoria",
-          "text": "Planilha: renomear abas (duplo clique e menu), redimensionar colunas/linhas (arraste e auto-ajuste), cabeçalhos A/B/C alinhados às células na mesma grade."
-        },
-        {
-          "tag": "Melhoria",
-          "text": "Barra lateral no modo padrão: seta (compacta 52px / expandida) e pino (fixar / esconder automaticamente) independentes e persistidos; no modo legado só a seta, sem auto-esconder."
-        },
-        {
-          "tag": "Novo",
-          "text": "Volume fino por janela: ao passar o mouse no ícone de áudio, um slider de 0–100% com faixa opcional de Reforço até 200%, mudo, roda do mouse e duplo clique para 100%; o valor persiste por janela."
+          "text": "F11 em tela cheia volta a trazer a janela MultiHeiz para frente."
         },
         {
           "tag": "Correção",
-          "text": "Layout (grade, painel maximizado e modo Livre) passa a ser por área de trabalho: cada categoria guarda o seu; ao trocar de área o layout daquela área é aplicado. Nova área copia o layout da área atual. O seletor Layout na barra superior deixa de aparecer vazio."
+          "text": "Atualização do portátil salva o novo executável na pasta do app (ou em Downloads)."
         },
         {
           "tag": "Correção",
-          "text": "Popovers e menus pequenos (volume, permissões do site, Layout, menus da barra superior/cabeçalhos, memória) deixam de congelar e borrar os painéis: abrem numa WebContentsView transparente só no retângulo do popover, sem capturar nem esconder as páginas."
-        },
-        {
-          "tag": "Melhoria",
-          "text": "Auditoria de lag: persistência de estado assíncrona, render incremental (volume/mudo sem recriar a grade), captura de snapshot modal sequencial; check:lag-audit com orçamento de 100 ms em ações leves."
-        },
-        {
-          "tag": "Novo",
-          "text": "Contador de mensagens não lidas por janela: badge na barra lateral (número ou ponto) a partir do título da página; total no ícone do app (Windows) ou badge do SO (Linux/macOS); opção por janela no menu (ligada por padrão)."
-        },
-        {
-          "tag": "Novo",
-          "text": "Corretor LanguageTool por padrão (pt-BR/pt-PT, en, es, fr, de, it, nl, ca): sublinhado e sugestões em campos editáveis; senha, cartão e OTP nunca são enviados; Configurações → Escrita (ligar/desligar, idiomas, desativar neste site, servidor próprio). O corretor nativo do Chromium continua ativo por padrão."
-        },
-        {
-          "tag": "Novo",
-          "text": "Módulo de IA experimental (em testes), desligado por padrão: APIs com chave própria (Gemini, Groq, OpenRouter, compatível OpenAI) via safeStorage; Ollama/LM Studio locais; menu de contexto e Ctrl+Shift+Espaço abrem popover leve (Corrigir/Melhorar/Reformular/Mais formal/Mais curto). Senha, cartão, OTP e data-mh-no-ai nunca são enviados."
+          "text": "Excluir uma área de trabalho remove as janelas dela, com confirmação."
         },
         {
           "tag": "Correção",
-          "text": "Popovers migrados para o overlay voltam a ter as ações antigas: no monitor de memória, Suspender/Reativar por janela, totais/metas, tooltip e foco ao clicar; no menu de extensões, Adicionar extensão e tooltips; setas/Enter no seletor de Layout; valores de memória atualizam com o popover aberto."
+          "text": "Layout passa a ser por área de trabalho; barra lateral e menus respondem melhor ao clique."
         },
         {
           "tag": "Correção",
-          "text": "Alternar Aparência, DNS criptografado ou o bloqueador em Configurações deixa de travar a interface: o motor de anúncios só recompila quando as listas/regras mudam (ligar/desligar reutiliza o cache) e a compilação pesada roda fora do processo principal."
+          "text": "Popovers deixam de congelar os painéis; aplicar configurações não trava a interface."
         },
         {
           "tag": "Correção",
-          "text": "Rótulo de passkeys: em Linux e macOS diz \"do sistema\" (não \"do Windows\"); no Windows mantém \"do Windows\"."
+          "text": "Bloqueador de anúncios ativo desde a abertura; digitação na interface sem engasgar com vídeo."
         },
         {
           "tag": "Correção",
-          "text": "CSP da interface permite favicons em http: e data: (só imagens); scripts e estilos continuam restritos."
-        },
-        {
-          "tag": "Correção",
-          "text": "Popovers (memória e demais) fecham ao clicar fora, inclusive num painel, sem engolir o clique da página; cliques dentro (ex.: Suspender) e Esc funcionam como esperado."
-        },
-        {
-          "tag": "Melhoria",
-          "text": "selftest:gis usa mock local por padrão (opener, redirecionamento, reescrita Glif); sites reais só com MULTIHEIZ_SELFTEST_REAL_SITES=1."
-        },
-        {
-          "tag": "Melhoria",
-          "text": "selftests de proxy e IA pulam asserções de safeStorage quando a criptografia do sistema não está disponível (ex.: Linux sem keyring), com mensagem SKIP e saída 0."
-        },
-        {
-          "tag": "Correção",
-          "text": "Site personalizado: foco no campo de URL ao abrir o formulário; a busca do seletor não captura teclas com o formulário aberto; URL normalizada e validada antes de salvar (host inválido como www mostra “Endereço inválido” e não cria a janela)."
-        },
-        {
-          "tag": "Correção",
-          "text": "Editar URL inicial: após salvar, navega quando o painel está em branco, com erro ou ainda na URL inicial antiga; se o usuário já navegou para outra página, só salva e oferece “Abrir agora”."
-        },
-        {
-          "tag": "Correção",
-          "text": "Digitação na interface deixa de engasgar com vídeo tocando: sonda FPS só em selftest/profile; métricas/favicon/título atualizam de forma incremental ou com throttle (status bar ≤1/s)."
-        },
-        {
-          "tag": "Correção",
-          "text": "Bloqueador de anúncios volta a ficar ativo desde a abertura: o motor sobe em segundo plano (com cache) e anexa a todas as sessões; o escudo do painel reflete a configuração salva sem precisar ligar de novo."
-        },
-        {
-          "tag": "Correção",
-          "text": "Indicador de FPS na barra de status restaurado de forma leve (contagem rAF amostrada ~1×/s, sem IPC por frame); pausa quando a janela está oculta ou minimizada."
-        },
-        {
-          "tag": "Correção",
-          "text": "Modo Livre destravado: alças de redimensionar e grade funcionam logo na inicialização (e após trocar layout, travar/destravar ou área de trabalho), sem precisar mudar de área e voltar."
+          "text": "Site personalizado e editar URL inicial com validação e foco corretos."
         }
       ]
     },

@@ -1326,6 +1326,14 @@ select {
   font-weight: 600;
 }
 
+.novidades-group {
+  margin: 10px 0 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted, #8a8f98);
+  text-transform: none;
+}
+
 .novidades-version ul {
   list-style: none;
   margin: 0;
@@ -1341,6 +1349,26 @@ select {
   align-items: flex-start;
   font-size: 13px;
   line-height: 1.4;
+  min-width: 0;
+}
+
+.novidades-entry-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.novidades-all-wrap {
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+
+.novidades-all-releases {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  overflow-wrap: anywhere;
 }
 
 .tag-novo,
