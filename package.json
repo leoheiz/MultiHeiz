@@ -126,7 +126,7 @@
         "provider": "github",
         "owner": "leoheiz",
         "repo": "MultiHeiz",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ],
     "win": {
