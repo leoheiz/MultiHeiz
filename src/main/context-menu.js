@@ -342,6 +342,11 @@ function buildContextMenuTemplate(params, nav = {}, extra = {}) {
     label: 'Imprimir…',
     enabled: true,
   });
+  items.push({
+    id: 'view-source',
+    label: 'Ver código-fonte',
+    enabled: true,
+  });
   items.push({ type: 'separator' });
   items.push({
     id: 'inspect',
@@ -545,6 +550,23 @@ function runContextAction(d, wc, params, openInNewWindow) {
         } catch {
           /* ignore */
         }
+      }
+      break;
+    }
+    case 'view-source': {
+      try {
+        const panelShortcuts = require('./panel-shortcuts');
+        const panels = require('./panels');
+        let accountId = null;
+        if (typeof panels.accountIdForWebContents === 'function') {
+          accountId = panels.accountIdForWebContents(wc);
+        }
+        if (!accountId && typeof panels.getFocusedAccountId === 'function') {
+          accountId = panels.getFocusedAccountId();
+        }
+        if (accountId) panelShortcuts.runAction(accountId, 'viewSource');
+      } catch {
+        /* ignore */
       }
       break;
     }

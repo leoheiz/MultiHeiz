@@ -133,7 +133,7 @@ function isNavigableUrl(url, opts = {}) {
 }
 
 /**
- * view-source: of an http(s) page — allowed for "Ver código-fonte" in-panel loads.
+ * view-source: of an http(s) page — allowed for "Ver código-fonte" (detached window).
  * Still classified blocked / not navigable for address-bar / open-in-new-panel policy.
  * @param {string} url
  * @returns {boolean}

@@ -6,9 +6,10 @@
  */
 
 const path = require('node:path');
-const { dialog, ipcMain } = require('electron');
+const { BrowserWindow, dialog, ipcMain } = require('electron');
 const keymap = require('./keymap');
 const { getState } = require('./state');
+const { isViewSourceOfHttpUrl } = require('./url-policy');
 
 /** @type {(() => import('electron').BrowserWindow | null) | null} */
 let getMainWindow = null;
@@ -23,6 +24,10 @@ let rebuildMenu = null;
 
 /** @type {Map<string, { query: string, open: boolean }>} */
 const findStateByAccount = new Map();
+
+/** Detached view-source windows (same session as the source panel). */
+/** @type {Set<import('electron').BrowserWindow>} */
+const viewSourceWindows = new Set();
 
 /** Selftest: mocked print invocations */
 /** @type {Array<{ accountId: string, at: number }>} */
@@ -150,6 +155,8 @@ async function panelSavePage(accountId) {
 }
 
 /**
+ * Open page source in a detached BrowserWindow (panel URL unchanged).
+ * Same session/partition as the panel; only http(s) → view-source:http(s).
  * @param {string} accountId
  */
 function panelViewSource(accountId) {
@@ -163,15 +170,76 @@ function panelViewSource(accountId) {
   }
   if (!url || url === 'about:blank') return;
   if (/^view-source:/i.test(url)) return;
-  // Only http(s) pages have a useful view-source; openUrlInNewPanel rejects the scheme.
+  // Only http(s) pages have a useful view-source.
   if (!/^https?:\/\//i.test(url)) return;
   const src = 'view-source:' + url;
   noteAction('viewSource', accountId, { url: src });
+
+  let ses = null;
   try {
-    wc.loadURL(src).catch(() => {});
+    ses = wc.session;
+  } catch {
+    ses = null;
+  }
+
+  const hide = selftestOn();
+  /** @type {import('electron').BrowserWindowConstructorOptions} */
+  const opts = {
+    width: 960,
+    height: 720,
+    show: !hide,
+    autoHideMenuBar: true,
+    title: 'Código-fonte',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      ...(ses ? { session: ses } : {}),
+    },
+  };
+  if (hide) {
+    opts.x = -20000;
+    opts.y = 0;
+    opts.skipTaskbar = true;
+  }
+
+  let win;
+  try {
+    win = new BrowserWindow(opts);
+  } catch {
+    return;
+  }
+  viewSourceWindows.add(win);
+  win.on('closed', () => {
+    viewSourceWindows.delete(win);
+  });
+
+  const childWc = win.webContents;
+  childWc.on('will-navigate', (e, navUrl) => {
+    if (!isViewSourceOfHttpUrl(navUrl)) e.preventDefault();
+  });
+  childWc.on('will-redirect', (e, navUrl) => {
+    if (!isViewSourceOfHttpUrl(navUrl)) e.preventDefault();
+  });
+  childWc.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  try {
+    childWc.loadURL(src).catch(() => {});
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * Live detached view-source windows (selftest / diagnostics).
+ * @returns {import('electron').BrowserWindow[]}
+ */
+function getViewSourceWindows() {
+  const out = [];
+  for (const w of viewSourceWindows) {
+    if (w && !w.isDestroyed()) out.push(w);
+  }
+  return out;
 }
 
 /**
@@ -593,6 +661,8 @@ module.exports = {
   wireFindInPage,
   panelPrint,
   printFromWebContents,
+  panelViewSource,
+  getViewSourceWindows,
   openFindBar,
   closeFindBar,
   findQuery,

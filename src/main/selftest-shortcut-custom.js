@@ -299,20 +299,55 @@ async function runShortcutCustomSelftest(ctx) {
     actions
   );
 
-  let url = '';
+  let panelUrl = '';
+  try {
+    panelUrl = wc.getURL() || '';
+  } catch {
+    panelUrl = '';
+  }
+  assert(!/^view-source:/i.test(panelUrl), 'panel URL must stay on page (not view-source)', panelUrl);
+  assert(panelUrl.includes('127.0.0.1'), 'panel still on mock page', panelUrl);
+
+  let srcWin = null;
+  let srcUrl = '';
   const t0 = Date.now();
   while (Date.now() - t0 < 8000) {
-    try {
-      url = wc.getURL() || '';
-    } catch {
-      url = '';
+    const wins = panelShortcuts.getViewSourceWindows();
+    for (const w of wins) {
+      if (!w || w.isDestroyed()) continue;
+      let u = '';
+      try {
+        u = w.webContents.getURL() || '';
+      } catch {
+        u = '';
+      }
+      if (/^view-source:/i.test(u)) {
+        srcWin = w;
+        srcUrl = u;
+        break;
+      }
     }
-    if (/^view-source:/i.test(url)) break;
+    if (srcWin) break;
     await sleep(150);
   }
-  assert(/^view-source:/i.test(url), 'panel navigated to view-source', url);
-  assert(url.includes('127.0.0.1'), 'view-source of panel page', url);
-  console.log('PASS: Pause opens view-source', url);
+  assert(srcWin && !srcWin.isDestroyed(), 'view-source window exists');
+  assert(/^view-source:/i.test(srcUrl), 'window URL starts with view-source:', srcUrl);
+  assert(srcUrl.includes('127.0.0.1'), 'view-source of panel page', srcUrl);
+
+  // Panel still unchanged after source window loaded
+  try {
+    panelUrl = wc.getURL() || '';
+  } catch {
+    panelUrl = '';
+  }
+  assert(!/^view-source:/i.test(panelUrl), 'panel URL unchanged after view-source', panelUrl);
+  console.log('PASS: Pause opens view-source in separate window', srcUrl);
+
+  try {
+    if (srcWin && !srcWin.isDestroyed()) srcWin.close();
+  } catch {
+    /* ignore */
+  }
 
   try {
     server.close();
