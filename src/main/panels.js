@@ -3,7 +3,6 @@
 const path = require('node:path');
 const { app, WebContentsView, BrowserWindow, session, shell, dialog, ipcMain } = require('electron');
 const { getState, updateState } = require('./state');
-const ipcGuard = require('./ipc-guard');
 const { resolveNavigateUrl } = require('./search-url');
 const {
   classifyScheme,
