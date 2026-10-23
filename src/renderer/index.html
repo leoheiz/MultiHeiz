@@ -653,56 +653,68 @@
               Extensões
               <span class="badge-experimental">Experimental (em testes)</span>
             </h3>
-            <p class="muted-note">
-              Recurso em testes: pode não funcionar em todos os sites. Extensões de bloqueio
-              aplicam só as regras de rede (DNR via shim do MultiHeiz); esconder elementos na
-              página (cosmético) é limitado. Em http://127.0.0.1 (loopback) algumas extensões
-              podem falhar — sites https normais costumam OK.
-            </p>
-            <label class="check">
-              <input type="checkbox" name="extAbuCompat" id="ext-abu-compat" checked />
-              Compatibilidade avançada para extensões MV3 (AdBlocker Ultimate)
-            </label>
-            <p class="muted-note">
-              Parte do recurso Experimental (em testes). Liga shims de API do service worker
-              (webNavigation, DNR, etc.) para extensões MV3 com background.service_worker.
-              Reinicie as janelas afetadas após alterar.
-            </p>
-            <p class="muted-note" id="ext-coexistence-hint" hidden></p>
-            <div class="ext-add-row ext-store-open-row">
-              <button type="button" class="btn primary" id="btn-ext-open-cws">
-                Abrir Chrome Web Store
-              </button>
-              <button type="button" class="btn primary" id="btn-ext-open-edge">
-                Abrir loja do Edge
-              </button>
-            </div>
-            <p class="muted-note">
-              Nas páginas de detalhe da loja, use <strong>Instalar no MultiHeiz</strong> na barra
-              acima do painel.
-            </p>
-            <details class="ext-advanced" id="ext-advanced">
-              <summary>Instalar de arquivo ou pasta (avançado)</summary>
-              <div class="ext-advanced-body">
-                <div class="row-inline ext-install-row">
-                  <button type="button" class="btn ghost" id="btn-ext-crx">Arquivo .crx…</button>
-                  <button type="button" class="btn ghost" id="btn-ext-unpacked">Pasta descompactada…</button>
+            <div class="ext-page-layout">
+              <aside class="ext-page-left" aria-label="Extensões">
+                <input
+                  type="search"
+                  id="ext-search"
+                  class="ext-page-search"
+                  placeholder="Pesquisar extensões instaladas"
+                  aria-label="Pesquisar extensões instaladas"
+                />
+                <div class="ext-page-nav">
+                  <button type="button" class="ext-page-nav-item is-active" data-role="ext-nav-mine">
+                    Minhas extensões
+                  </button>
+                  <button type="button" class="ext-page-nav-link" id="btn-ext-open-cws" data-role="ext-open-cws">
+                    Obter extensões da Chrome Web Store
+                  </button>
+                  <button type="button" class="ext-page-nav-link" id="btn-ext-open-edge" data-role="ext-open-edge">
+                    Abrir loja do Edge
+                  </button>
                 </div>
-                <label class="ext-add-option">
-                  <span>Ou cole URL / ID da loja</span>
-                  <div class="row-inline">
-                    <input id="ext-store-input" placeholder="URL ou ID da extensão" />
-                    <button type="button" class="btn ghost" id="btn-ext-store">Instalar</button>
+                <div class="ext-page-left-bottom">
+                  <label class="check">
+                    <input type="checkbox" name="extAbuCompat" id="ext-abu-compat" checked />
+                    Compatibilidade MV3 (ABU)
+                  </label>
+                  <label class="check" title="Revela instalação de arquivo/pasta">
+                    <input type="checkbox" id="ext-developer-mode" data-role="ext-developer-mode" />
+                    Modo do desenvolvedor
+                  </label>
+                  <div class="ext-advanced" id="ext-advanced" hidden>
+                    <div class="ext-advanced-body">
+                      <div class="row-inline ext-install-row">
+                        <button type="button" class="btn ghost" id="btn-ext-crx">Arquivo .crx…</button>
+                        <button type="button" class="btn ghost" id="btn-ext-unpacked">
+                          Pasta descompactada…
+                        </button>
+                      </div>
+                      <label class="ext-add-option">
+                        <span>Ou cole URL / ID da loja</span>
+                        <div class="row-inline">
+                          <input id="ext-store-input" placeholder="URL ou ID da extensão" />
+                          <button type="button" class="btn ghost" id="btn-ext-store">Instalar</button>
+                        </div>
+                      </label>
+                    </div>
                   </div>
-                </label>
+                </div>
+              </aside>
+              <div class="ext-page-right">
+                <p class="muted-note">
+                  Recurso em testes: pode não funcionar em todos os sites. Nas páginas da loja,
+                  use <strong>Instalar no MultiHeiz</strong> na barra do painel.
+                </p>
+                <p class="muted-note" id="ext-coexistence-hint" hidden></p>
+                <p class="muted-note" id="ext-status"></p>
+                <div id="ext-list" class="ext-cards" data-role="ext-list"></div>
+                <p class="muted-note">
+                  Licença: camada própria (MIT). Não usamos electron-chrome-extensions (GPL-3) —
+                  ver Sobre e THIRD_PARTY_NOTICES.
+                </p>
               </div>
-            </details>
-            <p class="muted-note" id="ext-status"></p>
-            <div id="ext-list" class="ext-cards"></div>
-            <p class="muted-note">
-              Licença: camada própria (MIT). Não usamos electron-chrome-extensions (GPL-3) —
-              ver Sobre e THIRD_PARTY_NOTICES.
-            </p>
+            </div>
           </section>
 
           <section class="settings-pane" data-pane="aparencia" id="appearance-section">

@@ -3743,7 +3743,6 @@
         return;
       }
       setExtStatus('');
-      // Fechar configurações para ver a nova janela
       const dlg = document.getElementById('dlg-settings');
       if (dlg && dlg.open) dlg.close();
       if (r.state && hooks().applyState) hooks().applyState(r.state);
@@ -3752,6 +3751,23 @@
     if (btnCws) btnCws.addEventListener('click', () => openStore('chrome'));
     const btnEdge = document.getElementById('btn-ext-open-edge');
     if (btnEdge) btnEdge.addEventListener('click', () => openStore('edge'));
+
+    const devMode = document.getElementById('ext-developer-mode');
+    const advanced = document.getElementById('ext-advanced');
+    if (devMode && advanced) {
+      const syncDev = () => {
+        advanced.hidden = !devMode.checked;
+      };
+      syncDev();
+      devMode.addEventListener('change', syncDev);
+    }
+
+    const search = document.getElementById('ext-search');
+    if (search) {
+      search.addEventListener('input', () => {
+        refreshExtensionsUi().catch(() => {});
+      });
+    }
 
     const btnUnp = document.getElementById('btn-ext-unpacked');
     if (btnUnp) {
@@ -3850,24 +3866,69 @@
     }
   }
 
+  function extGroupKey(source) {
+    return source === 'chrome-web-store' ? 'cws' : 'other';
+  }
+
+  function extGroupTitle(key) {
+    return key === 'cws' ? 'Da Chrome Web Store' : 'De outras fontes';
+  }
+
   async function refreshExtensionsUi() {
     const host = document.getElementById('ext-list');
     if (!host || !window.multiheiz.extensionsList) return;
     const list = await window.multiheiz.extensionsList();
     const accounts = (getState().accounts || []).slice();
+    const q = String((document.getElementById('ext-search') || {}).value || '')
+      .trim()
+      .toLowerCase();
     host.replaceChildren();
     await refreshCoexistenceHints();
-    if (!list.length) {
+    const filtered = !q
+      ? list
+      : list.filter((ext) => {
+          const hay = [
+            ext.name,
+            ext.id,
+            ext.description,
+            extSourceLabel(ext.source),
+          ]
+            .join(' ')
+            .toLowerCase();
+          return hay.includes(q);
+        });
+    if (!filtered.length) {
       host.appendChild(
         h('p', {
           className: 'muted-note ext-empty',
-          text:
-            'Nenhuma extensão instalada. Abra a Chrome Web Store ou a loja do Edge e use “Instalar no MultiHeiz”, ou use a seção avançada (arquivo / pasta).',
+          text: list.length
+            ? 'Nenhuma extensão corresponde à pesquisa.'
+            : 'Nenhuma extensão instalada. Obtenha extensões da Chrome Web Store ou ative o modo do desenvolvedor para carregar uma pasta.',
         })
       );
       return;
     }
-    for (const ext of list) {
+
+    /** @type {Map<string, object[]>} */
+    const groups = new Map([
+      ['cws', []],
+      ['other', []],
+    ]);
+    for (const ext of filtered) {
+      groups.get(extGroupKey(ext.source)).push(ext);
+    }
+
+    for (const [gKey, items] of groups) {
+      if (!items.length) continue;
+      host.appendChild(
+        h('h4', {
+          className: 'ext-group-title',
+          'data-role': 'ext-group',
+          'data-group': gKey,
+          text: extGroupTitle(gKey),
+        })
+      );
+      for (const ext of items) {
       const isAll = ext.applyTo === 'all' || ext.applyTo == null;
       const selectedIds = new Set(
         isAll
@@ -3893,15 +3954,27 @@
             text: String(ext.description).slice(0, 160),
           })
           : null,
+        !ext.enabled
+          ? h('div', {
+            className: 'ext-info-box',
+            'data-role': 'ext-info',
+            text: 'Esta extensão está desativada.',
+          })
+          : null,
         ext.warnings && ext.warnings.length
           ? h('div', {
-            className: 'ext-warn',
+            className: 'ext-warn ext-info-box',
+            'data-role': 'ext-info',
             text: ext.warnings.slice(0, 3).join(' · '),
           })
           : null
       );
 
-      const swLabel = h('label', { className: 'panel-ext-switch', title: 'Ativar / desativar' });
+      const swLabel = h('label', {
+        className: 'panel-ext-switch ext-card-toggle',
+        title: 'Ativar / desativar',
+        'data-role': 'ext-toggle',
+      });
       const sw = h('input', { type: 'checkbox' });
       sw.checked = !!ext.enabled;
       sw.addEventListener('change', async () => {
@@ -3910,6 +3983,12 @@
         showSaved();
       });
       swLabel.append(sw, document.createTextNode(' Ativa'));
+
+      const detailsBox = h('div', {
+        className: 'ext-card-details',
+        hidden: true,
+        'data-role': 'ext-details',
+      });
 
       const applyBox = h('div', { className: 'ext-apply-box' });
       applyBox.appendChild(h('span', { text: 'Aplicar em:' }));
@@ -3996,11 +4075,23 @@
         },
       });
       if (!ext.optionsPage) btnOpt.disabled = true;
+      detailsBox.append(applyBox, btnOpt);
+
+      const btnDetails = h('button', {
+        type: 'button',
+        className: 'btn ghost',
+        text: 'Detalhes',
+        'data-role': 'ext-details-btn',
+        onClick: () => {
+          detailsBox.hidden = !detailsBox.hidden;
+        },
+      });
 
       const btnRm = h('button', {
         type: 'button',
         className: 'btn ghost',
         text: 'Remover',
+        'data-role': 'ext-remove',
         onClick: async () => {
           const nome = ext.name || ext.id;
           if (!window.confirm(`Remover ${nome}? Esta ação não pode ser desfeita.`)) return;
@@ -4012,17 +4103,23 @@
 
       const actions = h('div', { className: 'ext-card-actions' },
         swLabel,
-        applyBox,
-        btnOpt,
+        btnDetails,
         btnRm
       );
 
-      const card = h('div', { className: 'ext-card', 'data-ext-id': ext.id },
+      const card = h('div', {
+        className: 'ext-card',
+        'data-ext-id': ext.id,
+        'data-ext-source': ext.source || '',
+        'data-ext-group': gKey,
+      },
         icon,
         body,
-        actions
+        actions,
+        detailsBox
       );
       host.appendChild(card);
+      }
     }
   }
 

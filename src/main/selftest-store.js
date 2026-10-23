@@ -285,18 +285,26 @@ async function runStoreSelftest(ctx) {
         const adv = document.getElementById('ext-advanced');
         const crxBtn = document.getElementById('btn-ext-crx');
         const unpackBtn = document.getElementById('btn-ext-unpacked');
+        const search = document.getElementById('ext-search');
+        const dev = document.getElementById('ext-developer-mode');
+        if (dev && !dev.checked) {
+          dev.checked = true;
+          dev.dispatchEvent(new Event('change', { bubbles: true }));
+        }
         return {
           cws: !!(cws && /Chrome Web Store/i.test(cws.textContent || '')),
           edge: !!(edge && /Edge/i.test(edge.textContent || '')),
           advanced: !!(adv && crxBtn && unpackBtn),
+          search: !!(search && /Pesquisar extensões/i.test(search.placeholder || '')),
+          developerMode: !!dev,
           summary: adv ? (adv.querySelector('summary') || {}).textContent || '' : '',
         };
       })()
     `);
-    if (!ui || !ui.cws || !ui.edge || !ui.advanced) {
+    if (!ui || !ui.cws || !ui.edge || !ui.advanced || !ui.search || !ui.developerMode) {
       throw new Error('Extensões settings UI missing: ' + JSON.stringify(ui));
     }
-    bumpPass('Configurações → Extensões (Abrir CWS/Edge + avançado arquivo/pasta)');
+    bumpPass('Configurações → Extensões (coluna + CWS/Edge + modo desenvolvedor)');
     await rendererEval(`
       (function () {
         if (window.__multiheizUi && window.__multiheizUi.closeSettings) {

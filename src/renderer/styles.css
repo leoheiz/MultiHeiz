@@ -2832,6 +2832,89 @@ dialog label.check-row input[type='checkbox'],
 .ext-add-row {
   margin: 8px 0 12px;
 }
+.ext-page-layout {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  min-height: 360px;
+}
+.ext-page-left {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-right: 1px solid var(--border);
+  padding-right: 12px;
+}
+.ext-page-right {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+.ext-page-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+.ext-page-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ext-page-nav-item,
+.ext-page-nav-link {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.ext-page-nav-item.is-active,
+.ext-page-nav-link:hover,
+.ext-page-nav-item:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.ext-page-nav-link {
+  color: var(--accent);
+  font-size: 12px;
+}
+.ext-page-left-bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.ext-group-title {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ext-info-box {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--muted);
+}
+.ext-card-details {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
 .ext-cards {
   display: flex;
   flex-direction: column;
@@ -2844,7 +2927,7 @@ dialog label.check-row input[type='checkbox'],
   gap: 10px 12px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
-  border-radius: 8px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--surface) 92%, var(--text));
 }
 .ext-card .ext-icon {
