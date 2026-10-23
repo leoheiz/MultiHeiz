@@ -63,6 +63,8 @@ async function runV19Selftest(ctx) {
     s.ui = { ...(s.ui || {}), sidebarCollapsed: false, layoutLocked: true, sidebarWidth: 240 };
     s.settings = {
       ...s.settings,
+      // Auto-collapse below 900px is legacy-only (sidebarAlwaysActive).
+      sidebarAlwaysActive: true,
       openLastPage: false,
       homepage: base + '/',
       modules: { planilha: true, alarmes: true, notas: true },
