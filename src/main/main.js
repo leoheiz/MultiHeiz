@@ -285,6 +285,7 @@ const SELFTEST_NOTES = selftestMode === 'notes';
 const SELFTEST_REMINDERS = selftestMode === 'reminders';
 const SELFTEST_SHEET = selftestMode === 'sheet';
 const SELFTEST_VOLUME = selftestMode === 'volume';
+const SELFTEST_VOLUME_HTZFM = selftestMode === 'volume-htzfm';
 const SELFTEST_SHOTS_VOLUME = selftestMode === 'shots-volume';
 const SELFTEST_LAYOUT_WORKSPACE = selftestMode === 'layout-workspace';
 const SELFTEST_POPOVER_OVERLAY = selftestMode === 'popover-overlay';
@@ -350,6 +351,7 @@ const ANY_SELFTEST =
   SELFTEST_REMINDERS ||
   SELFTEST_SHEET ||
   SELFTEST_VOLUME ||
+  SELFTEST_VOLUME_HTZFM ||
   SELFTEST_SHOTS_VOLUME ||
   SELFTEST_LAYOUT_WORKSPACE ||
   SELFTEST_POPOVER_OVERLAY ||
@@ -381,6 +383,7 @@ if (SELFTEST_PERMISSIONS || SELFTEST_SOCKETS) {
 // Volume selftest: permite tom/Oscillator sem gesto do usuário.
 if (
   SELFTEST_VOLUME ||
+  SELFTEST_VOLUME_HTZFM ||
   SELFTEST_LAG_AUDIT ||
   SELFTEST_UI_INPUT_LAG ||
   SELFTEST_POPOVER_OVERLAY ||
@@ -715,6 +718,7 @@ function createWindow() {
     SELFTEST_REMINDERS ||
     SELFTEST_SHEET ||
     SELFTEST_VOLUME ||
+    SELFTEST_VOLUME_HTZFM ||
     SELFTEST_SHOTS_VOLUME ||
     SELFTEST_LAYOUT_WORKSPACE ||
     SELFTEST_PERF ||
@@ -752,6 +756,7 @@ function createWindow() {
     SELFTEST_REMINDERS ||
     SELFTEST_SHEET ||
     SELFTEST_VOLUME ||
+    SELFTEST_VOLUME_HTZFM ||
     SELFTEST_SHOTS_VOLUME ||
     SELFTEST_LAYOUT_WORKSPACE ||
     SELFTEST_BADGES ||
@@ -2343,6 +2348,31 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_VOLUME_HTZFM) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runVolumeHtzfmSelftest } = require('./selftest-volume-htzfm');
+          runVolumeHtzfmSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_LANGUAGETOOL) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -3866,6 +3896,24 @@ function registerIpc() {
 
   ipcMain.handle('panel:get-volume', (_e, accountId) => {
     return { volume: panels.panelGetVolume(accountId) };
+  });
+
+  ipcMain.handle('panel:volume-diag', async (_e, accountId) => {
+    try {
+      const diag = await panels.panelGetVolumeDiag(accountId);
+      return {
+        ok: true,
+        boostUnavailable: !!(diag && diag.boostUnavailable),
+        diag: diag || null,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        boostUnavailable: false,
+        diag: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   });
 
   ipcMain.handle('panel:focus', (_e, accountId) => {

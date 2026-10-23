@@ -1320,6 +1320,30 @@ function createPanel(accountId) {
       /* ignore */
     }
   });
+  const reapplyVolumeForFrames = () => {
+    try {
+      const pct = volumeControl.volumeOfAccount(getAccount(accountId));
+      volumeControl.pushVolumeToWebContents(view.webContents, pct);
+    } catch {
+      /* ignore */
+    }
+  };
+  try {
+    view.webContents.on('did-frame-navigate', (_e, _url, _code, _text, isMainFrame) => {
+      if (isMainFrame) return;
+      reapplyVolumeForFrames();
+    });
+  } catch {
+    /* ignore */
+  }
+  try {
+    view.webContents.on('did-frame-finish-load', (_e, isMainFrame) => {
+      if (isMainFrame) return;
+      reapplyVolumeForFrames();
+    });
+  } catch {
+    /* ignore */
+  }
   const emitAudible = () => {
     let audible = false;
     try {
@@ -2471,6 +2495,20 @@ function panelGetVolume(accountId) {
 }
 
 /**
+ * Diagnóstico de volume do painel (todos os frames).
+ * @param {string} accountId
+ */
+async function panelGetVolumeDiag(accountId) {
+  const entry = panels.get(accountId);
+  if (!entry) return null;
+  try {
+    return await volumeControl.readVolumeDiagAllFrames(entry.view.webContents);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @param {string} accountId
  * @returns {boolean}
  */
@@ -2752,6 +2790,7 @@ module.exports = {
   panelSetMuted,
   panelSetVolume,
   panelGetVolume,
+  panelGetVolumeDiag,
   panelIsAudible,
   clearAccountSession,
   rebindPanelSession,

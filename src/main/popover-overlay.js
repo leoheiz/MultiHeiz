@@ -380,7 +380,10 @@ function applyMeasuredSize(size) {
 }
 
 function estimateSize(kind, data) {
-  if (kind === 'volume') return { width: 236, height: 112 };
+  if (kind === 'volume') {
+    const extra = data && data.boostUnavailable ? 36 : 0;
+    return { width: 236, height: 112 + extra };
+  }
   if (kind === 'site-perm') {
     const n = (data && data.keys && data.keys.length) || 8;
     return { width: 300, height: 48 + n * 32 + 40 };

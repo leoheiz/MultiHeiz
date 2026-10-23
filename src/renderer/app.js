@@ -1329,13 +1329,24 @@ function closeVolumePopover() {
   document.querySelectorAll('.volume-popover').forEach((n) => n.remove());
 }
 
-function refreshVolumePopoverUi() {
+async function refreshVolumePopoverUi() {
   if (!volumePopover) return;
   const accountId = volumePopover.accountId;
+  let boostUnavailable = false;
+  try {
+    if (window.multiheiz.panelVolumeDiag) {
+      const d = await window.multiheiz.panelVolumeDiag(accountId);
+      boostUnavailable = !!(d && d.boostUnavailable);
+    }
+  } catch {
+    boostUnavailable = false;
+  }
+  if (!volumePopover || volumePopover.accountId !== accountId) return;
   window.multiheiz.popoverUpdate({
     percent: accountVolumePercent(accountId),
     muted: accountIsMuted(accountId),
     accountId,
+    boostUnavailable,
   });
 }
 
@@ -1555,12 +1566,14 @@ function openVolumePopover(accountId, anchorRectOrX, y) {
     kind: 'volume',
     prefer: 'below',
     anchor,
-    data: { accountId, percent: pct, muted },
+    data: { accountId, percent: pct, muted, boostUnavailable: false },
   }).then((res) => {
     if (!res || !res.ok) {
       volumePopover = null;
       if (activePopoverId === 'volume-popover') activePopoverId = null;
+      return;
     }
+    void refreshVolumePopoverUi();
   });
 }
 

@@ -193,6 +193,14 @@
     color: var(--muted, #8a97a8);
   }
   .volume-popover-labels .boost-label { color: #e8a54b; }
+  .volume-popover-boost-note {
+    display: none;
+    margin-top: 8px;
+    font-size: 10px;
+    line-height: 1.35;
+    color: var(--muted, #8a97a8);
+  }
+  .volume-popover-boost-note.is-visible { display: block; }
 
   .panel-site-perm-popover {
     min-width: 260px;
@@ -498,7 +506,13 @@
     labels.className = 'volume-popover-labels';
     labels.innerHTML = '<span>0%</span><span>100%</span><span class="boost-label">Reforço 200%</span>';
 
-    pop.append(head, track, labels);
+    const boostNote = document.createElement('div');
+    boostNote.className = 'volume-popover-boost-note';
+    boostNote.dataset.role = 'volume-boost-note';
+    boostNote.textContent = 'Este site não permite passar de 100%.';
+    if (data && data.boostUnavailable) boostNote.classList.add('is-visible');
+
+    pop.append(head, track, labels, boostNote);
     pop.addEventListener('wheel', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -520,6 +534,7 @@
     const valueEl = pop.querySelector('[data-role="volume-value"]');
     const slider = pop.querySelector('[data-role="volume-slider"]');
     const muteBtn = pop.querySelector('[data-role="volume-mute"]');
+    const boostNote = pop.querySelector('[data-role="volume-boost-note"]');
     if (valueEl) {
       valueEl.textContent = muted ? 'Mudo' : pct + '%';
       valueEl.classList.toggle('is-boost', !muted && pct > 100);
@@ -531,6 +546,9 @@
     if (muteBtn) {
       muteBtn.innerHTML = svgSpeaker(muted);
       muteBtn.title = muted ? 'Ativar som' : 'Mudo';
+    }
+    if (boostNote) {
+      boostNote.classList.toggle('is-visible', !!(data && data.boostUnavailable));
     }
   }
 

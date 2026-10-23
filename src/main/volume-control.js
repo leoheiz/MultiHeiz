@@ -126,20 +126,76 @@ async function ensureVolumeApplied(wc, percent) {
   }
 }
 
+const DIAG_READ_CODE =
+  '(function(){try{return window.__mhVol&&window.__mhVol.getDiag?window.__mhVol.getDiag():null;}catch(e){return{err:String(e)};}})()';
+
 /**
- * Lê diagnóstico do main frame (selftest).
+ * Lê diagnóstico de um frame (selftest / UI).
  * @param {import('electron').WebContents} wc
  */
 async function readVolumeDiag(wc) {
   if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) return null;
   try {
-    return await wc.executeJavaScript(
-      '(function(){try{return window.__mhVol&&window.__mhVol.getDiag?window.__mhVol.getDiag():null;}catch(e){return{err:String(e)};}})()',
-      true
-    );
+    return await wc.executeJavaScript(DIAG_READ_CODE, true);
   } catch {
     return null;
   }
+}
+
+/**
+ * Agrega diag de todos os frames (boostUnavailable se qualquer frame reportar).
+ * @param {import('electron').WebContents} wc
+ */
+async function readVolumeDiagAllFrames(wc) {
+  if (!wc || (typeof wc.isDestroyed === 'function' && wc.isDestroyed())) return null;
+  /** @type {object[]} */
+  const parts = [];
+  try {
+    const mainFrame = wc.mainFrame;
+    if (mainFrame && typeof mainFrame.framesInSubtree === 'function') {
+      const frames = mainFrame.framesInSubtree();
+      for (const frame of frames) {
+        try {
+          if (frame && typeof frame.executeJavaScript === 'function') {
+            const d = await frame.executeJavaScript(DIAG_READ_CODE, true);
+            if (d) parts.push(d);
+          }
+        } catch {
+          /* ignore frame */
+        }
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  if (!parts.length) {
+    const one = await readVolumeDiag(wc);
+    if (one) parts.push(one);
+  }
+  if (!parts.length) return null;
+  const base = { ...parts[0], frames: parts.length };
+  let boostUnavailable = false;
+  let mediaRouted = 0;
+  let mediaElementFallback = 0;
+  let webaudioRouted = 0;
+  let trackedCount = 0;
+  /** @type {object[]} */
+  const elements = [];
+  for (const p of parts) {
+    if (p.boostUnavailable) boostUnavailable = true;
+    mediaRouted += Number(p.mediaRouted) || 0;
+    mediaElementFallback += Number(p.mediaElementFallback) || 0;
+    webaudioRouted += Number(p.webaudioRouted) || 0;
+    trackedCount += Number(p.trackedCount) || 0;
+    if (Array.isArray(p.elements)) elements.push(...p.elements);
+  }
+  base.boostUnavailable = boostUnavailable;
+  base.mediaRouted = mediaRouted;
+  base.mediaElementFallback = mediaElementFallback;
+  base.webaudioRouted = webaudioRouted;
+  base.trackedCount = trackedCount;
+  base.elements = elements;
+  return base;
 }
 
 /**
@@ -221,6 +277,7 @@ module.exports = {
   ensureVolumeApplied,
   executeInAllFrames,
   readVolumeDiag,
+  readVolumeDiagAllFrames,
   applyPayload,
   pushVolumeToWebContents,
   installVolumeIpc,
