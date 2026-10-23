@@ -5057,12 +5057,61 @@ async function runUiSelftest() {
   );
   if (!okSettings) return;
 
-  const okMem = await assertOverlayHidesAndRestores(
-    'mem-popover',
-    'window.__multiheizUi.openMemPopover()',
-    'window.__multiheizUi.closeMemPopover()'
-  );
-  if (!okMem) return;
+  // Memory monitor is a light popover (dedicated WebContentsView): panels stay live,
+  // overlayCount stays 0 — do not park/snapshot (asserted by selftest:popover-*).
+  {
+    await rendererEval('window.__multiheizUi.openMemPopover()');
+    await sleep(400);
+    const mid = panels.getPanelDebugInfo();
+    if (mid.overlayCount !== 0) {
+      console.log('FAIL: mem-popover should stay light (overlayCount 0)', JSON.stringify(mid));
+      app.exit(1);
+      return;
+    }
+    // Only the active account (acc-ui-a) must stay on-screen; leftover parked
+    // panels from earlier layout steps are unrelated to the light popover.
+    const active = mid.panels.find((p) => p.accountId === 'acc-ui-a');
+    if (!active || active.parked || (active.bounds?.x ?? 0) <= -1000) {
+      console.log('FAIL: mem-popover must not park active panel', JSON.stringify(active));
+      app.exit(1);
+      return;
+    }
+    const dbg = await rendererEval(
+      'window.multiheiz.popoverGet ? window.multiheiz.popoverGet() : null'
+    );
+    if (!dbg || !dbg.open || dbg.id !== 'mem-popover') {
+      console.log('FAIL: mem-popover did not open light popover', JSON.stringify(dbg));
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: mem-popover opens as light overlay (panels live)');
+
+    await rendererEval('window.__multiheizUi.closeMemPopover()');
+    await sleep(400);
+    const after = await waitForPanels(
+      (i) =>
+        i.overlayCount === 0 &&
+        i.panels.some((p) => p.accountId === 'acc-ui-a' && p.visible && !p.parked)
+    );
+    const restored = after.panels.find((p) => p.accountId === 'acc-ui-a');
+    if (!restored || !boundsMatch(restored.bounds, boundsBefore, 6)) {
+      console.log('FAIL: mem-popover restore bounds mismatch', {
+        before: boundsBefore,
+        after: restored && restored.bounds,
+      });
+      app.exit(1);
+      return;
+    }
+    const dbgClosed = await rendererEval(
+      'window.multiheiz.popoverGet ? window.multiheiz.popoverGet() : null'
+    );
+    if (dbgClosed && dbgClosed.open && dbgClosed.id === 'mem-popover') {
+      console.log('FAIL: mem-popover still open after close', JSON.stringify(dbgClosed));
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: mem-popover closed; bounds unchanged');
+  }
 
   console.log('PASS: ui selftest complete', { scale });
   app.exit(0);
