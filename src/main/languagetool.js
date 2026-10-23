@@ -73,7 +73,8 @@ const selftestStats = {
 
 function defaultLanguageToolSettings() {
   return {
-    enabled: true,
+    /** Opt-in: texto dos campos é enviado ao servidor LT. */
+    enabled: false,
     /** Lista vazia = todos os idiomas fortes. */
     languages: [...STRONG_LANGUAGES.filter((l) => !l.includes('-') || l === 'pt-BR' || l === 'pt-PT')],
     serverUrl: '',
@@ -123,7 +124,7 @@ function validateServerUrl(url, opts = {}) {
 function normalizeLanguageTool(input) {
   const base = defaultLanguageToolSettings();
   const src = input && typeof input === 'object' ? input : {};
-  const enabled = src.enabled !== false;
+  const enabled = src.enabled === true;
   let languages = Array.isArray(src.languages)
     ? src.languages.map((l) => String(l || '').trim()).filter(Boolean)
     : base.languages;
@@ -156,6 +157,48 @@ function normalizeOrigin(originOrUrl) {
   } catch {
     return '';
   }
+}
+
+/** Tokens sensíveis em name/id/autocomplete/aria-label/placeholder (após fold). */
+const SENSITIVE_NAME_RE =
+  /(?:^|[^a-z0-9])(?:senha|password|passwd|pass|pwd|token|otp|2fa|codigo|code|cpf|cnpj|rg|cartao|card|cc-|cvv|cvc|pin|iban|conta|secret|api[-_]?key|apikey)(?:[^a-z0-9]|$)/i;
+
+/**
+ * Remove acentos e normaliza para comparação case-insensitive.
+ * @param {unknown} s
+ * @returns {string}
+ */
+function foldAccents(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase();
+}
+
+/**
+ * name/id/autocomplete/aria-label/placeholder com tokens sensíveis.
+ * @param {object} elLike
+ * @returns {boolean}
+ */
+function hasSensitiveNameAttrs(elLike) {
+  if (!elLike || typeof elLike !== 'object') return false;
+  const parts = [
+    elLike.name,
+    elLike.id,
+    elLike.autocomplete,
+    elLike.autoComplete,
+    elLike.ariaLabel,
+    elLike['aria-label'],
+    elLike.placeholder,
+  ];
+  for (const p of parts) {
+    const folded = foldAccents(p).replace(/[_./]+/g, '-');
+    if (!folded) continue;
+    if (SENSITIVE_NAME_RE.test(folded) || SENSITIVE_NAME_RE.test(' ' + folded + ' ')) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -193,6 +236,8 @@ function isSensitiveField(elLike) {
   ) {
     return true;
   }
+
+  if (hasSensitiveNameAttrs(elLike)) return true;
 
   // OTP: inputmode numérico com maxlength curto
   if (
@@ -480,12 +525,27 @@ function broadcastConfig() {
 }
 
 /**
+ * Idiomas do corretor nativo: idioma do app + en-US (padrão pt-BR + en-US).
+ * @param {object} [settings]
+ * @returns {string[]}
+ */
+function nativeSpellcheckLanguages(settings) {
+  const appLang = String((settings && settings.language) || 'pt-BR').trim() || 'pt-BR';
+  const out = [appLang];
+  if (!out.some((l) => String(l).toLowerCase() === 'en-us')) out.push('en-US');
+  return out;
+}
+
+/**
  * Aplica (ou restaura) spellcheck nativo nas sessões de conta.
+ * Ligado por padrão; só desliga quando LT está ON e disableNativeSpellcheck.
  * @param {import('electron').Session[]} sessions
  * @param {ReturnType<typeof normalizeLanguageTool>} cfg
+ * @param {object} [settings]  settings completos (idioma do app)
  */
-function applyNativeSpellcheckPolicy(sessions, cfg) {
+function applyNativeSpellcheckPolicy(sessions, cfg, settings) {
   const disable = !!(cfg && cfg.enabled && cfg.disableNativeSpellcheck);
+  const langs = nativeSpellcheckLanguages(settings || (typeof getSettings === 'function' ? getSettings() : null));
   for (const ses of sessions || []) {
     if (!ses) continue;
     try {
@@ -494,6 +554,17 @@ function applyNativeSpellcheckPolicy(sessions, cfg) {
       }
     } catch {
       /* ignore */
+    }
+    if (!disable && typeof ses.setSpellCheckerLanguages === 'function') {
+      try {
+        ses.setSpellCheckerLanguages(langs);
+      } catch {
+        try {
+          ses.setSpellCheckerLanguages(['en-US']);
+        } catch {
+          /* OS pode não ter o dicionário */
+        }
+      }
     }
   }
 }
@@ -706,7 +777,7 @@ function onSettingsChanged(settings, sessions) {
   cancelPending();
   const cfg = normalizeLanguageTool(settings && settings.languageTool);
   broadcastConfig();
-  if (sessions) applyNativeSpellcheckPolicy(sessions, cfg);
+  if (sessions) applyNativeSpellcheckPolicy(sessions, cfg, settings);
 }
 
 function getSelftestStats() {

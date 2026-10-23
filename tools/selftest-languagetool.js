@@ -45,6 +45,14 @@ input,textarea,[contenteditable]{width:90%;padding:8px;font-size:16px;}
 <input id="in-otp" type="text" autocomplete="one-time-code" inputmode="numeric" maxlength="6"/>
 <label>cc</label>
 <input id="in-cc" type="text" autocomplete="cc-number"/>
+<label>senha by name</label>
+<input id="in-senha-name" type="text" name="senha"/>
+<label>token by id</label>
+<input id="in-token-id" type="text" name="api_token"/>
+<label>cpf placeholder</label>
+<input id="in-cpf" type="text" placeholder="Digite seu CPF"/>
+<label>cartao aria</label>
+<input id="in-cartao" type="text" aria-label="Número do cartão"/>
 <script>
 window.__ltPage = { ready: true };
 </script>

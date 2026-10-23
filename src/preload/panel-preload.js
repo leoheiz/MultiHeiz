@@ -484,7 +484,7 @@ injectEarlySync();
 (function installLanguageToolClient() {
   /** @type {object} */
   let cfg = {
-    enabled: true,
+    enabled: false,
     languages: [],
     disabledOrigins: [],
     appLanguage: 'pt-BR',
@@ -520,6 +520,26 @@ injectEarlySync();
     return !!(o && Array.isArray(list) && list.indexOf(o) >= 0);
   }
 
+  const SENSITIVE_NAME_RE =
+    /(?:^|[^a-z0-9])(?:senha|password|passwd|pass|pwd|token|otp|2fa|codigo|code|cpf|cnpj|rg|cartao|card|cc-|cvv|cvc|pin|iban|conta|secret|api[-_]?key|apikey)(?:[^a-z0-9]|$)/i;
+
+  function foldAccents(s) {
+    return String(s || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  }
+
+  function hasSensitiveNameAttrs(a) {
+    const parts = [a.name, a.id, a.autocomplete, a.ariaLabel, a.placeholder];
+    for (let i = 0; i < parts.length; i++) {
+      const folded = foldAccents(parts[i]).replace(/[_./]+/g, '-');
+      if (!folded) continue;
+      if (SENSITIVE_NAME_RE.test(folded) || SENSITIVE_NAME_RE.test(' ' + folded + ' ')) return true;
+    }
+    return false;
+  }
+
   function fieldAttrs(el) {
     if (!el || !el.tagName) return { tagName: '' };
     const tagName = String(el.tagName || '');
@@ -537,10 +557,27 @@ injectEarlySync();
     const noSpell =
       !!(el.getAttribute && el.getAttribute('data-mh-no-spell') != null) ||
       !!(el.dataset && el.dataset.mhNoSpell != null);
-    return { tagName, type, autocomplete, inputMode, maxLength, noSpell };
+    const name = (el.getAttribute && el.getAttribute('name')) || el.name || '';
+    const id = (el.getAttribute && el.getAttribute('id')) || el.id || '';
+    const ariaLabel =
+      (el.getAttribute && el.getAttribute('aria-label')) || el.ariaLabel || '';
+    const placeholder =
+      (el.getAttribute && el.getAttribute('placeholder')) || el.placeholder || '';
+    return {
+      tagName,
+      type,
+      autocomplete,
+      inputMode,
+      maxLength,
+      noSpell,
+      name,
+      id,
+      ariaLabel,
+      placeholder,
+    };
   }
 
-  /** Espelha isSensitiveField do main (password / cc-* / OTP / email). */
+  /** Espelha isSensitiveField do main (password / cc-* / OTP / name sensível). */
   function isSensitive(el) {
     const a = fieldAttrs(el);
     if (a.noSpell) return true;
@@ -560,6 +597,7 @@ injectEarlySync();
     ) {
       return true;
     }
+    if (hasSensitiveNameAttrs(a)) return true;
     if ((im === 'numeric' || im === 'decimal') && Number.isFinite(ml) && ml > 0 && ml <= 8) {
       return true;
     }

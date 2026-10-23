@@ -64,6 +64,65 @@ async function runLanguageToolSelftest(ctx) {
 
   languagetool.resetSelftestStats();
 
+  // Unit: default OFF + normalize opt-in
+  {
+    const def = languagetool.defaultLanguageToolSettings();
+    assert(def.enabled === false, 'default languageTool.enabled === false');
+    assert(
+      languagetool.normalizeLanguageTool({}).enabled === false,
+      'normalize missing enabled → false'
+    );
+    assert(
+      languagetool.normalizeLanguageTool({ enabled: true }).enabled === true,
+      'normalize enabled:true → true'
+    );
+    assert(
+      languagetool.normalizeLanguageTool({ enabled: false }).enabled === false,
+      'normalize enabled:false → false'
+    );
+    console.log('PASS: languageTool default off');
+  }
+
+  // Unit: migração one-shot OFF
+  {
+    const stateMod = require('./state');
+    const migrated = stateMod.migrate({
+      version: 1,
+      workspaces: [{ id: 'ws-default', name: 'Default' }],
+      activeWorkspaceId: 'ws-default',
+      accounts: [],
+      layout: '1',
+      settings: {
+        languageTool: { enabled: true, languages: ['pt-BR'], serverUrl: '', disabledOrigins: [] },
+        migrations: { keepAlive120: true },
+      },
+      ui: {},
+    });
+    assert(
+      migrated.settings.languageTool.enabled === false,
+      'migration força enabled=false'
+    );
+    assert(
+      migrated.settings.migrations.languageToolDefaultOff131 === true,
+      'migration flag languageToolDefaultOff131'
+    );
+    const again = stateMod.migrate(migrated);
+    again.settings.languageTool.enabled = true;
+    const kept = stateMod.migrate({
+      ...again,
+      settings: {
+        ...again.settings,
+        languageTool: { ...again.settings.languageTool, enabled: true },
+        migrations: { ...again.settings.migrations, languageToolDefaultOff131: true },
+      },
+    });
+    assert(
+      kept.settings.languageTool.enabled === true,
+      'após flag, enabled:true do usuário permanece'
+    );
+    console.log('PASS: languageTool migration off');
+  }
+
   // Unit: sensíveis
   assert(
     languagetool.isSensitiveField({ tagName: 'INPUT', type: 'password' }),
@@ -76,6 +135,30 @@ async function runLanguageToolSelftest(ctx) {
   assert(
     languagetool.isSensitiveField({ tagName: 'INPUT', type: 'text', autocomplete: 'cc-number' }),
     'cc sensitive'
+  );
+  assert(
+    languagetool.isSensitiveField({ tagName: 'INPUT', type: 'text', name: 'senha' }),
+    'name senha sensitive'
+  );
+  assert(
+    languagetool.isSensitiveField({ tagName: 'INPUT', type: 'text', name: 'api_token' }),
+    'name token sensitive'
+  );
+  assert(
+    languagetool.isSensitiveField({
+      tagName: 'INPUT',
+      type: 'text',
+      placeholder: 'Digite seu CPF',
+    }),
+    'placeholder cpf sensitive'
+  );
+  assert(
+    languagetool.isSensitiveField({
+      tagName: 'INPUT',
+      type: 'text',
+      ariaLabel: 'Número do cartão',
+    }),
+    'aria-label cartao sensitive'
   );
   assert(
     !languagetool.isSensitiveField({ tagName: 'TEXTAREA', type: '' }),
@@ -131,6 +214,18 @@ async function runLanguageToolSelftest(ctx) {
     ]);
   }
   await sleep(500);
+  // Corretor nativo ON por padrão (LT ligado neste teste, mas disableNativeSpellcheck=false)
+  {
+    const sessions = panels.getAccountSessions();
+    let any = false;
+    for (const ses of sessions || []) {
+      if (!ses || typeof ses.isSpellCheckerEnabled !== 'function') continue;
+      any = true;
+      assert(ses.isSpellCheckerEnabled() === true, 'session.isSpellCheckerEnabled() === true');
+    }
+    assert(any, 'pelo menos uma sessão com isSpellCheckerEnabled');
+    console.log('PASS: native spellchecker enabled by default');
+  }
   panels.panelNavigate('acc-lt', pageUrl);
   await waitForUrl('acc-lt', (u) => u.startsWith(pageUrl.replace(/\/$/, '')), 15000);
   await sleep(600);
@@ -206,7 +301,7 @@ async function runLanguageToolSelftest(ctx) {
   assert(Number(afterCe.requests) > midReq, 'contenteditable/input geraram pedidos');
   console.log('PASS: contenteditable + input text');
 
-  // 4) Campos sensíveis NUNCA geram pedido ao fake
+  // 4) Campos sensíveis NUNCA geram pedido ao fake (type + name/id/placeholder/aria)
   const sensBefore = Number((await fetchJson(statsUrl)).requests) || 0;
   await panelEval(
     'acc-lt',
@@ -221,6 +316,10 @@ async function runLanguageToolSelftest(ctx) {
       await fill('in-pass', 'errod senha');
       await fill('in-otp', '123456');
       await fill('in-cc', '4111111111111111 errod');
+      await fill('in-senha-name', 'errod nome senha');
+      await fill('in-token-id', 'errod token');
+      await fill('in-cpf', 'errod cpf');
+      await fill('in-cartao', 'errod cartao');
       return window.__mhLt.getDiag();
     })()`
   );
@@ -237,6 +336,44 @@ async function runLanguageToolSelftest(ctx) {
   const mainStats = languagetool.getSelftestStats();
   assert(mainStats.sensitiveBlocked > 0, 'main contou sensitiveBlocked');
   console.log('PASS: sensitive fields blocked', mainStats.sensitiveBlocked);
+
+  // 4b) Default OFF: com enabled=false (estado fresco via normalize) sem pedidos
+  {
+    const offBefore = Number((await fetchJson(statsUrl)).requests) || 0;
+    updateState((s) => {
+      s.settings.languageTool = languagetool.normalizeLanguageTool({
+        ...s.settings.languageTool,
+        enabled: false,
+      });
+    });
+    flushSave();
+    languagetool.onSettingsChanged(getState().settings, panels.getAccountSessions());
+    await sleep(300);
+    await panelEval(
+      'acc-lt',
+      `(async function(){
+        var el = document.getElementById('ta');
+        el.focus();
+        el.value = 'errod com default off';
+        await window.__mhLt.forceCheck('#ta');
+        return window.__mhLt.getDiag();
+      })()`
+    );
+    await sleep(400);
+    const offAfter = await fetchJson(statsUrl);
+    assert(Number(offAfter.requests) === offBefore, 'default/off: sem pedidos');
+    // Religa para o restante do selftest
+    updateState((s) => {
+      s.settings.languageTool = languagetool.normalizeLanguageTool({
+        ...s.settings.languageTool,
+        enabled: true,
+      });
+    });
+    flushSave();
+    languagetool.onSettingsChanged(getState().settings, panels.getAccountSessions());
+    await sleep(300);
+    console.log('PASS: enabled=false blocks checks');
+  }
 
   // 5) Desligar nas Configurações para pedidos
   const disBefore = Number((await fetchJson(statsUrl)).requests) || 0;

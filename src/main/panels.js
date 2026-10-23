@@ -1128,6 +1128,17 @@ function createPanel(accountId) {
   sessionPersist.hookSessionCookies(ses);
   adblock.attachSession(ses, accountId);
   try {
+    const languagetool = require('./languagetool');
+    const settings = (getState() && getState().settings) || {};
+    languagetool.applyNativeSpellcheckPolicy(
+      [ses],
+      languagetool.normalizeLanguageTool(settings.languageTool),
+      settings
+    );
+  } catch {
+    /* ignore */
+  }
+  try {
     const proxyMod = require('./proxy');
     // Aplica antes do loadURL (promise; load espera abaixo)
     ses._mhProxyReady = proxyMod.applyProxyToSession(accountId, ses).catch(() => ({ ok: false }));

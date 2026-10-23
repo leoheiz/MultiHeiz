@@ -3108,7 +3108,7 @@
     }
     const langs = parseLtLanguages(form.ltLanguages && form.ltLanguages.value);
     return {
-      enabled: !(form.ltEnabled && form.ltEnabled.checked === false),
+      enabled: !!(form.ltEnabled && form.ltEnabled.checked),
       languages: langs.length
         ? langs
         : prev.languages || ['pt-BR', 'pt-PT', 'en', 'es', 'fr', 'de', 'it', 'nl', 'ca'],
@@ -3531,7 +3531,7 @@
     if (form.dohCustomUrl) form.dohCustomUrl.value = doh.customUrl || '';
     syncDohFormVisibility();
     const lt = s.languageTool || {};
-    if (form.ltEnabled) form.ltEnabled.checked = lt.enabled !== false;
+    if (form.ltEnabled) form.ltEnabled.checked = !!lt.enabled;
     if (form.ltLanguages) {
       form.ltLanguages.value = Array.isArray(lt.languages)
         ? lt.languages.join(', ')

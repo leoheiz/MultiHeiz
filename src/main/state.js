@@ -144,12 +144,12 @@ function defaultState() {
         customUrl: '',
       },
       /**
-       * Corretor LanguageTool (ligado por padrão).
-       * O texto dos campos é enviado ao servidor LT para correção.
+       * Corretor LanguageTool (desligado por padrão — opt-in).
+       * Ao ligar, o texto dos campos é enviado ao servidor LT.
        * Corretor nativo do Chromium permanece ativo salvo disableNativeSpellcheck.
        */
       languageTool: {
-        enabled: true,
+        enabled: false,
         languages: ['pt-BR', 'pt-PT', 'en', 'es', 'fr', 'de', 'it', 'nl', 'ca'],
         serverUrl: '',
         disabledOrigins: [],
@@ -417,6 +417,18 @@ function migrate(parsed) {
     next.settings.languageTool = rawLt
       ? normalizeLanguageTool(rawLt)
       : defaultLanguageToolSettings();
+    // 1.3.1 one-shot: LT passa a opt-in (OFF). Força OFF uma vez para perfis
+    // existentes (incluindo quem tinha o antigo default ON).
+    if (!next.settings.migrations || typeof next.settings.migrations !== 'object') {
+      next.settings.migrations = {};
+    }
+    if (!next.settings.migrations.languageToolDefaultOff131) {
+      next.settings.languageTool = normalizeLanguageTool({
+        ...next.settings.languageTool,
+        enabled: false,
+      });
+      next.settings.migrations.languageToolDefaultOff131 = true;
+    }
   }
   {
     const { normalizeAiWrite, defaultAiWriteSettings } = require('./ai-write');
