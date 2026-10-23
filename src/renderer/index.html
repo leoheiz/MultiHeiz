@@ -169,10 +169,11 @@
         </button>
       </div>
       <label class="dlg-catalog-search">
-        <span class="sr-only">Buscar app</span>
+        <span class="sr-only" id="catalog-search-label">Buscar app</span>
         <input type="search" id="catalog-search" placeholder="Buscar app..." maxlength="64" autocomplete="off" />
       </label>
       <div id="catalog-grid" class="catalog-grid" role="listbox" aria-label="Apps prontos"></div>
+      <div id="catalog-favorites" class="catalog-favorites hidden" role="listbox" aria-label="Favoritos" hidden></div>
     </dialog>
 
     <dialog id="dlg-account">

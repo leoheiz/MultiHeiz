@@ -34,14 +34,17 @@ async function runCatalogSelftest(ctx) {
   // --- Node: load + validate + filter ---
   catalog.clearCatalogCache();
   const apps = catalog.loadCatalog();
-  assert(apps.length === 18, 'expected 18 catalog apps, got ' + apps.length);
+  assert(apps.length === 21, 'expected 21 catalog apps, got ' + apps.length);
   const ids = apps.map((a) => a.id);
   assert(ids.includes('whatsapp') && ids.includes('x'), 'whatsapp + x present');
+  assert(ids.includes('google'), 'google present');
+  assert(ids.includes('youtube'), 'youtube present');
+  assert(ids.includes('claude'), 'claude present');
   for (const a of apps) {
     assert(a.url.startsWith('https://'), 'https only: ' + a.id);
     assert(fs.existsSync(a.iconPath), 'icon exists: ' + a.iconPath);
   }
-  console.log('PASS: catalog JSON + icons on disk');
+  console.log('PASS: catalog JSON + icons on disk (21 apps)');
 
   const zap = catalog.filterApps(apps, 'zap');
   assert(zap.length === 1 && zap[0].id === 'whatsapp', 'zap -> WhatsApp');
@@ -99,10 +102,14 @@ async function runCatalogSelftest(ctx) {
   const visible = await rendererEval('window.__multiheizUi.getCatalogVisibleIds()');
   assert(Array.isArray(visible), 'visible ids array');
   assert(visible.includes('custom'), 'Site personalizado card');
+  assert(visible.includes('favorites'), 'Dos favoritos card');
   assert(visible.includes('whatsapp'), 'whatsapp card');
   assert(visible.includes('x'), 'x card');
-  assert(visible.length === 19, '18 apps + custom = 19, got ' + visible.length);
-  console.log('PASS: picker lists 18 apps + Site personalizado');
+  assert(visible.includes('google'), 'google card');
+  assert(visible.includes('youtube'), 'youtube card');
+  assert(visible.includes('claude'), 'claude card');
+  assert(visible.length === 23, '21 apps + custom + favorites = 23, got ' + visible.length);
+  console.log('PASS: picker lists 21 apps + Site personalizado + Dos favoritos');
 
   await rendererEval('window.__multiheizUi.setCatalogSearch("zap")');
   await sleep(100);
@@ -192,6 +199,57 @@ async function runCatalogSelftest(ctx) {
     'sidebar icon is catalog file: ' + sidebarIcon.src
   );
   console.log('PASS: sidebar shows catalog icon before page favicon');
+
+  // --- Dos favoritos: seed bookmarks.json e cria janela ---
+  const bookmarks = require('./bookmarks');
+  bookmarks.load();
+  bookmarks.addFavorite({
+    url: 'https://example.com/catalog-fav',
+    name: 'Fav Catalog Test',
+    title: 'Fav Catalog Test',
+  });
+  bookmarks.addFavorite({
+    url: 'https://example.org/other-fav',
+    name: 'Other Fav',
+    title: 'Other Fav',
+  });
+  bookmarks.flush();
+  const seeded = bookmarks.list();
+  assert(
+    (seeded.items || []).some((it) => it.url === 'https://example.com/catalog-fav'),
+    'seeded bookmark present'
+  );
+  const seedId = (seeded.items || []).find((it) => it.url === 'https://example.com/catalog-fav').id;
+
+  await rendererEval('window.__multiheizUi.openCatalogPicker()');
+  await sleep(200);
+  await rendererEval('window.__multiheizUi.pickCatalogById("favorites")');
+  await sleep(300);
+  const mode = await rendererEval('window.__multiheizUi.getCatalogMode()');
+  assert(mode === 'favorites', 'catalog mode favorites, got ' + mode);
+  const favIds = await rendererEval('window.__multiheizUi.getCatalogVisibleIds()');
+  assert(Array.isArray(favIds) && favIds.includes(seedId), 'seeded fav visible in list');
+  await rendererEval('window.__multiheizUi.setCatalogSearch("Catalog Test")');
+  await sleep(100);
+  const filtered = await rendererEval('window.__multiheizUi.getCatalogVisibleNames()');
+  assert(
+    Array.isArray(filtered) && filtered.some((n) => /Fav Catalog Test/i.test(n)),
+    'search filters favorites'
+  );
+  assert(!filtered.some((n) => /Other Fav/i.test(n)), 'search hides other fav');
+  console.log('PASS: Dos favoritos list + search');
+
+  const beforeFav = publicState().accounts.length;
+  await rendererEval(`window.__multiheizUi.pickCatalogFavoriteById(${JSON.stringify(seedId)})`);
+  await sleep(600);
+  const stFav = publicState();
+  const createdFav = (stFav.accounts || []).find(
+    (a) => a.startUrl === 'https://example.com/catalog-fav' || a.name === 'Fav Catalog Test'
+  );
+  assert(createdFav, 'favorite created account');
+  assert(createdFav.startUrl === 'https://example.com/catalog-fav', 'favorite URL');
+  assert(stFav.accounts.length === beforeFav + 1, 'one account from favorite');
+  console.log('PASS: Dos favoritos creates window from seeded bookmarks');
 
   console.log('PASS: selftest catalog complete');
   app.exit(0);

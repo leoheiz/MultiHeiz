@@ -247,6 +247,9 @@ const el = {
   dlgCatalog: document.getElementById('dlg-catalog'),
   catalogSearch: document.getElementById('catalog-search'),
   catalogGrid: document.getElementById('catalog-grid'),
+  catalogFavorites: document.getElementById('catalog-favorites'),
+  catalogTitle: document.getElementById('dlg-catalog-title'),
+  catalogSearchLabel: document.getElementById('catalog-search-label'),
   btnCatalogClose: document.getElementById('btn-catalog-close'),
   dlgAccount: document.getElementById('dlg-account'),
   formAccount: document.getElementById('form-account'),
@@ -3176,6 +3179,10 @@ function panelNeedsStartUrlReload(accountId) {
 
 /** @type {Array<object>|null} */
 let catalogAppsCache = null;
+/** @type {'apps' | 'favorites'} */
+let catalogMode = 'apps';
+/** @type {{ folders: object[], items: object[] } | null} */
+let catalogBookmarksCache = null;
 
 async function ensureCatalogApps() {
   if (catalogAppsCache) return catalogAppsCache;
@@ -3186,6 +3193,16 @@ async function ensureCatalogApps() {
     catalogAppsCache = [];
   }
   return catalogAppsCache;
+}
+
+async function ensureCatalogBookmarks() {
+  try {
+    const data = await window.multiheiz.bookmarksList();
+    catalogBookmarksCache = data && typeof data === 'object' ? data : { folders: [], items: [] };
+  } catch {
+    catalogBookmarksCache = { folders: [], items: [] };
+  }
+  return catalogBookmarksCache;
 }
 
 function catalogMatchesQuery(app, query) {
@@ -3204,8 +3221,47 @@ function catalogMatchesQuery(app, query) {
   return false;
 }
 
+function bookmarkFaviconUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (!u.hostname) return '';
+    return (
+      'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(u.hostname) + '&sz=64'
+    );
+  } catch {
+    return '';
+  }
+}
+
+function setCatalogMode(mode) {
+  catalogMode = mode === 'favorites' ? 'favorites' : 'apps';
+  const favs = el.catalogFavorites;
+  const grid = el.catalogGrid;
+  if (grid) {
+    grid.hidden = catalogMode !== 'apps';
+    grid.classList.toggle('hidden', catalogMode !== 'apps');
+  }
+  if (favs) {
+    favs.hidden = catalogMode !== 'favorites';
+    favs.classList.toggle('hidden', catalogMode !== 'favorites');
+  }
+  if (el.catalogTitle) {
+    el.catalogTitle.textContent =
+      catalogMode === 'favorites' ? 'Dos favoritos' : 'Escolher app';
+  }
+  if (el.catalogSearch) {
+    el.catalogSearch.placeholder =
+      catalogMode === 'favorites' ? 'Buscar favoritos…' : 'Buscar app...';
+  }
+  if (el.catalogSearchLabel) {
+    el.catalogSearchLabel.textContent =
+      catalogMode === 'favorites' ? 'Buscar favoritos' : 'Buscar app';
+  }
+}
+
 function renderCatalogGrid(query) {
   if (!el.catalogGrid) return;
+  setCatalogMode('apps');
   el.catalogGrid.innerHTML = '';
   const apps = (catalogAppsCache || []).filter((a) => catalogMatchesQuery(a, query));
 
@@ -3226,11 +3282,38 @@ function renderCatalogGrid(query) {
   custom.addEventListener('click', () => {
     openCustomSiteFromCatalog();
   });
-  // Sempre mostra "Site personalizado" (mesmo com busca ativa, se bater ou busca vazia)
   const customVisible =
     !String(query || '').trim() ||
-    catalogMatchesQuery({ name: 'Site personalizado', keywords: ['custom', 'site', 'url', 'personalizado'] }, query);
+    catalogMatchesQuery(
+      { name: 'Site personalizado', keywords: ['custom', 'site', 'url', 'personalizado'] },
+      query
+    );
   if (customVisible) el.catalogGrid.appendChild(custom);
+
+  const favCard = document.createElement('button');
+  favCard.type = 'button';
+  favCard.className = 'catalog-card';
+  favCard.dataset.catalogId = 'favorites';
+  favCard.setAttribute('role', 'option');
+  favCard.setAttribute('aria-label', 'Dos favoritos');
+  const favIcon = document.createElement('span');
+  favIcon.className = 'catalog-card-icon favorites';
+  favIcon.textContent = '★';
+  favIcon.setAttribute('aria-hidden', 'true');
+  const favName = document.createElement('span');
+  favName.className = 'catalog-card-name';
+  favName.textContent = 'Dos favoritos';
+  favCard.append(favIcon, favName);
+  favCard.addEventListener('click', () => {
+    void openFavoritesFromCatalog();
+  });
+  const favVisible =
+    !String(query || '').trim() ||
+    catalogMatchesQuery(
+      { name: 'Dos favoritos', keywords: ['favoritos', 'bookmarks', 'favorito', 'estrelas'] },
+      query
+    );
+  if (favVisible) el.catalogGrid.appendChild(favCard);
 
   for (const app of apps) {
     const card = document.createElement('button');
@@ -3251,11 +3334,77 @@ function renderCatalogGrid(query) {
     el.catalogGrid.appendChild(card);
   }
 
-  if (!apps.length && !customVisible) {
+  if (!apps.length && !customVisible && !favVisible) {
     const empty = document.createElement('div');
     empty.className = 'catalog-empty';
     empty.textContent = 'Nenhum app encontrado.';
     el.catalogGrid.appendChild(empty);
+  }
+}
+
+function renderCatalogFavoritesList(query) {
+  if (!el.catalogFavorites) return;
+  setCatalogMode('favorites');
+  el.catalogFavorites.innerHTML = '';
+  const data = catalogBookmarksCache || { folders: [], items: [] };
+  const q = String(query || '')
+    .trim()
+    .toLowerCase();
+  const items = (data.items || []).filter((it) => {
+    if (!q) return true;
+    const name = String(it.name || it.title || '').toLowerCase();
+    const url = String(it.url || '').toLowerCase();
+    return name.includes(q) || url.includes(q);
+  });
+
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'catalog-empty';
+    empty.textContent = (data.items || []).length
+      ? 'Nenhum favorito encontrado.'
+      : 'Nenhum favorito ainda. Salve páginas com a estrela.';
+    el.catalogFavorites.appendChild(empty);
+    return;
+  }
+
+  for (const it of items) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'catalog-fav-row';
+    row.dataset.bookmarkId = it.id || '';
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-label', it.name || it.title || it.url || 'Favorito');
+    const img = document.createElement('img');
+    img.className = 'catalog-fav-icon';
+    img.alt = '';
+    img.src = bookmarkFaviconUrl(it.url);
+    img.addEventListener('error', () => {
+      img.style.visibility = 'hidden';
+    });
+    const text = document.createElement('span');
+    text.className = 'catalog-fav-text';
+    const title = document.createElement('strong');
+    title.textContent = it.name || it.title || it.url || 'Favorito';
+    const urlEl = document.createElement('span');
+    urlEl.className = 'catalog-fav-url';
+    urlEl.textContent = it.url || '';
+    text.append(title, urlEl);
+    row.append(img, text);
+    row.addEventListener('click', () => void pickCatalogFavorite(it));
+    el.catalogFavorites.appendChild(row);
+  }
+}
+
+async function openFavoritesFromCatalog() {
+  clearCatalogSearch();
+  await ensureCatalogBookmarks();
+  renderCatalogFavoritesList('');
+  if (el.catalogSearch) {
+    try {
+      el.catalogSearch.focus();
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -3266,6 +3415,7 @@ async function openCatalogPicker() {
   }
   await ensureCatalogApps();
   clearCatalogSearch();
+  catalogBookmarksCache = null;
   renderCatalogGrid('');
   pushOverlay('dlg-catalog');
   el.dlgCatalog.showModal();
@@ -3280,6 +3430,7 @@ async function openCatalogPicker() {
 
 function closeCatalogPicker() {
   clearCatalogSearch();
+  catalogMode = 'apps';
   if (el.dlgCatalog && el.dlgCatalog.open) el.dlgCatalog.close();
 }
 
@@ -3318,6 +3469,27 @@ async function pickCatalogApp(app) {
     scheduleSync();
   } catch (err) {
     console.warn('catalog pick', err);
+    showToast('Não foi possível criar a janela.');
+  }
+}
+
+async function pickCatalogFavorite(item) {
+  if (!item || !item.url) return;
+  closeCatalogPicker();
+  try {
+    const res = await window.multiheiz.createAccount({
+      name: item.name || item.title || 'Favorito',
+      startUrl: item.url,
+      workspaceId: state.activeWorkspaceId,
+    });
+    if (res && res.ok === false) {
+      showToast((res && res.error) || 'Endereço inválido.');
+      return;
+    }
+    if (res && res.state) applyState(res.state);
+    scheduleSync();
+  } catch (err) {
+    console.warn('catalog favorite pick', err);
     showToast('Não foi possível criar a janela.');
   }
 }
@@ -3753,7 +3925,11 @@ if (el.catalogSearch) {
   el.catalogSearch.addEventListener('input', () => {
     // Só filtra enquanto o seletor está aberto (não captura teclas do formulário)
     if (!(el.dlgCatalog && el.dlgCatalog.open)) return;
-    renderCatalogGrid(el.catalogSearch.value);
+    if (catalogMode === 'favorites') {
+      renderCatalogFavoritesList(el.catalogSearch.value);
+    } else {
+      renderCatalogGrid(el.catalogSearch.value);
+    }
   });
   // Impede que a busca do catálogo receba digitação com o formulário de conta aberto
   el.catalogSearch.addEventListener('keydown', (e) => {
@@ -5013,15 +5189,28 @@ window.__multiheizUi = {
     };
   },
   getCatalogVisibleIds: () => {
+    if (catalogMode === 'favorites') {
+      if (!el.catalogFavorites) return [];
+      return [...el.catalogFavorites.querySelectorAll('.catalog-fav-row')].map(
+        (n) => n.dataset.bookmarkId || ''
+      );
+    }
     if (!el.catalogGrid) return [];
     return [...el.catalogGrid.querySelectorAll('.catalog-card')].map((n) => n.dataset.catalogId || '');
   },
   getCatalogVisibleNames: () => {
+    if (catalogMode === 'favorites') {
+      if (!el.catalogFavorites) return [];
+      return [...el.catalogFavorites.querySelectorAll('.catalog-fav-row strong')].map(
+        (n) => n.textContent || ''
+      );
+    }
     if (!el.catalogGrid) return [];
     return [...el.catalogGrid.querySelectorAll('.catalog-card .catalog-card-name')].map(
       (n) => n.textContent || ''
     );
   },
+  getCatalogMode: () => catalogMode,
   isCatalogOpen: () => !!(el.dlgCatalog && el.dlgCatalog.open),
   getSidebarUnreadBadges: () => {
     return [...el.sidebarList.querySelectorAll('.sidebar-item')].map((item) => {
@@ -5036,12 +5225,29 @@ window.__multiheizUi = {
   },
   setCatalogSearch: (q) => {
     if (el.catalogSearch) el.catalogSearch.value = String(q || '');
-    renderCatalogGrid(q);
+    if (catalogMode === 'favorites') renderCatalogFavoritesList(q);
+    else renderCatalogGrid(q);
+  },
+  openCatalogFavorites: async () => {
+    await openFavoritesFromCatalog();
+    return { ok: true, mode: catalogMode };
+  },
+  pickCatalogFavoriteById: async (bookmarkId) => {
+    await ensureCatalogBookmarks();
+    const items = (catalogBookmarksCache && catalogBookmarksCache.items) || [];
+    const it = items.find((x) => x.id === bookmarkId);
+    if (!it) return { ok: false, reason: 'missing' };
+    await pickCatalogFavorite(it);
+    return { ok: true, id: bookmarkId };
   },
   pickCatalogById: async (id) => {
     if (id === 'custom') {
       openCustomSiteFromCatalog();
       return { ok: true, custom: true };
+    }
+    if (id === 'favorites') {
+      await openFavoritesFromCatalog();
+      return { ok: true, favorites: true };
     }
     const apps = await ensureCatalogApps();
     const app = (apps || []).find((a) => a.id === id);

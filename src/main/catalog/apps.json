@@ -164,5 +164,32 @@
     "icon": "icons/tiktok.svg",
     "color": "#121212",
     "keywords": ["tt", "tik tok", "video", "vídeo"]
+  },
+  {
+    "id": "google",
+    "name": "Google",
+    "url": "https://www.google.com/",
+    "defaultName": "Google",
+    "icon": "icons/google.svg",
+    "color": "#4285F4",
+    "keywords": ["busca", "search", "google"]
+  },
+  {
+    "id": "youtube",
+    "name": "YouTube",
+    "url": "https://www.youtube.com/",
+    "defaultName": "YouTube",
+    "icon": "icons/youtube.svg",
+    "color": "#FF0000",
+    "keywords": ["yt", "video", "vídeo", "youtube"]
+  },
+  {
+    "id": "claude",
+    "name": "Claude",
+    "url": "https://claude.ai/",
+    "defaultName": "Claude",
+    "icon": "icons/claude.svg",
+    "color": "#D97757",
+    "keywords": ["anthropic", "ia", "ai", "claude"]
   }
 ]
