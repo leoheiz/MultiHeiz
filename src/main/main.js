@@ -313,6 +313,7 @@ const SELFTEST_SUSPEND = selftestMode === 'suspend';
 const SELFTEST_SHORTCUTS = selftestMode === 'shortcuts';
 const SELFTEST_SHORTCUT_CUSTOM = selftestMode === 'shortcut-custom';
 const SELFTEST_MINIMIZE_RESTORE = selftestMode === 'minimize-restore';
+const SELFTEST_DIAG_CERTISIGN = selftestMode === 'diag-certisign';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -386,7 +387,8 @@ const ANY_SELFTEST =
   SELFTEST_SUSPEND ||
   SELFTEST_SHORTCUTS ||
   SELFTEST_SHORTCUT_CUSTOM ||
-  SELFTEST_MINIMIZE_RESTORE;
+  SELFTEST_MINIMIZE_RESTORE ||
+  SELFTEST_DIAG_CERTISIGN;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -741,6 +743,7 @@ function createWindow() {
     SELFTEST_SHORTCUTS ||
     SELFTEST_SHORTCUT_CUSTOM ||
     SELFTEST_MINIMIZE_RESTORE ||
+    SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
@@ -788,6 +791,7 @@ function createWindow() {
     SELFTEST_MINIMIZE_RESTORE ||
     SELFTEST_SHORTCUT_CUSTOM ||
     SELFTEST_FAVORITES_E2E ||
+    SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
     SELFTEST_SUSPEND ||
@@ -872,6 +876,7 @@ function createWindow() {
         SELFTEST_SHORTCUT_CUSTOM ||
         SELFTEST_MINIMIZE_RESTORE ||
         SELFTEST_FAVORITES_E2E ||
+        SELFTEST_DIAG_CERTISIGN ||
         SELFTEST_SETTINGS_PERF ||
         SELFTEST_WORKSPACE_DELETE ||
         SELFTEST_SHARED_SESSION ||
@@ -2119,6 +2124,32 @@ function createWindow() {
         try {
           const { runMinimizeRestoreSelftest } = require('./selftest-minimize-restore');
           runMinimizeRestoreSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_DIAG_CERTISIGN) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runDiagCertisign } = require('./selftest-diag-certisign');
+          runDiagCertisign({
             mainWindow,
             panels,
             getState,

@@ -61,6 +61,7 @@
     "selftest:settings-perf": "node tools/selftest-settings-perf.js",
     "selftest:permissions": "node tools/selftest-permissions.js",
     "selftest:certificates": "node tools/selftest-certificates.js",
+    "diag:certisign": "node tools/diag-certisign.js",
     "selftest:favorites": "node tools/selftest-favorites.js",
     "selftest:favorites-e2e": "node tools/selftest-favorites-e2e.js",
     "selftest:catalog": "node tools/selftest-catalog.js",
