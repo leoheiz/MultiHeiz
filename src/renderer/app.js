@@ -2336,13 +2336,15 @@ function buildPanelSlot(acc, tile) {
     }
   }
 
-  const siteInfoBtn = iconBtn(ICO.siteInfo, 'Informações do site', (e) => {
+  const siteInfoBtn = iconBtn(ICO.lock, 'Informações do site', (e) => {
     e.stopPropagation();
     const r = siteInfoBtn.getBoundingClientRect();
     openSitePermissionsPopover(acc.id, Math.round(r.left), Math.round(r.bottom + 4));
   });
   siteInfoBtn.dataset.role = 'panel-site-info';
   siteInfoBtn.classList.add('panel-site-info');
+  siteInfoBtn.dataset.secure = '1';
+  void refreshPanelSiteInfoIcon(acc.id, siteInfoBtn);
 
   const mediaUse = mediaUseByPanel.get(acc.id) || { microphone: false, camera: false };
   const shareCount =
@@ -2721,6 +2723,14 @@ async function openSitePermissionsPopover(accountId, x, y) {
   const data = await window.multiheiz.permissionsGet(accountId, origin);
   const states = (data && data.states) || {};
   const keys = Object.keys(SITE_PERM_LABELS);
+  let security = null;
+  try {
+    if (window.multiheiz.certificatesSiteInfo) {
+      security = await window.multiheiz.certificatesSiteInfo(accountId, origin);
+    }
+  } catch {
+    security = null;
+  }
   lastSitePermPopover = { accountId, origin };
   showLightPopover({
     id: 'site-perm-popover',
@@ -2733,8 +2743,112 @@ async function openSitePermissionsPopover(accountId, x, y) {
       states,
       keys,
       labels: { ...SITE_PERM_LABELS },
+      security,
     },
   });
+}
+
+/** @type {{ requestId: string, accountId: string, origin: string, certificates: object[] }|null} */
+let pendingClientCertPick = null;
+
+/**
+ * Overlay in-app para escolher certificado de cliente.
+ * @param {object} payload
+ */
+function openClientCertPicker(payload) {
+  const dlg = document.getElementById('dlg-client-cert');
+  const list = document.getElementById('client-cert-list');
+  const originEl = document.getElementById('client-cert-origin');
+  const remember = document.getElementById('client-cert-remember');
+  if (!dlg || !list) return;
+  pendingClientCertPick = {
+    requestId: payload.requestId,
+    accountId: payload.accountId,
+    origin: payload.origin || '',
+    certificates: payload.certificates || [],
+  };
+  if (originEl) originEl.textContent = payload.origin || payload.url || '';
+  if (remember) remember.checked = false;
+  list.replaceChildren();
+  let selectedFp = '';
+  const certs = pendingClientCertPick.certificates;
+  certs.forEach((c, i) => {
+    const li = document.createElement('li');
+    li.className = 'client-cert-item';
+    li.setAttribute('role', 'option');
+    li.tabIndex = 0;
+    li.dataset.fingerprint = c.fingerprint || '';
+    if (i === 0) {
+      li.classList.add('is-selected');
+      selectedFp = c.fingerprint || '';
+    }
+    const name = document.createElement('div');
+    name.className = 'client-cert-subject';
+    name.textContent = c.subject || 'Certificado';
+    const meta = document.createElement('div');
+    meta.className = 'client-cert-meta';
+    const exp = c.expired ? ' (expirado)' : '';
+    meta.textContent = `Emissor: ${c.issuer || '—'}${exp}`;
+    li.append(name, meta);
+    li.addEventListener('click', () => {
+      list.querySelectorAll('.client-cert-item').forEach((el) => el.classList.remove('is-selected'));
+      li.classList.add('is-selected');
+      selectedFp = c.fingerprint || '';
+    });
+    list.appendChild(li);
+  });
+  list.dataset.selectedFp = selectedFp;
+  const syncSel = () => {
+    const sel = list.querySelector('.client-cert-item.is-selected');
+    list.dataset.selectedFp = (sel && sel.dataset.fingerprint) || '';
+  };
+  list.addEventListener('click', syncSel);
+
+  pushOverlay('dlg-client-cert');
+  if (!dlg.open) dlg.showModal();
+}
+
+async function respondClientCertPick(action) {
+  const pending = pendingClientCertPick;
+  const dlg = document.getElementById('dlg-client-cert');
+  const list = document.getElementById('client-cert-list');
+  const remember = document.getElementById('client-cert-remember');
+  pendingClientCertPick = null;
+  if (dlg && dlg.open) dlg.close();
+  if (!pending || !window.multiheiz.certificatesClientRespond) return;
+  const fingerprint =
+    action === 'use'
+      ? (list && list.dataset.selectedFp) ||
+        (pending.certificates[0] && pending.certificates[0].fingerprint) ||
+        ''
+      : '';
+  await window.multiheiz.certificatesClientRespond({
+    requestId: pending.requestId,
+    action: action === 'use' ? 'use' : 'cancel',
+    fingerprint,
+    remember: !!(remember && remember.checked),
+  });
+}
+
+function wireClientCertDialog() {
+  const dlg = document.getElementById('dlg-client-cert');
+  const form = document.getElementById('form-client-cert');
+  const cancel = document.getElementById('client-cert-cancel');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      void respondClientCertPick('use');
+    });
+  }
+  if (cancel) {
+    cancel.addEventListener('click', () => void respondClientCertPick('cancel'));
+  }
+  if (dlg) {
+    dlg.addEventListener('close', () => {
+      popOverlay('dlg-client-cert');
+      if (pendingClientCertPick) void respondClientCertPick('cancel');
+    });
+  }
 }
 
 /**
@@ -3208,6 +3322,33 @@ function paintPanelNavIncremental(accountId) {
   if (muteBtn) muteBtn.innerHTML = svg(payload.muted ? ICO.mute : ICO.unmute);
   const loadSt = slot.querySelector('.panel-load-status');
   if (loadSt) loadSt.classList.add('hidden');
+  const siteBtn = slot.querySelector('[data-role="panel-site-info"]');
+  if (siteBtn) void refreshPanelSiteInfoIcon(accountId, siteBtn);
+}
+
+/**
+ * Atualiza ícone cadeado / não seguro na barra do painel.
+ * @param {string} accountId
+ * @param {HTMLElement} [btn]
+ */
+async function refreshPanelSiteInfoIcon(accountId, btn) {
+  const slot = el.grid && el.grid.querySelector(`.panel-slot[data-account-id="${accountId}"]`);
+  const siteBtn = btn || (slot && slot.querySelector('[data-role="panel-site-info"]'));
+  if (!siteBtn || !window.multiheiz.certificatesSiteInfo) return;
+  const nav = navState.get(accountId) || {};
+  const acc = (state.accounts || []).find((a) => a.id === accountId);
+  const url = nav.url || (acc && acc.lastUrl) || '';
+  try {
+    const info = await window.multiheiz.certificatesSiteInfo(accountId, url);
+    const secure = !!(info && info.secure && !info.http);
+    siteBtn.dataset.secure = secure ? '1' : '0';
+    siteBtn.innerHTML = svg(secure ? ICO.lock : ICO.unlock);
+    const label = (info && info.label) || (secure ? 'Conexão segura' : 'Conexão não segura');
+    siteBtn.title = label + ' — Informações do site';
+    siteBtn.setAttribute('aria-label', siteBtn.title);
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -3951,6 +4092,7 @@ if (el.btnClockSkewDismiss) {
 
 if (el.dlgNovidades) {
   el.dlgNovidades.addEventListener('close', () => popOverlay('dlg-novidades'));
+  wireClientCertDialog();
 }
 
 /**
@@ -5150,6 +5292,26 @@ window.multiheiz.onEvent((payload) => {
       adblockSessionTotal = payload.sessionTotal;
     }
   }
+  if (payload.type === 'certificates:client-pick') {
+    openClientCertPicker(payload);
+    return;
+  }
+  if (payload.type === 'certificates:client-pick-closed') {
+    pendingClientCertPick = null;
+    const dlg = document.getElementById('dlg-client-cert');
+    if (dlg && dlg.open) dlg.close();
+    return;
+  }
+  if (payload.type === 'certificates:error') {
+    // Página de erro vive no webContents; chrome só guarda para selftest
+    window.__mhLastCertError = payload;
+    return;
+  }
+  if (payload.type === 'certificates:error-resolved') {
+    window.__mhLastCertError = null;
+    if (payload.accountId) void refreshPanelSiteInfoIcon(payload.accountId);
+    return;
+  }
   if (payload.type === 'extensions:changed') {
     /* list refreshed when settings pane opens; puzzle menu fetches live */
     if (window.MultiHeizV16 && window.MultiHeizV16.refreshExtensionsUi) {
@@ -6159,6 +6321,17 @@ window.__multiheizUi = {
     if (btn) btn.click();
     return !!btn;
   },
+  getClientCertPicker: () => {
+    const dlg = document.getElementById('dlg-client-cert');
+    if (!pendingClientCertPick && !(dlg && dlg.open)) return null;
+    return {
+      open: !!(dlg && dlg.open),
+      requestId: pendingClientCertPick && pendingClientCertPick.requestId,
+      origin: pendingClientCertPick && pendingClientCertPick.origin,
+      count: (pendingClientCertPick && pendingClientCertPick.certificates.length) || 0,
+    };
+  },
+  getLastCertError: () => window.__mhLastCertError || null,
   openSitePermissions: async (accountId) => {
     const id = accountId || focusedAccountId;
     const btn = document.querySelector(

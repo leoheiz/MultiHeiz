@@ -204,6 +204,48 @@
     const title = document.createElement('div');
     title.className = 'panel-site-perm-origin';
     title.textContent = (data && data.origin) || '';
+    const sec = data && data.security;
+    if (sec) {
+      const secBlock = document.createElement('div');
+      secBlock.className = 'panel-site-perm-security';
+      secBlock.dataset.role = 'site-security';
+      const secLabel = document.createElement('div');
+      secLabel.className = 'panel-site-perm-security-label';
+      secLabel.textContent = sec.label || (sec.secure ? 'Conexão segura' : 'Conexão não segura');
+      secBlock.appendChild(secLabel);
+      if (sec.certificate) {
+        const c = sec.certificate;
+        const meta = document.createElement('div');
+        meta.className = 'panel-site-perm-security-meta';
+        meta.innerHTML = '';
+        const lines = [
+          'Assunto: ' + (c.subject || '—'),
+          'Emissor: ' + (c.issuer || '—'),
+          'Impressão digital: ' + (c.fingerprint || '—'),
+        ];
+        if (c.validExpiry != null) {
+          try {
+            lines.push(
+              'Validade: ' + new Date(Number(c.validExpiry) * 1000).toLocaleDateString('pt-BR')
+            );
+          } catch {
+            /* ignore */
+          }
+        }
+        for (const line of lines) {
+          const p = document.createElement('div');
+          p.textContent = line;
+          meta.appendChild(p);
+        }
+        secBlock.appendChild(meta);
+      } else if (sec.http) {
+        const meta = document.createElement('div');
+        meta.className = 'panel-site-perm-security-meta';
+        meta.textContent = 'Esta página usa HTTP (sem criptografia).';
+        secBlock.appendChild(meta);
+      }
+      pop.appendChild(secBlock);
+    }
     const list = document.createElement('div');
     const labels = (data && data.labels) || {};
     const states = (data && data.states) || {};

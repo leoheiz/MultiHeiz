@@ -2684,7 +2684,37 @@
         }
         if (section === 'adblock') refreshAdblockUi();
         if (section === 'extensoes') refreshExtensionsUi();
+        if (section === 'certificados') refreshCertificatesUi();
       });
+    });
+
+    function refreshCertificatesUi() {
+      const winBtn = document.getElementById('btn-cert-open-windows');
+      const note = document.getElementById('cert-windows-note');
+      const isWin = /Win/i.test(navigator.platform || '') || /Windows/i.test(navigator.userAgent || '');
+      if (winBtn) winBtn.hidden = !isWin;
+      if (note) note.hidden = isWin;
+    }
+
+    document.getElementById('btn-cert-open-windows')?.addEventListener('click', async () => {
+      if (!window.multiheiz.certificatesOpenWindowsManager) return;
+      const r = await window.multiheiz.certificatesOpenWindowsManager();
+      if (r && r.ok === false) {
+        toast(r.message || 'Não foi possível abrir o gerenciador');
+      }
+    });
+    document.getElementById('btn-cert-forget')?.addEventListener('click', async () => {
+      if (!window.multiheiz.certificatesForgetRemembered) return;
+      const r = await window.multiheiz.certificatesForgetRemembered();
+      const st = document.getElementById('cert-forget-status');
+      if (st) {
+        st.hidden = false;
+        st.textContent =
+          r && r.cleared
+            ? `Esquecidos ${r.cleared} certificado(s) lembrado(s).`
+            : 'Nenhum certificado lembrado.';
+      }
+      toast('Certificados lembrados esquecidos');
     });
 
     const form = document.getElementById('form-settings');

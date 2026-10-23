@@ -57,6 +57,7 @@
     "selftest:autostart": "node tools/selftest-autostart.js",
     "selftest:settings-perf": "node tools/selftest-settings-perf.js",
     "selftest:permissions": "node tools/selftest-permissions.js",
+    "selftest:certificates": "node tools/selftest-certificates.js",
     "selftest:catalog": "node tools/selftest-catalog.js",
     "selftest:custom-site": "node tools/selftest-custom-site.js",
     "selftest:edit-start-url": "node tools/selftest-edit-start-url.js",

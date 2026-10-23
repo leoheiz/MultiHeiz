@@ -39,6 +39,7 @@ const chromeFullscreen = require('./chrome-fullscreen');
 const sidebarCursor = require('./sidebar-cursor');
 const ipcGuard = require('./ipc-guard');
 const permissions = require('./permissions');
+const certificates = require('./certificates');
 const { sanitizeUserStartUrl, validateAndNormalizeStartUrl } = require('./url-policy');
 const catalog = require('./catalog');
 const proxy = require('./proxy');
@@ -276,6 +277,7 @@ const SELFTEST_PROXY = selftestMode === 'proxy';
 const SELFTEST_DOH = selftestMode === 'doh';
 const SELFTEST_SETTINGS_PERF = selftestMode === 'settings-perf';
 const SELFTEST_PERMISSIONS = selftestMode === 'permissions';
+const SELFTEST_CERTIFICATES = selftestMode === 'certificates';
 const SELFTEST_CATALOG = selftestMode === 'catalog';
 const SELFTEST_CUSTOM_SITE = selftestMode === 'custom-site';
 const SELFTEST_EDIT_START_URL = selftestMode === 'edit-start-url';
@@ -342,6 +344,7 @@ const ANY_SELFTEST =
   SELFTEST_DOH ||
   SELFTEST_SETTINGS_PERF ||
   SELFTEST_PERMISSIONS ||
+  SELFTEST_CERTIFICATES ||
   SELFTEST_CATALOG ||
   SELFTEST_CUSTOM_SITE ||
   SELFTEST_EDIT_START_URL ||
@@ -375,6 +378,14 @@ const ANY_SELFTEST =
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
   app.commandLine.appendSwitch('host-resolver-rules', 'MAP exemplo.test 127.0.0.1');
+}
+
+// Certificados: host “público” → loopback (trata-se como público pelo nome).
+if (SELFTEST_CERTIFICATES) {
+  app.commandLine.appendSwitch(
+    'host-resolver-rules',
+    'MAP mh-public.example.com 127.0.0.1'
+  );
 }
 
 // Selftest de permissões: dispositivo de mídia fake (NÃO use-fake-ui — queremos o prompt do app).
@@ -712,6 +723,7 @@ function createWindow() {
     SELFTEST_SHARED_SESSION ||
     SELFTEST_SUSPEND ||
     SELFTEST_PERMISSIONS ||
+    SELFTEST_CERTIFICATES ||
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
     SELFTEST_EDIT_START_URL ||
@@ -2102,6 +2114,33 @@ function createWindow() {
             waitForPanels,
             app,
             permissions,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_CERTIFICATES) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runCertificatesSelftest } = require('./selftest-certificates');
+          runCertificatesSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            certificates,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -6350,6 +6389,14 @@ app.whenReady().then(async () => {
     getMainWindow: () => mainWindow,
     emit: emitToRenderer,
     resolveAccountIdFromWebContents: (wc) => panels.accountIdForWebContents(wc),
+  });
+  certificates.initCertificates({
+    getMainWindow: () => mainWindow,
+    emit: emitToRenderer,
+    resolveAccountIdFromWebContents: (wc) => panels.accountIdForWebContents(wc),
+    getState,
+    updateState,
+    flushSave,
   });
   userAgent.applyAppUserAgentFallback();
   sessionPersist.startPeriodicFlush(() => panels.getAccountSessions());

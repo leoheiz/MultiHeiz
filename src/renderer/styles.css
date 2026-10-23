@@ -1793,6 +1793,67 @@ select {
   height: 24px;
 }
 
+.panel-site-perm-security {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-site-perm-security-label {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.panel-site-perm-security-meta {
+  font-size: 11px;
+  color: var(--muted, #8b919a);
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.client-cert-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  max-height: 240px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.client-cert-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--surface, #222) 90%, transparent);
+}
+
+.client-cert-item.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.client-cert-subject {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.client-cert-meta {
+  font-size: 11px;
+  color: var(--muted, #8b919a);
+  margin-top: 2px;
+}
+
+.settings-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
 .panel-store-bar {
   display: flex;
   align-items: center;

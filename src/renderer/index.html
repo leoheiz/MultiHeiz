@@ -285,6 +285,7 @@
           <button type="button" class="settings-nav-btn active" data-section="geral">Geral</button>
           <button type="button" class="settings-nav-btn" data-section="navegacao">Navegação</button>
           <button type="button" class="settings-nav-btn" data-section="rede">Rede</button>
+          <button type="button" class="settings-nav-btn" data-section="certificados">Certificados</button>
           <button type="button" class="settings-nav-btn" data-section="escrita">Escrita</button>
           <button type="button" class="settings-nav-btn" data-section="downloads">Downloads</button>
           <button type="button" class="settings-nav-btn" data-section="adblock">Bloqueador de anúncios</button>
@@ -419,6 +420,26 @@
               Vale para o MultiHeiz inteiro. Janelas com proxy resolvem o DNS pelo proxy.
             </p>
             <p class="muted-note" id="doh-error" hidden role="alert"></p>
+          </section>
+
+          <section class="settings-pane" data-pane="certificados">
+            <h3 class="settings-subhead">Certificados</h3>
+            <p class="muted-note">
+              Escolha de certificado de cliente (e-CPF/e-CNPJ) e erros de certificado HTTPS.
+              Escolhas lembradas ficam salvas por site.
+            </p>
+            <div class="settings-actions-row">
+              <button type="button" class="btn ghost" id="btn-cert-open-windows" data-role="cert-open-windows">
+                Abrir gerenciador de certificados do Windows
+              </button>
+              <button type="button" class="btn ghost" id="btn-cert-forget" data-role="cert-forget">
+                Esquecer certificados lembrados
+              </button>
+            </div>
+            <p class="muted-note" id="cert-windows-note" hidden>
+              O gerenciador de certificados do Windows só está disponível no Windows.
+            </p>
+            <p class="muted-note" id="cert-forget-status" hidden role="status"></p>
           </section>
 
           <section class="settings-pane" data-pane="escrita">
@@ -899,6 +920,22 @@
         <p class="muted-note" id="novidades-intro">Log de atualizações do MultiHeiz</p>
         <div id="novidades-list" class="novidades-list"></div>
       </div>
+    </dialog>
+
+    <dialog id="dlg-client-cert" aria-labelledby="client-cert-title">
+      <form method="dialog" id="form-client-cert">
+        <h2 id="client-cert-title">Escolher certificado</h2>
+        <p id="client-cert-origin" class="muted-note"></p>
+        <ul id="client-cert-list" class="client-cert-list" role="listbox" aria-label="Certificados"></ul>
+        <label class="check">
+          <input type="checkbox" id="client-cert-remember" />
+          Lembrar para este site
+        </label>
+        <div class="dlg-actions">
+          <button type="submit" class="btn primary" id="client-cert-use" value="ok">Usar certificado</button>
+          <button type="button" class="btn ghost" id="client-cert-cancel">Cancelar</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="dlg-favorite">

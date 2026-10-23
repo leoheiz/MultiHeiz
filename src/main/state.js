@@ -99,6 +99,11 @@ function defaultState() {
       lastSeenChangelogVersion: null,
     },
     appearance: defaultAppearance(),
+    /**
+     * Certificados de cliente lembrados por origem: { [origin]: fingerprint }.
+     * Sem material sensível — só a escolha (impressão digital).
+     */
+    clientCertChoices: {},
     settings: {
       openLastPage: true,
       confirmOnRemove: true,
@@ -277,6 +282,10 @@ function migrate(parsed) {
         ? parsed.pageByWorkspace
         : {},
     windowMaximized: !!parsed.windowMaximized,
+    clientCertChoices:
+      parsed.clientCertChoices && typeof parsed.clientCertChoices === 'object'
+        ? { ...parsed.clientCertChoices }
+        : {},
     workspaces:
       Array.isArray(parsed.workspaces) && parsed.workspaces.length
         ? parsed.workspaces.map((w) => {

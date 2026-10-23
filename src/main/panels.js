@@ -996,6 +996,13 @@ function loginPopupBrowserOptions(ses) {
 function wireLoginPopupWindow(accountId, child, ses, initialUrl) {
   if (!child || child.isDestroyed()) return;
   permissions.attachToSession(ses, accountId);
+  try {
+    const certificates = require('./certificates');
+    certificates.attachToSession(ses);
+    certificates.attachToWebContents(child.webContents, accountId);
+  } catch {
+    /* ignore */
+  }
   userAgent.applySessionUserAgent(ses);
   try {
     adblock.attachSession(ses, accountId);
@@ -1307,6 +1314,12 @@ function createPanel(accountId) {
 
   const ses = session.fromPartition(partitionFor(accountId));
   permissions.attachToSession(ses, accountId);
+  try {
+    const certificates = require('./certificates');
+    certificates.attachToSession(ses);
+  } catch {
+    /* ignore */
+  }
   hookDownloadsForAccount(accountId, ses);
   userAgent.applySessionUserAgent(ses);
   sessionPersist.hookSessionCookies(ses);
@@ -1355,6 +1368,12 @@ function createPanel(accountId) {
 
   adblock.bindWebContents(accountId, view.webContents);
   applyWebRtcIpHandlingPolicy(view.webContents);
+  try {
+    const certificates = require('./certificates');
+    certificates.attachToWebContents(view.webContents, accountId);
+  } catch {
+    /* ignore */
+  }
 
   try {
     const popoverOverlay = require('./popover-overlay');
@@ -1683,21 +1702,48 @@ function createPanel(accountId) {
   // Block in-page navigations to non-http(s) schemes (defense in depth).
   // data: only while MULTIHEIZ_SELFTEST (internal probes), never for normal browsing.
   // catalog/badges selftests: também bloqueia hosts não-locais (sem internet real).
+  // Exceção: página de erro de certificado (data: + multiheiz.invalid/cert-error).
   view.webContents.on('will-navigate', (e, url) => {
-    if (!isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
+    try {
+      const certificates = require('./certificates');
+      if (certificates.maybeHandleCertErrorNavigation(view.webContents, url)) {
+        e.preventDefault();
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    const isCertErrorData =
+      typeof url === 'string' &&
+      url.startsWith('data:text/html') &&
+      url.includes('cert-error-page');
+    if (!isCertErrorData && !isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
       e.preventDefault();
       return;
     }
-    if (isSelftestOfflineMode() && !isSelftestAllowedUrl(url)) {
+    if (isSelftestOfflineMode() && !isSelftestAllowedUrl(url) && !isCertErrorData) {
       e.preventDefault();
     }
   });
   view.webContents.on('will-redirect', (e, url) => {
-    if (!isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
+    try {
+      const certificates = require('./certificates');
+      if (certificates.maybeHandleCertErrorNavigation(view.webContents, url)) {
+        e.preventDefault();
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    const isCertErrorData =
+      typeof url === 'string' &&
+      url.startsWith('data:text/html') &&
+      url.includes('cert-error-page');
+    if (!isCertErrorData && !isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
       e.preventDefault();
       return;
     }
-    if (isSelftestOfflineMode() && !isSelftestAllowedUrl(url)) {
+    if (isSelftestOfflineMode() && !isSelftestAllowedUrl(url) && !isCertErrorData) {
       e.preventDefault();
     }
   });

@@ -98,6 +98,17 @@ contextBridge.exposeInMainWorld('multiheiz', {
     ipcRenderer.invoke('permissions:reset', { accountId, origin }),
   permissionsMediaUseGet: (accountId) =>
     ipcRenderer.invoke('permissions:media-use-get', accountId),
+  certificatesClientRespond: (payload) =>
+    ipcRenderer.invoke('certificates:client-respond', payload || {}),
+  certificatesErrorRespond: (payload) =>
+    ipcRenderer.invoke('certificates:error-respond', payload || {}),
+  certificatesSiteInfo: (accountId, url) =>
+    ipcRenderer.invoke('certificates:site-info', { accountId, url }),
+  certificatesOpenWindowsManager: () =>
+    ipcRenderer.invoke('certificates:open-windows-manager'),
+  certificatesForgetRemembered: () =>
+    ipcRenderer.invoke('certificates:forget-remembered'),
+  certificatesListRemembered: () => ipcRenderer.invoke('certificates:list-remembered'),
   getMemoryMetrics: () => ipcRenderer.invoke('memory:metrics'),
   freeMemory: () => ipcRenderer.invoke('memory:free'),
   getAppInfo: () => ipcRenderer.invoke('app:info'),
