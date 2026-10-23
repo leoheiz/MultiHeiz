@@ -364,7 +364,19 @@ async function show(opts) {
 function applyMeasuredSize(size) {
   if (!current || !overlayView) return current && current.bounds;
   const w = Math.max(40, Math.ceil(Number(size.width) || 0));
-  const h = Math.max(24, Math.ceil(Number(size.height) || 0));
+  let h = Math.max(24, Math.ceil(Number(size.height) || 0));
+  // Memory monitor: floor so the first (pre-list) measure cannot stick collapsed;
+  // also cap so a long list stays within the window (box scrolls at 520px).
+  if (current.kind === 'mem') {
+    const rows =
+      (current.payload &&
+        current.payload.data &&
+        current.payload.data.rows &&
+        current.payload.data.rows.length) ||
+      0;
+    h = Math.max(h, Math.max(120, 64 + rows * 48));
+    h = Math.min(h, 520);
+  }
   const anchor = (current.payload && current.payload.anchor) || { x: current.bounds.x, y: current.bounds.y };
   const prefer = (current.payload && current.payload.prefer) || 'below';
   const bounds = placeBounds(anchor, w, h, prefer);
@@ -397,7 +409,10 @@ function estimateSize(kind, data) {
     return { width: 200, height: 8 + n * 32 };
   }
   if (kind === 'ext-menu') return { width: 280, height: 220 };
-  if (kind === 'mem') return { width: 280, height: 200 };
+  if (kind === 'mem') {
+    const n = (data && data.rows && data.rows.length) || 0;
+    return { width: 300, height: Math.max(160, 72 + n * 56) };
+  }
   if (kind === 'ai-write') return { width: 320, height: 280 };
   return { width: 220, height: 120 };
 }

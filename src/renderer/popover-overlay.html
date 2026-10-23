@@ -307,7 +307,10 @@
   .mem-popover-box {
     min-width: 280px;
     max-width: 360px;
-    max-height: min(70vh, 520px);
+    /* Fixed px cap (not 70vh): vh of a short WebContentsView collapsed the
+       first measure to title+X. Main sizes the view from scrollHeight. */
+    max-height: 520px;
+    min-height: 120px;
     overflow: auto;
     padding: 10px 12px;
   }

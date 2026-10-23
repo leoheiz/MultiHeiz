@@ -1,6 +1,8 @@
 (function () {
   const root = document.getElementById('root');
   let current = null;
+  /** @type {ResizeObserver | null} */
+  let resizeObserver = null;
 
   function applyTheme(theme) {
     if (!theme || typeof theme !== 'object') return;
@@ -12,11 +14,33 @@
     }
   }
 
+  /**
+   * Measure intrinsic content size. Prefer scrollWidth/Height so a short
+   * WebContentsView viewport + max-height:70vh cannot collapse the reported
+   * size (memory monitor "title+X only" feedback loop).
+   */
   function reportMeasure() {
     const el = root.firstElementChild || root;
+    if (!el) return;
     const r = el.getBoundingClientRect();
-    const w = Math.ceil(r.width) || Math.ceil(root.scrollWidth);
-    const h = Math.ceil(r.height) || Math.ceil(root.scrollHeight);
+    const w = Math.max(
+      Math.ceil(el.scrollWidth || 0),
+      Math.ceil(r.width || 0),
+      Math.ceil(root.scrollWidth || 0),
+      40
+    );
+    let h = Math.max(
+      Math.ceil(el.scrollHeight || 0),
+      Math.ceil(r.height || 0),
+      Math.ceil(root.scrollHeight || 0),
+      24
+    );
+    // Memory monitor: never open as a collapsed title bar.
+    if (current && current.kind === 'mem') {
+      const rows = (current.data && current.data.rows && current.data.rows.length) || 0;
+      const minH = Math.max(120, 64 + rows * 48);
+      h = Math.max(h, minH);
+    }
     if (window.mhPopover && window.mhPopover.measure) {
       window.mhPopover.measure({ width: w, height: h });
     }
@@ -25,8 +49,24 @@
   function scheduleMeasure() {
     requestAnimationFrame(() => {
       reportMeasure();
-      requestAnimationFrame(reportMeasure);
+      requestAnimationFrame(() => {
+        reportMeasure();
+        // After first paint + metrics, measure once more (list may settle late).
+        setTimeout(reportMeasure, 50);
+      });
     });
+  }
+
+  function ensureResizeObserver() {
+    if (resizeObserver || typeof ResizeObserver !== 'function') return;
+    resizeObserver = new ResizeObserver(() => {
+      scheduleMeasure();
+    });
+    try {
+      resizeObserver.observe(root);
+    } catch {
+      /* ignore */
+    }
   }
 
   function svgSpeaker(muted) {
@@ -450,6 +490,7 @@
     current.data = Object.assign({}, current.data || {}, data || {});
     const node = renderMem(current.data);
     root.replaceChildren(node);
+    ensureResizeObserver();
     scheduleMeasure();
   }
 
@@ -546,6 +587,7 @@
     else if (payload.kind === 'mem') node = renderMem(payload.data || {});
     else if (payload.kind === 'ai-write') node = renderAiWrite(payload.data || {});
     if (node) root.appendChild(node);
+    ensureResizeObserver();
     scheduleMeasure();
   }
 

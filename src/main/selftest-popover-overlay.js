@@ -268,6 +268,52 @@ async function runPopoverOverlaySelftest(ctx) {
   assert(!lagHide || lagHide.detail.lagMs < 50, 'hide lag ok: ' + JSON.stringify(lagHide));
   console.log('PASS: layout menu + outside-close', lagHide && lagHide.detail);
 
+  /* ---------- Memory monitor height (not collapsed on first open / reopen) ---------- */
+  async function assertMemHeightOk(label) {
+    panels.clearOverlaySelftestSpies();
+    popoverOverlay.clearSelftestLog();
+    await rendererEval('window.__multiheizUi.openMemPopover()');
+    // Wait for measure + possible metrics refresh
+    await sleep(350);
+    let dbg = await rendererEval('window.multiheiz.popoverSelftestDebug()');
+    assert(dbg && dbg.popover && dbg.popover.id === 'mem-popover', 'mem open ' + label);
+    let b = dbg.popover.bounds;
+    assert(b && b.height >= 120, 'mem height floor first paint ' + label + ' ' + JSON.stringify(b));
+    // Allow ResizeObserver / delayed measure to settle
+    await sleep(200);
+    dbg = await rendererEval('window.multiheiz.popoverSelftestDebug()');
+    b = dbg && dbg.popover && dbg.popover.bounds;
+    assert(b && b.height >= 120, 'mem height after settle ' + label + ' ' + JSON.stringify(b));
+    // Overlay height must cover content (no collapsed title-only with scrollbar trap)
+    const contentH = await (async () => {
+      const view = popoverOverlay.getView();
+      assert(view && !view.webContents.isDestroyed(), 'overlay view ' + label);
+      return view.webContents.executeJavaScript(
+        `(function(){
+          var el = document.querySelector('[data-role="mem-popover"]') || document.getElementById('root');
+          if (!el) return 0;
+          return Math.max(el.scrollHeight || 0, el.getBoundingClientRect().height || 0);
+        })()`,
+        true
+      );
+    })();
+    assert(
+      Number(contentH) > 0 && b.height + 2 >= Math.min(Number(contentH), 520),
+      'overlay height >= content ' +
+        label +
+        ' bounds=' +
+        JSON.stringify(b) +
+        ' contentH=' +
+        contentH
+    );
+    console.log('PASS: mem monitor height', label, { bounds: b, contentH });
+    popoverOverlay.hide('mem-height-test');
+    await sleep(150);
+  }
+
+  await assertMemHeightOk('first-open');
+  await assertMemHeightOk('reopen');
+
   try {
     server.close();
   } catch {
