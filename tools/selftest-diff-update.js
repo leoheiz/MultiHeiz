@@ -35,6 +35,8 @@ function installElectronStub(opts = {}) {
       getAppPath: () => opts.appPath || tempDir,
       getPath: () => tempDir,
       quit() {},
+      on() {},
+      removeListener() {},
     },
     ipcMain: { removeHandler() {}, handle() {} },
     shell: { openExternal() {}, showItemInFolder() {}, openPath() {} },
@@ -171,7 +173,26 @@ async function main() {
   process.env.MULTIHEIZ_UPDATE_NO_INSTALL = '1';
   updater.prepareAutoUpdater(fakeAu);
   assert(fakeAu.autoInstallOnAppQuit === false, 'no install on quit in selftest');
+  assert(fakeAu.autoDownload === true, 'autoDownload for silent background');
+  assert(updater.AUTO_CHECK_DELAY_MS === 30_000, 'bg check delay 30s');
+  assert(updater.AUTO_CHECK_INTERVAL_MS === 6 * 60 * 60 * 1000, 'bg check every 6h');
+  assert(typeof updater.runSilentAutoUpdate === 'function', 'runSilentAutoUpdate');
+  assert(typeof updater.deferUpdateInstall === 'function', 'deferUpdateInstall');
+
+  updater.resetStatusForTest();
+  const promptEvents = [];
+  updater.simulateReadyForTest({
+    version: '1.3.1',
+    emitToRenderer: (p) => promptEvents.push(p),
+  });
+  assert(
+    promptEvents.some((e) => e && e.type === 'updates:prompt'),
+    'ready emits updates:prompt'
+  );
+  const def = updater.deferUpdateInstall();
+  assert(def.installOnQuit === true, 'Depois → installOnQuit');
   console.log('PASS: MULTIHEIZ_UPDATE_URL generic feed (selftest-only) + no auto-install');
+  console.log('PASS: silent flow prompt + defer install-on-quit');
 
   // Artifact check: installertest NSIS output (Windows-only — needs wine on Linux)
   if (process.platform === 'win32') {
@@ -304,11 +325,16 @@ async function main() {
     );
   }
 
-  // About/Settings copy mentions setup recommendation
+  // Settings: Updates tab removed; Sobre has auto-update controls
   const html = fs.readFileSync(path.join(root, 'src', 'renderer', 'index.html'), 'utf8');
-  assert(/portátil|portatil|setup/i.test(html), 'Settings mentions setup vs portable');
+  assert(!/data-section=["']atualizacoes["']/.test(html), 'Updates tab absent');
+  assert(!/data-pane=["']atualizacoes["']/.test(html), 'Updates pane absent');
+  assert(/Atualizar automaticamente/.test(html), 'Sobre: Atualizar automaticamente');
+  assert(/Verificar agora/.test(html), 'Sobre: Verificar agora');
+  assert(/update-ready-banner/.test(html), 'in-app update ready banner');
   const updSrc = fs.readFileSync(path.join(root, 'src', 'main', 'updater.js'), 'utf8');
   assert(/differentialPackage|blockmap|MULTIHEIZ_UPDATE_URL/.test(updSrc), 'updater wiring');
+  assert(/AUTO_CHECK_INTERVAL_MS|runSilentAutoUpdate/.test(updSrc), 'silent bg update wiring');
   assert(fs.existsSync(path.join(root, 'src', 'main', 'diff-update-check.js')), 'diff-update-check.js');
 
   try {

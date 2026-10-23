@@ -152,6 +152,15 @@
 
     <div id="toast" class="toast hidden" role="status"></div>
 
+    <div id="update-ready-banner" class="update-ready-banner hidden" role="status" aria-live="polite">
+      <div class="update-ready-title" id="update-ready-title">Atualização pronta</div>
+      <div class="update-ready-text" id="update-ready-text"></div>
+      <div class="update-ready-actions">
+        <button type="button" class="btn primary tiny" id="btn-update-restart-now">Reiniciar agora</button>
+        <button type="button" class="btn ghost tiny" id="btn-update-later">Depois</button>
+      </div>
+    </div>
+
     <dialog id="dlg-catalog" class="dlg-catalog" aria-labelledby="dlg-catalog-title">
       <div class="dlg-catalog-head">
         <h2 id="dlg-catalog-title">Escolher app</h2>
@@ -283,7 +292,6 @@
           <button type="button" class="settings-nav-btn" data-section="memoria">Memória</button>
           <button type="button" class="settings-nav-btn" data-section="desempenho">Desempenho</button>
           <button type="button" class="settings-nav-btn" data-section="modulos">Módulos</button>
-          <button type="button" class="settings-nav-btn" data-section="atualizacoes">Atualizações</button>
           <button type="button" class="settings-nav-btn" data-section="diagnosticos">Diagnósticos</button>
           <button type="button" class="settings-nav-btn" data-section="sobre">Sobre</button>
         </aside>
@@ -786,28 +794,6 @@
             </label>
           </section>
 
-          <section class="settings-pane" data-pane="atualizacoes">
-            <p>Canal: <strong id="settings-update-channel">—</strong></p>
-            <p>Versão atual: <strong id="settings-version">—</strong></p>
-            <p class="muted-note">Última verificação: <span id="settings-update-last-check">—</span></p>
-            <label class="check">
-              <input type="checkbox" id="chk-auto-check-updates" checked />
-              Verificar automaticamente ao iniciar
-            </label>
-            <div class="updates-actions">
-              <button type="button" class="btn primary" id="btn-check-updates">Verificar agora</button>
-              <button type="button" class="btn ghost hidden" id="btn-download-update">Baixar</button>
-              <button type="button" class="btn ghost hidden" id="btn-cancel-update">Cancelar download</button>
-              <button type="button" class="btn primary hidden" id="btn-install-update">Reiniciar para atualizar</button>
-              <button type="button" class="btn ghost hidden" id="btn-open-download-folder">Abrir pasta do download</button>
-              <button type="button" class="btn ghost" id="btn-open-releases">Abrir página de versões</button>
-              <button type="button" class="btn ghost" id="btn-open-novidades">Ver novidades</button>
-            </div>
-            <p id="updates-status" class="muted-note"></p>
-            <p id="updates-portable-hint" class="muted-note hidden"></p>
-            <p class="muted-note">Configurações e sessões são preservadas nas atualizações (pasta de dados intacta). O setup (instalador) recebe atualizações diferenciais automáticas; o portátil só faz re-download completo.</p>
-          </section>
-
           <section class="settings-pane" data-pane="diagnosticos">
             <div class="diag-actions">
               <button type="button" class="btn ghost" id="btn-open-data">Abrir pasta de dados</button>
@@ -835,9 +821,20 @@
             <p><strong id="about-name">MultiHeiz</strong> <span id="about-version"></span></p>
             <p class="muted-note">Electron <span id="about-electron"></span> · Chromium <span id="about-chrome"></span></p>
             <p class="muted-note">Tudo gratuito — sem licenças, ativação ou paywall.</p>
+            <div class="about-updates">
+              <label class="check">
+                <input type="checkbox" id="chk-auto-check-updates" checked />
+                Atualizar automaticamente
+              </label>
+              <p class="about-updates-row">
+                <button type="button" class="btn-link" id="btn-check-updates">Verificar agora</button>
+                <span id="updates-status" class="muted-note about-updates-status"></span>
+              </p>
+            </div>
             <button type="button" class="btn ghost" id="btn-about-novidades">Novidades / Log de atualizações</button>
             <button type="button" class="btn ghost" id="btn-about-diag">Diagnóstico com um clique</button>
             <button type="button" class="btn ghost" id="btn-about-github-issue">Abrir issue no GitHub</button>
+            <button type="button" class="btn ghost" id="btn-open-releases">Abrir página de versões</button>
             <div id="kofi-support-section" class="kofi-support-section hidden">
               <h3>Apoiar o desenvolvedor</h3>
               <p class="muted-note">

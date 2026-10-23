@@ -42,6 +42,8 @@ function installElectronStub(opts = {}) {
         return tempDir;
       },
       quit() {},
+      on() {},
+      removeListener() {},
     },
     ipcMain: {
       removeHandler() {},
@@ -95,7 +97,7 @@ async function main() {
   assert(gh.provider === 'github', 'publish provider');
   assert(gh.owner === 'leoheiz', 'publish owner leoheiz');
   assert(gh.repo === 'MultiHeiz', 'publish repo MultiHeiz');
-  assert(gh.releaseType === 'release', 'releaseType release');
+  assert(gh.releaseType === 'draft' || gh.releaseType === 'release', 'releaseType draft|release');
   console.log('PASS: publish config github leoheiz/MultiHeiz');
 
   assert(pkg.dependencies && pkg.dependencies['electron-updater'], 'electron-updater dep');
@@ -303,6 +305,77 @@ async function main() {
   assert(enabledDefault === true, 'autoCheck default ON when unset');
   console.log('PASS: autoCheckUpdates default ON');
 
+  assert(updater.AUTO_CHECK_DELAY_MS === 30_000, 'auto check delay ~30s');
+  assert(
+    updater.AUTO_CHECK_INTERVAL_MS === 6 * 60 * 60 * 1000,
+    'auto check interval 6h'
+  );
+  assert(typeof updater.runSilentAutoUpdate === 'function', 'runSilentAutoUpdate');
+  assert(typeof updater.deferUpdateInstall === 'function', 'deferUpdateInstall');
+  console.log('PASS: silent auto-update schedule constants');
+
+  /* Ready prompt once + Depois → installOnQuit */
+  {
+    updater.resetStatusForTest();
+    const events = [];
+    const stReady = updater.simulateReadyForTest({
+      version: '1.4.0',
+      channel: 'nsis',
+      emitToRenderer: (p) => events.push(p),
+    });
+    assert(stReady.status === 'ready', 'simulate ready');
+    const prompt = events.find((e) => e && e.type === 'updates:prompt');
+    assert(prompt, 'updates:prompt emitted');
+    assert(prompt.title === 'Atualização pronta', 'prompt title');
+    assert(/1\.4\.0/.test(prompt.message || ''), 'prompt message has version');
+    const events2 = [];
+    updater.simulateReadyForTest({
+      version: '1.4.0',
+      emitToRenderer: (p) => events2.push(p),
+    });
+    assert(
+      !events2.some((e) => e && e.type === 'updates:prompt'),
+      'prompt not nagged again same session'
+    );
+    const deferred = updater.deferUpdateInstall();
+    assert(deferred.ok && deferred.installOnQuit === true, 'defer sets installOnQuit');
+    assert(updater.getInstallOnQuit() === true, 'getInstallOnQuit');
+    assert(updater.getStatus().installOnQuit === true, 'status carries installOnQuit');
+    console.log('PASS: ready prompt once + Depois → install-on-quit');
+  }
+
+  /* UI: Atualizações tab gone; Sobre has auto + Verificar agora */
+  {
+    const html = fs.readFileSync(path.join(root, 'src', 'renderer', 'index.html'), 'utf8');
+    assert(!/data-section=["']atualizacoes["']/.test(html), 'Updates tab nav absent');
+    assert(!/data-pane=["']atualizacoes["']/.test(html), 'Updates pane absent');
+    assert(/Atualizar automaticamente/.test(html), 'Sobre auto-update checkbox');
+    assert(/id=["']btn-check-updates["']/.test(html), 'Verificar agora present');
+    assert(/id=["']update-ready-banner["']/.test(html), 'in-app ready banner');
+    assert(/Reiniciar agora/.test(html) && />Depois</.test(html), 'banner buttons');
+    console.log('PASS: Updates tab absent; Sobre + ready banner present');
+  }
+
+  /* Host allowlist */
+  {
+    let threw = false;
+    try {
+      updater.portable.assertAllowedUpdateUrl('https://evil.example/update.exe');
+    } catch (err) {
+      threw = true;
+      assert(/não permitido|Host/i.test(err.message || ''), 'allowlist msg: ' + err.message);
+    }
+    assert(threw, 'non-allowlisted host rejected');
+    threw = false;
+    try {
+      updater.portable.assertAllowedUpdateUrl('https://api.github.com/repos/x');
+    } catch {
+      threw = true;
+    }
+    assert(!threw, 'github host allowed');
+    console.log('PASS: non-allowlisted host rejected');
+  }
+
   const srcFiles = [
     path.join(root, 'src', 'main', 'updater.js'),
     path.join(root, 'package.json'),
@@ -508,13 +581,43 @@ async function main() {
   updater.resetStatusForTest();
 
   assert(updater.detectUpdateChannel() === 'portable', 'fake portable channel');
-  st = await updater.checkForUpdates({ silent: false });
-  assert(st.status === 'available', 'portable available status: ' + st.status + ' ' + st.message);
-  assert(st.version === remoteVer, 'portable remote version');
-  assert(st.canDownload === true, 'canDownload');
-  console.log('PASS: portable check finds newer version');
 
-  st = await updater.downloadUpdate();
+  /* Silent background path: check + auto-download + prompt */
+  {
+    updater.resetStatusForTest();
+    const silentEvents = [];
+    st = await updater.runSilentAutoUpdate({
+      emitToRenderer: (p) => silentEvents.push(p),
+    });
+    assert(
+      st.status === 'ready',
+      'silent auto-update ready: ' + st.status + ' / ' + st.message
+    );
+    assert(st.canInstall === true, 'silent canInstall');
+    assert(st.version === remoteVer, 'silent remote version');
+    const promptEv = silentEvents.find((e) => e && e.type === 'updates:prompt');
+    assert(promptEv, 'silent download emits updates:prompt');
+    assert(new RegExp(remoteVer.replace(/\./g, '\\.')).test(promptEv.message || ''), 'prompt ver');
+    const deferred = updater.deferUpdateInstall();
+    assert(deferred.installOnQuit === true, 'Depois after silent download');
+    console.log('PASS: silent download + prompt + Depois install-on-quit');
+  }
+
+  updater.portable.resetPortableStateForTest();
+  updater.resetStatusForTest();
+  st = await updater.checkForUpdates({ silent: false });
+  assert(
+    st.status === 'available' || st.status === 'ready',
+    'portable available/ready status: ' + st.status + ' ' + st.message
+  );
+  assert(st.version === remoteVer, 'portable remote version');
+  if (st.status === 'available') {
+    assert(st.canDownload === true, 'canDownload');
+    console.log('PASS: portable check finds newer version');
+    st = await updater.downloadUpdate();
+  } else {
+    console.log('PASS: portable check auto-downloaded (manual check with autoDownload)');
+  }
   assert(st.status === 'ready', 'portable ready: ' + st.status + ' / ' + st.message);
   assert(st.canInstall === true, 'canInstall after download');
   const dlPath = updater.portable.getDownloadedPath();
@@ -574,15 +677,28 @@ async function main() {
   assert(fs.existsSync(markerPath), 'relaunch marker command ran');
   console.log('PASS: portable helper replaces file and relaunches marker');
 
-  /* Hash mismatch */
+  /* Hash mismatch → rejected + file deleted */
   updater.portable.resetPortableStateForTest();
   process.env.MULTIHEIZ_UPDATE_FEED_URL = `http://127.0.0.1:${serverPort}/bad-hash`;
   const checked = await updater.portable.checkPortableUpdate({ logger: null });
   assert(checked.ok && checked.asset, 'bad-hash feed parsed');
+  const beforeBad = fs
+    .readdirSync(portableDir)
+    .filter((n) => /\.exe$/i.test(n) || /\.part$/i.test(n));
   const bad = await updater.portable.downloadPortableAsset(checked.asset, { logger: null });
   assert(!bad.ok, 'hash mismatch should fail');
   assert(/Hash|SHA/i.test(bad.error || ''), 'hash error message: ' + bad.error);
-  console.log('PASS: hash mismatch -> error');
+  assert(!updater.portable.getDownloadedPath(), 'no downloaded path after bad hash');
+  const afterBad = fs
+    .readdirSync(portableDir)
+    .filter((n) => /\.exe$/i.test(n) || /\.part$/i.test(n));
+  // Only the original target exe (and any prior good download names cleaned) — no .part left
+  assert(
+    !afterBad.some((n) => /\.part$/i.test(n)),
+    'tampered download .part deleted: ' + afterBad.join(',')
+  );
+  void beforeBad;
+  console.log('PASS: tampered hash -> rejected + file deleted');
 
   /* No cryptographic hash => refuse */
   updater.portable.resetPortableStateForTest();

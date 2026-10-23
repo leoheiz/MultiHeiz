@@ -12,7 +12,10 @@ const logger = require('./logger');
 
 const GITHUB_OWNER = 'leoheiz';
 const GITHUB_REPO = 'MultiHeiz';
-const AUTO_CHECK_DELAY_MS = 4000;
+/** First silent background check after startup. */
+const AUTO_CHECK_DELAY_MS = 30_000;
+/** Repeat silent check / download while the app stays open. */
+const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 const CHANNEL_LABELS = {
   nsis: 'Instalado',
@@ -69,8 +72,20 @@ let emitFn = null;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let autoCheckTimer = null;
 
+/** @type {ReturnType<typeof setInterval> | null} */
+let autoCheckInterval = null;
+
 /** @type {boolean} */
 let handlersBound = false;
+
+/** In-app "Atualização pronta" prompt — once per session. */
+let updatePromptShownThisSession = false;
+
+/** User chose "Depois": apply on quit (NSIS/AppImage autoInstall; portable helper). */
+let installOnQuit = false;
+
+/** @type {(() => void) | null} */
+let beforeQuitHandler = null;
 
 /**
  * True when path looks like a dpkg-installed Electron app (/opt/… or /usr/lib/…).
@@ -208,6 +223,7 @@ function setStatus(partial) {
   if (partial.status === 'error' && message && !/^Erro:/i.test(message)) {
     message = `Erro: ${message}`;
   }
+  const prevStatus = lastStatus.status;
   lastStatus = {
     ...lastStatus,
     ...partial,
@@ -215,12 +231,146 @@ function setStatus(partial) {
     channel: ch,
     channelLabel: channelLabel(ch),
     currentVersion: app.getVersion(),
+    installOnQuit,
   };
   lastStatus.buttons = computeUpdateActionButtons(lastStatus);
   if (typeof emitFn === 'function') {
     emitFn({ type: 'updates:status', ...lastStatus });
   }
+  if (
+    lastStatus.status === 'ready' &&
+    lastStatus.canInstall &&
+    prevStatus !== 'ready'
+  ) {
+    maybeEmitUpdatePrompt();
+  }
   return lastStatus;
+}
+
+/**
+ * Emit once-per-session in-app prompt when a verified update is ready.
+ */
+function maybeEmitUpdatePrompt() {
+  if (updatePromptShownThisSession) return false;
+  if (lastStatus.status !== 'ready' || !lastStatus.canInstall) return false;
+  updatePromptShownThisSession = true;
+  const version = lastStatus.version ? String(lastStatus.version) : '';
+  const payload = {
+    type: 'updates:prompt',
+    title: 'Atualização pronta',
+    message: version
+      ? `A versão ${version} foi baixada.`
+      : 'A atualização foi baixada.',
+    version: version || null,
+  };
+  if (typeof emitFn === 'function') {
+    emitFn(payload);
+  }
+  return true;
+}
+
+/**
+ * "Depois": apply on quit; do not show the prompt again this session.
+ * @returns {{ ok: boolean, installOnQuit: boolean }}
+ */
+function deferUpdateInstall() {
+  installOnQuit = true;
+  updatePromptShownThisSession = true;
+  const channel = detectUpdateChannel();
+  if (channel === 'nsis' || channel === 'appimage') {
+    try {
+      if (!isSelftestEnv() && process.env.MULTIHEIZ_UPDATE_NO_INSTALL !== '1') {
+        const autoUpdater = getAutoUpdater();
+        autoUpdater.autoInstallOnAppQuit = true;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  setStatus({ installOnQuit: true });
+  logger.info('updates:defer install-on-quit', { channel, version: lastStatus.version });
+  return { ok: true, installOnQuit: true };
+}
+
+function getInstallOnQuit() {
+  return installOnQuit;
+}
+
+function clearAutoCheckTimers() {
+  if (autoCheckTimer) {
+    clearTimeout(autoCheckTimer);
+    autoCheckTimer = null;
+  }
+  if (autoCheckInterval) {
+    clearInterval(autoCheckInterval);
+    autoCheckInterval = null;
+  }
+}
+
+/**
+ * Silent check + background download when a newer build exists.
+ * @param {{
+ *   getState?: () => object,
+ *   updateState?: (fn: (s: any) => void) => void,
+ *   emitToRenderer?: (payload: object) => void,
+ * }} opts
+ */
+async function runSilentAutoUpdate(opts) {
+  const st = await checkForUpdates({
+    ...(opts || {}),
+    silent: true,
+    autoDownloadIfAvailable: true,
+  });
+  return st;
+}
+
+/**
+ * Schedule first check ~30s after start, then every 6h.
+ * @param {{
+ *   getState: () => object,
+ *   updateState: (fn: (s: any) => void) => void,
+ *   emitToRenderer: (payload: object) => void,
+ * }} ctx
+ */
+function scheduleAutoChecks(ctx) {
+  clearAutoCheckTimers();
+  const delayRaw = process.env.MULTIHEIZ_UPDATE_AUTO_DELAY_MS;
+  const delay =
+    delayRaw != null && delayRaw !== '' && Number.isFinite(Number(delayRaw))
+      ? Math.max(0, Number(delayRaw))
+      : AUTO_CHECK_DELAY_MS;
+  const run = () => {
+    if (!getAutoCheckEnabled(ctx.getState)) return;
+    runSilentAutoUpdate({
+      getState: ctx.getState,
+      updateState: ctx.updateState,
+      emitToRenderer: ctx.emitToRenderer,
+    }).catch(() => {
+      /* never popup on auto-check failure */
+    });
+  };
+  autoCheckTimer = setTimeout(() => {
+    autoCheckTimer = null;
+    run();
+    autoCheckInterval = setInterval(run, AUTO_CHECK_INTERVAL_MS);
+  }, delay);
+}
+
+/**
+ * Portable: apply downloaded update when quitting after "Depois".
+ */
+function applyPortableOnQuitIfNeeded() {
+  if (!installOnQuit) return;
+  const channel = detectUpdateChannel();
+  if (channel !== 'portable' || process.platform !== 'win32') return;
+  if (process.env.MULTIHEIZ_UPDATE_NO_INSTALL === '1') return;
+  try {
+    portable.applyPortableAndRelaunch({ logger, skipQuit: true });
+  } catch (err) {
+    logger.warn('updates:portable apply-on-quit failed', {
+      error: (err && err.message) || String(err),
+    });
+  }
 }
 
 function getStatus() {
@@ -232,6 +382,7 @@ function getStatus() {
     currentVersion: app.getVersion(),
     portableHint: channel === 'portable' ? PORTABLE_UPDATE_HINT : null,
     setupRecommendedForAutoUpdate: channel === 'portable',
+    installOnQuit,
   };
   base.buttons = computeUpdateActionButtons(base);
   return base;
@@ -376,14 +527,15 @@ function prepareAutoUpdater(autoUpdater) {
 
 /**
  * @param {{
- *   getState: () => object,
- *   updateState: (fn: (s: any) => void) => void,
- *   emitToRenderer: (payload: object) => void,
+ *   getState?: () => object,
+ *   updateState?: (fn: (s: any) => void) => void,
+ *   emitToRenderer?: (payload: object) => void,
  *   silent?: boolean,
+ *   autoDownloadIfAvailable?: boolean,
  * }} opts
  */
 async function checkForUpdates(opts) {
-  const { emitToRenderer, silent } = opts || {};
+  const { emitToRenderer, silent, autoDownloadIfAvailable } = opts || {};
   emitFn = typeof emitToRenderer === 'function' ? emitToRenderer : emitFn;
 
   const channel = detectUpdateChannel();
@@ -408,7 +560,7 @@ async function checkForUpdates(opts) {
 
   setStatus({
     status: 'checking',
-    message: 'Verificando…',
+    message: 'Procurando…',
     version: null,
     percent: null,
     bytesPerSecond: null,
@@ -419,7 +571,7 @@ async function checkForUpdates(opts) {
     notWritable: false,
     downloadPath: null,
   });
-  logger.info('updates:check', { channel });
+  logger.info('updates:check', { channel, silent: !!silent });
 
   if (channel === 'portable') {
     if (process.platform !== 'win32') {
@@ -468,7 +620,7 @@ async function checkForUpdates(opts) {
     if (r.upToDate) {
       return setStatus({
         status: 'up-to-date',
-        message: 'Você está atualizado',
+        message: 'Você está na versão mais recente',
         version: r.version || app.getVersion(),
         percent: null,
         canInstall: false,
@@ -478,7 +630,7 @@ async function checkForUpdates(opts) {
         lastCheckAt: checkedAt,
       });
     }
-    return setStatus({
+    setStatus({
       status: 'available',
       message: `Nova versão ${r.version} disponível`,
       version: r.version,
@@ -489,6 +641,10 @@ async function checkForUpdates(opts) {
       channel,
       lastCheckAt: checkedAt,
     });
+    if (autoDownloadIfAvailable) {
+      return downloadUpdate();
+    }
+    return getStatus();
   }
 
   if (isManualOnlyChannel(channel)) {
@@ -524,7 +680,7 @@ async function checkForUpdates(opts) {
     if (r.upToDate) {
       return setStatus({
         status: 'up-to-date',
-        message: 'Você está atualizado',
+        message: 'Você está na versão mais recente',
         version: r.version || app.getVersion(),
         percent: null,
         canInstall: false,
@@ -561,7 +717,7 @@ async function checkForUpdates(opts) {
     if (remote && compareSemver(app.getVersion(), remote) >= 0) {
       return setStatus({
         status: 'up-to-date',
-        message: 'Você está atualizado',
+        message: 'Você está na versão mais recente',
         version: remote,
         percent: null,
         canInstall: false,
@@ -572,6 +728,7 @@ async function checkForUpdates(opts) {
       });
     }
     if (remote) {
+      // autoDownload=true in prepareAutoUpdater → silent background download
       return setStatus({
         status: 'available',
         message: `Nova versão ${remote} disponível`,
@@ -704,7 +861,7 @@ async function downloadUpdate() {
         r.message ||
         (savedElsewhere
           ? `Nova versão salva em: ${r.path}`
-          : 'Pronto — Reiniciar para atualizar'),
+          : 'Pronta – Reiniciar'),
       version: asset.version,
       percent: 100,
       bytesPerSecond: null,
@@ -736,7 +893,7 @@ function bindAutoUpdaterEvents(autoUpdater) {
   autoUpdater.on('checking-for-update', () => {
     setStatus({
       status: 'checking',
-      message: 'Verificando…',
+      message: 'Procurando…',
       percent: null,
       canInstall: false,
       canDownload: false,
@@ -758,7 +915,7 @@ function bindAutoUpdaterEvents(autoUpdater) {
   autoUpdater.on('update-not-available', () => {
     setStatus({
       status: 'up-to-date',
-      message: 'Você está atualizado',
+      message: 'Você está na versão mais recente',
       version: app.getVersion(),
       percent: null,
       canInstall: false,
@@ -787,9 +944,7 @@ function bindAutoUpdaterEvents(autoUpdater) {
     const v = info && info.version ? String(info.version) : lastStatus.version;
     setStatus({
       status: 'ready',
-      message: v
-        ? `Pronto — Reiniciar para atualizar`
-        : 'Pronto — Reiniciar para atualizar',
+      message: 'Pronta – Reiniciar',
       version: v,
       percent: 100,
       canInstall: true,
@@ -871,9 +1026,27 @@ function initUpdater(ctx) {
     portable.cleanupPortableLeftovers(logger);
   }
 
+  if (beforeQuitHandler) {
+    try {
+      app.removeListener('before-quit', beforeQuitHandler);
+    } catch {
+      /* ignore */
+    }
+    beforeQuitHandler = null;
+  }
+  beforeQuitHandler = () => {
+    applyPortableOnQuitIfNeeded();
+  };
+  try {
+    app.on('before-quit', beforeQuitHandler);
+  } catch {
+    /* electron stub without EventEmitter */
+  }
+
   ipcMain.removeHandler('updates:check');
   ipcMain.removeHandler('updates:status');
   ipcMain.removeHandler('updates:install');
+  ipcMain.removeHandler('updates:defer');
   ipcMain.removeHandler('updates:download');
   ipcMain.removeHandler('updates:cancel');
   ipcMain.removeHandler('updates:open-releases');
@@ -888,6 +1061,7 @@ function initUpdater(ctx) {
       updateState,
       emitToRenderer,
       silent: false,
+      autoDownloadIfAvailable: true,
     });
     return { ok: true, ...st };
   });
@@ -923,7 +1097,11 @@ function initUpdater(ctx) {
     }
     return { ok: true, ...getStatus() };
   });
-  ipcMain.handle('updates:install', () => quitAndInstall());
+  ipcMain.handle('updates:install', () => {
+    installOnQuit = false;
+    return quitAndInstall();
+  });
+  ipcMain.handle('updates:defer', () => deferUpdateInstall());
   ipcMain.handle('updates:open-releases', () => openReleasesPage());
   ipcMain.handle('updates:open-download', () => {
     if (process.platform !== 'win32') {
@@ -948,6 +1126,11 @@ function initUpdater(ctx) {
   }));
   ipcMain.handle('updates:set-auto-check', (_e, enabled) => {
     setAutoCheckEnabled(!!enabled, updateState);
+    if (!enabled) {
+      clearAutoCheckTimers();
+    } else if (!skipAutoCheck && !autoCheckTimer && !autoCheckInterval) {
+      scheduleAutoChecks({ getState, updateState, emitToRenderer });
+    }
     let state = null;
     try {
       state = typeof getState === 'function' ? getState() : null;
@@ -958,17 +1141,7 @@ function initUpdater(ctx) {
   });
 
   if (!skipAutoCheck && getAutoCheckEnabled(getState)) {
-    if (autoCheckTimer) clearTimeout(autoCheckTimer);
-    autoCheckTimer = setTimeout(() => {
-      checkForUpdates({
-        getState,
-        updateState,
-        emitToRenderer,
-        silent: true,
-      }).catch(() => {
-        /* never popup on auto-check failure */
-      });
-    }, AUTO_CHECK_DELAY_MS);
+    scheduleAutoChecks({ getState, updateState, emitToRenderer });
   }
 
   return {
@@ -978,6 +1151,8 @@ function initUpdater(ctx) {
     detectUpdateChannel,
     isManualOnlyChannel,
     getAutoCheckEnabled,
+    runSilentAutoUpdate,
+    deferUpdateInstall,
     GITHUB_OWNER,
     GITHUB_REPO,
   };
@@ -1000,13 +1175,32 @@ function resetStatusForTest() {
     currentVersion: '',
     notWritable: false,
     downloadPath: null,
+    installOnQuit: false,
   };
   handlersBound = false;
+  updatePromptShownThisSession = false;
+  installOnQuit = false;
   portable.resetPortableStateForTest();
-  if (autoCheckTimer) {
-    clearTimeout(autoCheckTimer);
-    autoCheckTimer = null;
-  }
+  clearAutoCheckTimers();
+}
+
+/**
+ * Force a ready status and emit prompt (selftest).
+ * @param {{ version?: string, emitToRenderer?: (p: object) => void }} [opts]
+ */
+function simulateReadyForTest(opts) {
+  const o = opts || {};
+  if (typeof o.emitToRenderer === 'function') emitFn = o.emitToRenderer;
+  return setStatus({
+    status: 'ready',
+    message: 'Pronta – Reiniciar',
+    version: o.version || '9.9.9',
+    percent: 100,
+    canInstall: true,
+    canDownload: false,
+    manualDownload: false,
+    channel: o.channel || 'nsis',
+  });
 }
 
 module.exports = {
@@ -1036,5 +1230,14 @@ module.exports = {
   GITHUB_REPO,
   RELEASES_URL,
   AUTO_CHECK_DELAY_MS,
+  AUTO_CHECK_INTERVAL_MS,
+  runSilentAutoUpdate,
+  deferUpdateInstall,
+  getInstallOnQuit,
+  maybeEmitUpdatePrompt,
+  simulateReadyForTest,
+  applyPortableOnQuitIfNeeded,
+  scheduleAutoChecks,
+  clearAutoCheckTimers,
   portable,
 };

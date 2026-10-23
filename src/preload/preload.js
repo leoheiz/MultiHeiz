@@ -190,6 +190,7 @@ contextBridge.exposeInMainWorld('multiheiz', {
   updatesDownload: () => ipcRenderer.invoke('updates:download'),
   updatesCancel: () => ipcRenderer.invoke('updates:cancel'),
   updatesInstall: () => ipcRenderer.invoke('updates:install'),
+  updatesDefer: () => ipcRenderer.invoke('updates:defer'),
   updatesOpenReleases: () => ipcRenderer.invoke('updates:open-releases'),
   updatesOpenDownload: () => ipcRenderer.invoke('updates:open-download'),
   updatesGetChannel: () => ipcRenderer.invoke('updates:get-channel'),

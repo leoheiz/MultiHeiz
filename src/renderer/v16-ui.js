@@ -2514,113 +2514,70 @@
     if (dlg && dlg.open) dlg.close();
   }
 
-  /* ---------- Atualizações (electron-updater) ---------- */
+  /* ---------- Atualizações (Sobre + banner in-app) ---------- */
 
-  /**
-   * Mirror of main computeUpdateActionButtons (renderer cannot require updater.js).
-   * Baixar only when available; Cancelar only while downloading; Reiniciar only when ready.
-   * Manual-only channels: all three hidden + disabled.
-   */
-  function computeUpdateActionButtons(st) {
-    const s = st || {};
-    const channel = s.channel || 'unknown';
-    const manual =
-      !!s.manualDownload ||
-      s.status === 'available-manual' ||
-      channel === 'deb' ||
-      channel === 'unknown';
-    const downloading = s.status === 'downloading';
-    const ready = s.status === 'ready' || !!s.canInstall;
-    const available =
-      !ready && !downloading && (s.status === 'available' || !!s.canDownload);
-    if (manual) {
-      return {
-        download: { visible: false, enabled: false },
-        cancel: { visible: false, enabled: false },
-        install: { visible: false, enabled: false },
-      };
+  /** Inline status for Configurações → Sobre. */
+  function formatAboutUpdateStatus(st) {
+    if (!st) return '';
+    const status = st.status || '';
+    if (status === 'checking') return 'Procurando…';
+    if (status === 'up-to-date') return 'Você está na versão mais recente';
+    if (status === 'downloading') {
+      return st.percent != null ? `Baixando ${st.percent}%` : 'Baixando…';
     }
-    return {
-      download: { visible: available, enabled: available },
-      cancel: { visible: downloading, enabled: downloading },
-      install: { visible: ready, enabled: ready },
-    };
-  }
-
-  function applyUpdateButton(btn, state) {
-    if (!btn || !state) return;
-    btn.classList.toggle('hidden', !state.visible);
-    btn.disabled = !state.enabled;
+    if (status === 'ready' || st.canInstall) return 'Pronta – Reiniciar';
+    if (status === 'error') return st.message || 'Erro';
+    return st.message || '';
   }
 
   function applyUpdatesStatus(st) {
     if (!st) return;
     const el = document.getElementById('updates-status');
     if (el) {
-      // Mensagens do main; se começa com "Erro", manter como veio
-      el.textContent = st.message || '';
+      el.textContent = formatAboutUpdateStatus(st);
+      const ready = st.status === 'ready' || !!st.canInstall;
+      el.classList.toggle('is-ready-action', ready);
+      el.style.cursor = ready ? 'pointer' : '';
+      el.title = ready ? 'Reiniciar agora' : '';
     }
-    const chEl = document.getElementById('settings-update-channel');
-    if (chEl && (st.channelLabel || st.channel)) {
-      chEl.textContent = st.channelLabel || st.channel || '—';
-    }
-    const lastEl = document.getElementById('settings-update-last-check');
-    if (lastEl) {
-      lastEl.textContent = st.lastCheckAt
-        ? new Date(st.lastCheckAt).toLocaleString('pt-BR')
-        : '—';
-    }
-    const buttons = st.buttons || computeUpdateActionButtons(st);
-    applyUpdateButton(document.getElementById('btn-download-update'), buttons.download);
-    applyUpdateButton(document.getElementById('btn-cancel-update'), buttons.cancel);
-    applyUpdateButton(document.getElementById('btn-install-update'), buttons.install);
-    const btnFolder = document.getElementById('btn-open-download-folder');
-    // Portable download folder is Windows-only; never show on Linux.
-    // notWritable: pasta do exe sem permissão (salvo em Downloads) ou caminho portátil desconhecido.
-    const showFolder =
-      typeof navigator !== 'undefined' &&
-      /Win/i.test(navigator.platform || '') &&
-      !!(st.notWritable || (st.status === 'error' && st.downloadPath));
-    if (btnFolder) btnFolder.classList.toggle('hidden', !showFolder);
-    const hintEl = document.getElementById('updates-portable-hint');
-    if (hintEl) {
-      if (st.portableHint) {
-        hintEl.textContent = st.portableHint;
-        hintEl.classList.remove('hidden');
-      } else {
-        hintEl.textContent = '';
-        hintEl.classList.add('hidden');
+    const checkUp = document.getElementById('btn-check-updates');
+    if (checkUp) {
+      const ready = st.status === 'ready' || !!st.canInstall;
+      checkUp.classList.toggle('is-ready-action', ready);
+      if (ready) {
+        checkUp.textContent = 'Pronta – Reiniciar';
+      } else if (checkUp.dataset.defaultLabel) {
+        checkUp.textContent = checkUp.dataset.defaultLabel;
       }
     }
-    // btn-open-releases permanece sempre visível
+  }
+
+  function hideUpdateReadyBanner() {
+    const banner = document.getElementById('update-ready-banner');
+    if (banner) banner.classList.add('hidden');
+  }
+
+  function showUpdateReadyBanner(payload) {
+    const banner = document.getElementById('update-ready-banner');
+    if (!banner) return;
+    const titleEl = document.getElementById('update-ready-title');
+    const textEl = document.getElementById('update-ready-text');
+    if (titleEl) titleEl.textContent = (payload && payload.title) || 'Atualização pronta';
+    if (textEl) {
+      textEl.textContent =
+        (payload && payload.message) ||
+        (payload && payload.version
+          ? `A versão ${payload.version} foi baixada.`
+          : 'A atualização foi baixada.');
+    }
+    banner.classList.remove('hidden');
   }
 
   async function refreshUpdatesPane() {
-    const v = document.getElementById('settings-version');
-    if (v) v.textContent = (hooks().getAppVersion && hooks().getAppVersion()) || '—';
     try {
       const auto = await window.multiheiz.updatesGetAutoCheck();
       const chk = document.getElementById('chk-auto-check-updates');
       if (chk && auto) chk.checked = auto.enabled !== false;
-    } catch {
-      /* ignore */
-    }
-    try {
-      if (window.multiheiz.updatesGetChannel) {
-        const ch = await window.multiheiz.updatesGetChannel();
-        const chEl = document.getElementById('settings-update-channel');
-        if (chEl && ch) chEl.textContent = ch.channelLabel || ch.channel || '—';
-        const hintEl = document.getElementById('updates-portable-hint');
-        if (hintEl && ch) {
-          if (ch.portableHint) {
-            hintEl.textContent = ch.portableHint;
-            hintEl.classList.remove('hidden');
-          } else {
-            hintEl.textContent = '';
-            hintEl.classList.add('hidden');
-          }
-        }
-      }
     } catch {
       /* ignore */
     }
@@ -2635,7 +2592,15 @@
   function wireUpdatesUi() {
     const checkUp = document.getElementById('btn-check-updates');
     if (checkUp) {
+      if (!checkUp.dataset.defaultLabel) {
+        checkUp.dataset.defaultLabel = checkUp.textContent || 'Verificar agora';
+      }
       checkUp.addEventListener('click', async () => {
+        const stNow = await window.multiheiz.updatesStatus().catch(() => null);
+        if (stNow && (stNow.status === 'ready' || stNow.canInstall)) {
+          await window.multiheiz.updatesInstall();
+          return;
+        }
         checkUp.disabled = true;
         try {
           const r = await window.multiheiz.updatesCheck();
@@ -2645,44 +2610,11 @@
         }
       });
     }
-    const btnDl = document.getElementById('btn-download-update');
-    if (btnDl) {
-      btnDl.addEventListener('click', async () => {
-        btnDl.disabled = true;
-        try {
-          const r = window.multiheiz.updatesDownload
-            ? await window.multiheiz.updatesDownload()
-            : await window.multiheiz.updatesCheck();
-          applyUpdatesStatus(r);
-        } catch {
-          /* applyUpdatesStatus below if we have no r — leave disabled until refresh */
-        }
-      });
-    }
-    const btnCancel = document.getElementById('btn-cancel-update');
-    if (btnCancel) {
-      btnCancel.addEventListener('click', async () => {
-        btnCancel.disabled = true;
-        try {
-          if (window.multiheiz.updatesCancel) {
-            const r = await window.multiheiz.updatesCancel();
-            applyUpdatesStatus(r);
-          }
-        } catch {
-          /* keep disabled until next status */
-        }
-      });
-    }
-    const btnInst = document.getElementById('btn-install-update');
-    if (btnInst) {
-      btnInst.addEventListener('click', async () => {
+    const statusEl = document.getElementById('updates-status');
+    if (statusEl) {
+      statusEl.addEventListener('click', async () => {
+        if (!statusEl.classList.contains('is-ready-action')) return;
         await window.multiheiz.updatesInstall();
-      });
-    }
-    const btnFolder = document.getElementById('btn-open-download-folder');
-    if (btnFolder) {
-      btnFolder.addEventListener('click', () => {
-        if (window.multiheiz.updatesOpenDownload) window.multiheiz.updatesOpenDownload();
       });
     }
     const btnRel = document.getElementById('btn-open-releases');
@@ -2694,6 +2626,22 @@
       chk.addEventListener('change', async () => {
         await window.multiheiz.updatesSetAutoCheck(!!chk.checked);
         showSaved();
+      });
+    }
+    const btnNow = document.getElementById('btn-update-restart-now');
+    if (btnNow) {
+      btnNow.addEventListener('click', async () => {
+        hideUpdateReadyBanner();
+        await window.multiheiz.updatesInstall();
+      });
+    }
+    const btnLater = document.getElementById('btn-update-later');
+    if (btnLater) {
+      btnLater.addEventListener('click', async () => {
+        hideUpdateReadyBanner();
+        if (window.multiheiz.updatesDefer) {
+          await window.multiheiz.updatesDefer();
+        }
       });
     }
   }
@@ -2730,12 +2678,12 @@
           ensureDiagPreview();
           refreshDiagnostics();
         }
-        if (section === 'sobre') refreshAbout();
-        if (section === 'adblock') refreshAdblockUi();
-        if (section === 'extensoes') refreshExtensionsUi();
-        if (section === 'atualizacoes') {
+        if (section === 'sobre') {
+          refreshAbout();
           refreshUpdatesPane();
         }
+        if (section === 'adblock') refreshAdblockUi();
+        if (section === 'extensoes') refreshExtensionsUi();
       });
     });
 
@@ -2946,10 +2894,6 @@
     wireExtensionsUi();
 
     wireUpdatesUi();
-    const openNov = document.getElementById('btn-open-novidades');
-    if (openNov) {
-      openNov.addEventListener('click', () => openNovidades({ auto: false, markSeen: false }));
-    }
     const aboutNov = document.getElementById('btn-about-novidades');
     if (aboutNov) {
       aboutNov.addEventListener('click', () => openNovidades({ auto: false, markSeen: false }));
@@ -3590,8 +3534,6 @@
     form.downloadFolder.value = (dl.settings && dl.settings.defaultFolder) || '';
     form.askWhereToSave.checked = !!(dl.settings && dl.settings.askWhereToSave);
     if (hooks().fillAppearanceForm) hooks().fillAppearanceForm();
-    const ver = document.getElementById('settings-version');
-    if (ver) ver.textContent = (hooks().getAppVersion && hooks().getAppVersion()) || '—';
     await refreshAdblockUi();
     await refreshExtensionsUi();
   }
@@ -4013,6 +3955,7 @@
     set('about-electron', about.electron);
     set('about-chrome', about.chrome);
     applyKofiVisibility(about && about.kofiUrl);
+    await refreshUpdatesPane();
   }
 
   function showMissedReminders(missed) {
@@ -4207,9 +4150,15 @@
       if (payload.type === 'alarmes:changed' && activeModule === 'alarmes') renderModule();
       if (payload.type === 'updates:status') {
         applyUpdatesStatus(payload);
-        if (payload.status === 'ready' && hooks().toast) {
-          hooks().toast(payload.message || 'Atualização pronta — reinicie para atualizar');
-        }
+      }
+      if (payload.type === 'updates:prompt') {
+        showUpdateReadyBanner(payload);
+        applyUpdatesStatus({
+          status: 'ready',
+          canInstall: true,
+          version: payload.version,
+          message: 'Pronta – Reiniciar',
+        });
       }
     });
 
