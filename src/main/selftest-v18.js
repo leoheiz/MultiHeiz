@@ -663,9 +663,15 @@ window.__iframeEarly = window.__mhEarlyOk === true;
   }
   console.log('PASS: invalid imports rejected with message');
 
-  // Corrupt primary again — loadState must not throw (never crash on start)
+  // Corrupt primary again — loadState must not throw (never crash on start).
+  // Ensure a valid .bak first: B6 left bak as `{not-json` when it only corrupted
+  // the primary once; without a good bak, restore falls to empty defaults and
+  // later B7 goToReminderWindow loses acc-v18-*.
   try {
     const p = path.join(userData, 'multiheiz-state.json');
+    flushSave();
+    writeJsonDurable(p, getState());
+    writeJsonDurable(p, getState());
     fs.writeFileSync(p, 'BROKEN', 'utf8');
     loadState();
     getState();

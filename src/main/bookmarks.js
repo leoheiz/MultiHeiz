@@ -329,12 +329,45 @@ function importJson(raw) {
   } catch {
     return { ok: false, reason: 'parse', message: 'JSON inválido — importação rejeitada' };
   }
-  if (!parsed || typeof parsed !== 'object') {
+  // Bare array of bookmarks is a supported legacy shape (migrateBookmarksData).
+  if (Array.isArray(parsed)) {
+    /* ok */
+  } else if (!parsed || typeof parsed !== 'object') {
     return {
       ok: false,
       reason: 'schema',
       message: 'Formato inválido — esperado objeto com folders/items',
     };
+  } else {
+    // Reject clearly invalid typed fields before lenient migrate fills defaults
+    // (e.g. { folders: 'x', items: [] } must not become ok:true count:0).
+    if (
+      Object.prototype.hasOwnProperty.call(parsed, 'folders') &&
+      !Array.isArray(parsed.folders)
+    ) {
+      return {
+        ok: false,
+        reason: 'schema',
+        message: 'Formato inválido — esperado objeto com folders/items',
+      };
+    }
+    if (Object.prototype.hasOwnProperty.call(parsed, 'items') && !Array.isArray(parsed.items)) {
+      return {
+        ok: false,
+        reason: 'schema',
+        message: 'Formato inválido — esperado objeto com folders/items',
+      };
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(parsed, 'bookmarks') &&
+      !Array.isArray(parsed.bookmarks)
+    ) {
+      return {
+        ok: false,
+        reason: 'schema',
+        message: 'Formato inválido — esperado objeto com folders/items',
+      };
+    }
   }
   const { data } = migrateBookmarksData(parsed);
   // Validate
