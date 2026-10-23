@@ -117,23 +117,27 @@ const PANEL_SYNC_KEYS = new Set([
   'frameCapAll',
 ]);
 
+const MEMORY_CLEANUP_KEYS = new Set(['memoryCleanupEnabled', 'memoryCleanupIntervalMin']);
+
 const UA_KEYS = new Set(['uaIdentity', 'preferHighPerfGpu']);
 
 const AUTOSTART_KEYS = new Set(['openAtLogin', 'openAsHidden']);
 
 /**
  * @param {object} changedPartial  already-diffed keys being applied
- * @returns {{ needPanelSync: boolean, needUa: boolean, needAdblock: boolean, needDoh: boolean, needLanguageTool: boolean, needAiWrite: boolean, needAutostart: boolean }}
+ * @returns {{ needPanelSync: boolean, needUa: boolean, needAdblock: boolean, needDoh: boolean, needLanguageTool: boolean, needAiWrite: boolean, needAutostart: boolean, needMemoryCleanup: boolean }}
  */
 function classifySettingsSideEffects(changedPartial) {
   const c = changedPartial && typeof changedPartial === 'object' ? changedPartial : {};
   let needPanelSync = false;
   let needUa = false;
   let needAutostart = false;
+  let needMemoryCleanup = false;
   for (const k of Object.keys(c)) {
     if (PANEL_SYNC_KEYS.has(k)) needPanelSync = true;
     if (UA_KEYS.has(k)) needUa = true;
     if (AUTOSTART_KEYS.has(k)) needAutostart = true;
+    if (MEMORY_CLEANUP_KEYS.has(k)) needMemoryCleanup = true;
   }
   return {
     needPanelSync,
@@ -143,6 +147,7 @@ function classifySettingsSideEffects(changedPartial) {
     needLanguageTool: !!(c.languageTool && typeof c.languageTool === 'object'),
     needAiWrite: !!(c.aiWrite && typeof c.aiWrite === 'object'),
     needAutostart,
+    needMemoryCleanup,
   };
 }
 

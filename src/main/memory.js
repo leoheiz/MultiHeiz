@@ -10,13 +10,19 @@ const ENFORCE_COOLDOWN_MS = 4000;
 const HYSTERESIS_RATIO = 0.85;
 /** Settle delay after Liberar memória before measuring "freed". */
 const FREE_SETTLE_MS = 2000;
+/** Under MULTIHEIZ_SELFTEST=suspend, cleanup uses this short interval. */
+const SELFTEST_CLEANUP_MS = 1500;
 
 /** @type {ReturnType<typeof setInterval> | null} */
 let metricsTimer = null;
+/** @type {ReturnType<typeof setInterval> | null} */
+let cleanupTimer = null;
 let lastEnforceAt = 0;
 let lastTotalKb = 0;
 /** @type {'ok' | 'over'} */
 let pressureBand = 'ok';
+/** Last periodic cleanup result (for selftests). */
+let lastCleanupResult = null;
 
 /** @type {(payload: object) => void} */
 let emitToRenderer = () => {};
@@ -30,6 +36,7 @@ function initMemory(emit) {
   setTimeout(() => {
     tick().catch(() => {});
   }, 600);
+  resyncCleanupTimer();
 }
 
 function stopMemory() {
@@ -37,6 +44,118 @@ function stopMemory() {
     clearInterval(metricsTimer);
     metricsTimer = null;
   }
+  stopCleanupTimer();
+}
+
+function stopCleanupTimer() {
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+  }
+}
+
+/**
+ * Clamp interval minutes to 5–240.
+ * @param {unknown} raw
+ * @returns {number}
+ */
+function clampCleanupIntervalMin(raw) {
+  let mins = Number(raw);
+  if (!Number.isFinite(mins)) mins = 30;
+  return Math.min(240, Math.max(5, Math.round(mins)));
+}
+
+/**
+ * Restart the periodic cleanup timer from current settings.
+ * Selftest env `MULTIHEIZ_SELFTEST=suspend` uses a short fixed interval.
+ */
+function resyncCleanupTimer() {
+  stopCleanupTimer();
+  const settings = getState().settings || {};
+  if (!settings.memoryCleanupEnabled) return;
+
+  const selftestMode = String(process.env.MULTIHEIZ_SELFTEST || '');
+  let intervalMs;
+  if (selftestMode === 'suspend') {
+    intervalMs = SELFTEST_CLEANUP_MS;
+  } else {
+    const mins = clampCleanupIntervalMin(settings.memoryCleanupIntervalMin);
+    intervalMs = mins * 60 * 1000;
+  }
+
+  cleanupTimer = setInterval(() => {
+    runPeriodicMemoryCleanup().catch((err) =>
+      console.error('memory cleanup', err && err.message ? err.message : err)
+    );
+  }, intervalMs);
+}
+
+/**
+ * Whether a panel should be skipped by periodic cleanup (stay alive).
+ * @param {string} accountId
+ * @returns {boolean}
+ */
+function shouldSkipCleanupSuspend(accountId) {
+  if (!accountId) return true;
+  const focused = panels.getFocusedAccountId();
+  if (accountId === focused) return true;
+  if (panels.keepRunningInBackground(accountId)) return true;
+  if (panels.panelIsAudible(accountId)) return true;
+  try {
+    const permissions = require('./permissions');
+    const media = permissions.getMediaInUse(accountId);
+    if (media && (media.microphone || media.camera)) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/**
+ * Clear HTTP cache only + force-suspend idle panels (skip focused / audible / capture / keep-alive).
+ * @returns {Promise<{ clearedCache: boolean, suspendedIds: string[], skippedIds: string[] }>}
+ */
+async function runPeriodicMemoryCleanup() {
+  await panels.clearAllPartitionCaches();
+
+  const suspendedIds = [];
+  const skippedIds = [];
+  const st = getState();
+  const accountIds = (st.accounts || []).map((a) => a.id).filter(Boolean);
+  const candidates = new Set([...accountIds, ...panels.listActivePanelIds()]);
+
+  for (const id of candidates) {
+    if (panels.isForceSuspended(id)) {
+      skippedIds.push(id);
+      continue;
+    }
+    if (shouldSkipCleanupSuspend(id)) {
+      skippedIds.push(id);
+      continue;
+    }
+    if (!panels.listActivePanelIds().includes(id) && !panels.getVisibleAccountIds().has(id)) {
+      continue;
+    }
+    panels.suspendForMemory(id, { force: true });
+    suspendedIds.push(id);
+  }
+
+  lastCleanupResult = {
+    clearedCache: true,
+    suspendedIds,
+    skippedIds,
+    at: Date.now(),
+  };
+  emitToRenderer({ type: 'memory:cleanup', ...lastCleanupResult });
+  return lastCleanupResult;
+}
+
+function getLastCleanupResult() {
+  return lastCleanupResult;
+}
+
+function isCleanupTimerRunning() {
+  return !!cleanupTimer;
 }
 
 /**
@@ -412,4 +531,11 @@ module.exports = {
   pickProcessKb,
   metricLabel,
   FREE_SETTLE_MS,
+  resyncCleanupTimer,
+  runPeriodicMemoryCleanup,
+  getLastCleanupResult,
+  isCleanupTimerRunning,
+  shouldSkipCleanupSuspend,
+  clampCleanupIntervalMin,
+  SELFTEST_CLEANUP_MS,
 };

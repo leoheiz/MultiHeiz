@@ -2218,11 +2218,13 @@ function syncVisiblePanels(slots) {
     }
   }
 
-  // Stagger create+load for newly visible panels
+  // Stagger create+load for newly visible panels.
+  // Exclude force-suspended: recreating them (esp. when needCreate.length > 1)
+  // would clear forceSuspended and un-suspend every hard-suspended tile in the area.
   const needCreate = lastSlots
     .filter((s) => Number(s.width) > 1 && Number(s.height) > 1)
     .map((s) => s.accountId)
-    .filter((id) => !panels.has(id) && !isAccountRemoving(id));
+    .filter((id) => !panels.has(id) && !isAccountRemoving(id) && !forceSuspended.has(id));
   if (needCreate.length > 1) {
     // Create first with bounds via applySlotBounds path that uses queue
     for (const id of needCreate) {

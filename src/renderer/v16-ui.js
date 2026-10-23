@@ -3155,6 +3155,14 @@
           frameCapHidden: Number(form.frameCapHidden && form.frameCapHidden.value) || 30,
           frameCapAll: Number(form.frameCapAll && form.frameCapAll.value) || 0,
           preferHighPerfGpu: !!(form.preferHighPerfGpu && form.preferHighPerfGpu.checked),
+          memoryCleanupEnabled: !!(
+            form.memoryCleanupEnabled && form.memoryCleanupEnabled.checked
+          ),
+          memoryCleanupIntervalMin: (() => {
+            let n = Number(form.memoryCleanupIntervalMin && form.memoryCleanupIntervalMin.value);
+            if (!Number.isFinite(n)) n = 30;
+            return Math.min(240, Math.max(5, Math.round(n)));
+          })(),
           modules: {
             planilha: !!form.modPlanilha.checked,
             alarmes: !!form.modAlarmes.checked,
@@ -3469,6 +3477,22 @@
     if (form.backgroundPreset) form.backgroundPreset.value = s.backgroundPreset || 'balanced';
     if (form.lightMode) form.lightMode.checked = !!s.lightMode;
     if (form.sidebarAlwaysActive) form.sidebarAlwaysActive.checked = !!s.sidebarAlwaysActive;
+    if (form.memoryCleanupEnabled) form.memoryCleanupEnabled.checked = !!s.memoryCleanupEnabled;
+    if (form.memoryCleanupIntervalMin) {
+      let mins = Number(s.memoryCleanupIntervalMin);
+      if (!Number.isFinite(mins)) mins = 30;
+      mins = Math.min(240, Math.max(5, Math.round(mins)));
+      const sel = form.memoryCleanupIntervalMin;
+      const asStr = String(mins);
+      const hasOpt = [...sel.options].some((o) => o.value === asStr);
+      if (!hasOpt) {
+        const opt = document.createElement('option');
+        opt.value = asStr;
+        opt.textContent = asStr;
+        sel.appendChild(opt);
+      }
+      sel.value = asStr;
+    }
     const doh = s.doh || {};
     if (form.dohMode) form.dohMode.value = doh.mode || 'off';
     if (form.dohProvider) form.dohProvider.value = doh.provider || 'cloudflare';

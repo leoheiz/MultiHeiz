@@ -303,6 +303,7 @@ const SELFTEST_AUTOSTART = selftestMode === 'autostart';
 const SELFTEST_DIFF_UPDATE = selftestMode === 'diff-update';
 const SELFTEST_DIAGNOSTICS = selftestMode === 'diagnostics';
 const SELFTEST_SHARED_SESSION = selftestMode === 'shared-session';
+const SELFTEST_SUSPEND = selftestMode === 'suspend';
 const ANY_SELFTEST =
   SELFTEST ||
   SELFTEST_MEM ||
@@ -368,7 +369,8 @@ const ANY_SELFTEST =
   SELFTEST_AUTOSTART ||
   SELFTEST_DIFF_UPDATE ||
   SELFTEST_DIAGNOSTICS ||
-  SELFTEST_SHARED_SESSION;
+  SELFTEST_SHARED_SESSION ||
+  SELFTEST_SUSPEND;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
 if (SELFTEST_CUSTOM_SITE) {
@@ -387,7 +389,8 @@ if (
   SELFTEST_LAG_AUDIT ||
   SELFTEST_UI_INPUT_LAG ||
   SELFTEST_POPOVER_OVERLAY ||
-  SELFTEST_POPOVER_ACTIONS
+  SELFTEST_POPOVER_ACTIONS ||
+  SELFTEST_SUSPEND
 ) {
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 }
@@ -707,6 +710,7 @@ function createWindow() {
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
+    SELFTEST_SUSPEND ||
     SELFTEST_PERMISSIONS ||
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
@@ -746,6 +750,7 @@ function createWindow() {
     SELFTEST_SIDEBAR ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
+    SELFTEST_SUSPEND ||
     SELFTEST_CATALOG ||
     SELFTEST_CUSTOM_SITE ||
     SELFTEST_EDIT_START_URL ||
@@ -826,6 +831,7 @@ function createWindow() {
         SELFTEST_SETTINGS_PERF ||
         SELFTEST_WORKSPACE_DELETE ||
         SELFTEST_SHARED_SESSION ||
+        SELFTEST_SUSPEND ||
         SELFTEST_LAYOUT_WORKSPACE ||
         SELFTEST_CATALOG ||
         SELFTEST_CUSTOM_SITE ||
@@ -1709,6 +1715,35 @@ function createWindow() {
             rendererEval,
             waitForLayoutSettle,
             waitForPanels,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_SUSPEND) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runSuspendSelftest } = require('./selftest-suspend');
+          runSuspendSelftest({
+            mainWindow,
+            panels,
+            memory,
+            permissions,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            session,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -3062,6 +3097,11 @@ function registerIpc() {
         );
       }
       s.settings = { ...s.settings, ...next };
+      if (Object.prototype.hasOwnProperty.call(next, 'memoryCleanupIntervalMin')) {
+        s.settings.memoryCleanupIntervalMin = memory.clampCleanupIntervalMin(
+          s.settings.memoryCleanupIntervalMin
+        );
+      }
       if (adblockPartial) {
         const prevAb = s.settings.adblock || adblock.defaultAdblockSettings();
         s.settings.adblock = {
@@ -3212,6 +3252,13 @@ function registerIpc() {
           console.warn('[settings] panel sync', err && err.message ? err.message : err);
         }
       });
+    }
+    if (effects.needMemoryCleanup) {
+      try {
+        memory.resyncCleanupTimer();
+      } catch (err) {
+        console.warn('[settings] memory cleanup timer', err && err.message ? err.message : err);
+      }
     }
     if (prof) prof.mark('done');
 

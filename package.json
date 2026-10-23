@@ -16,6 +16,7 @@
     "start": "electron .",
     "selftest": "node tools/selftest.js",
     "selftest:mem": "node tools/selftest-mem.js",
+    "selftest:suspend": "node tools/selftest-suspend.js",
     "selftest:ui": "node tools/selftest-ui.js",
     "selftest:bg": "node tools/selftest-bg.js",
     "selftest:v14": "node tools/selftest-v14.js",

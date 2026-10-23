@@ -118,6 +118,10 @@ function defaultState() {
       memoryLimitMb: 0,
       panelMemoryLimitMb: 0,
       hardMemoryLimit: false,
+      /** Limpeza periódica: cache HTTP + suspender ociosos (OFF por padrão). */
+      memoryCleanupEnabled: false,
+      /** Intervalo em minutos (5–240). Padrão 30. */
+      memoryCleanupIntervalMin: 30,
       // FPS throttle only when user enables it (default OFF in v1.3)
       backgroundThrottling: false,
       backgroundFps: 5,
@@ -392,6 +396,14 @@ function migrate(parsed) {
   }
   if (typeof next.settings.persistSessions !== 'boolean') {
     next.settings.persistSessions = true;
+  }
+  if (typeof next.settings.memoryCleanupEnabled !== 'boolean') {
+    next.settings.memoryCleanupEnabled = false;
+  }
+  {
+    let mins = Number(next.settings.memoryCleanupIntervalMin);
+    if (!Number.isFinite(mins)) mins = 30;
+    next.settings.memoryCleanupIntervalMin = Math.min(240, Math.max(5, Math.round(mins)));
   }
   if (!next.settings.uaIdentity) next.settings.uaIdentity = 'chrome';
   if (typeof next.settings.windowsPasskeys !== 'boolean') {
