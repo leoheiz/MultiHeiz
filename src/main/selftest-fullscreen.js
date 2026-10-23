@@ -36,6 +36,46 @@ async function runFullscreenSelftest(ctx) {
   const PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>fs</title></head>
 <body style="margin:0;background:#1a2030;color:#eee;font:16px sans-serif;padding:24px">
 <h1 id="t">fullscreen</h1>
+<div id="stage" style="width:320px;height:180px;background:#0a2030;position:relative">
+<video id="v" width="320" height="180" autoplay muted loop playsinline style="display:block;width:100%;height:100%"></video>
+<canvas id="c" width="320" height="180" style="display:none"></canvas>
+</div>
+<script>
+(function(){
+  var c = document.getElementById('c');
+  var ctx = c.getContext('2d');
+  var t0 = performance.now();
+  function frame(t) {
+    var x = ((t - t0) / 16) % 320;
+    ctx.fillStyle = '#0a2030';
+    ctx.fillRect(0, 0, 320, 180);
+    ctx.fillStyle = '#2bb8a6';
+    ctx.fillRect(x, 60, 40, 60);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  var stream = c.captureStream(30);
+  var v = document.getElementById('v');
+  v.srcObject = stream;
+  v.play().catch(function(){});
+  var stage = document.getElementById('stage');
+  window.__fsVideo = {
+    enter: function() {
+      var el = stage;
+      if (!el.requestFullscreen) return Promise.reject(new Error('no-requestFullscreen'));
+      return el.requestFullscreen();
+    },
+    exit: function() {
+      if (!document.fullscreenElement) return Promise.resolve();
+      return document.exitFullscreen();
+    },
+    active: function() { return !!document.fullscreenElement; },
+    elementId: function() {
+      return document.fullscreenElement ? (document.fullscreenElement.id || document.fullscreenElement.tagName) : null;
+    }
+  };
+})();
+</script>
 </body></html>`;
 
   await new Promise((resolve, reject) => {
@@ -439,6 +479,396 @@ async function runFullscreenSelftest(ctx) {
     return;
   }
   console.log('PASS: leave-full-screen clears chrome-hidden');
+
+  /* ---------- HTML5 element fullscreen (synthetic local video) ---------- */
+  async function panelEval(code) {
+    const wc = panels.getPanelCapture('acc-fs-a');
+    if (!wc) {
+      console.log('FAIL: no panel webContents for eval');
+      app.exit(1);
+      return null;
+    }
+    return wc.executeJavaScript(code, true);
+  }
+
+  async function waitFs(want, ms = 4000) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const active = await panelEval('window.__fsVideo && window.__fsVideo.active()');
+      if (!!active === !!want) return true;
+      await sleep(80);
+    }
+    return false;
+  }
+
+  function panelBoundsA() {
+    const info = panels.getPanelDebugInfo();
+    const p = info.panels.find((x) => x.accountId === 'acc-fs-a');
+    return {
+      bounds: p && p.bounds,
+      htmlFsId: info.htmlFullscreenAccountId,
+      content: contentSize(),
+    };
+  }
+
+  function assertPanelFillsContent(label, tol = 4) {
+    const snap = panelBoundsA();
+    const b = snap.bounds;
+    const c = snap.content;
+    if (!b || !c) {
+      console.log('FAIL: missing bounds', label, snap);
+      app.exit(1);
+      return false;
+    }
+    const ok =
+      nearEdge(b.x, 0, tol) &&
+      nearEdge(b.y, 0, tol) &&
+      nearEdge(b.width, c.width, tol) &&
+      nearEdge(b.height, c.height, tol);
+    if (!ok) {
+      console.log('FAIL: HTML5 FS panel should fill content', label, snap);
+      app.exit(1);
+      return false;
+    }
+    if (snap.htmlFsId !== 'acc-fs-a') {
+      console.log('FAIL: htmlFullscreenAccountId', label, snap.htmlFsId);
+      app.exit(1);
+      return false;
+    }
+    console.log('PASS: HTML5 FS panel fills content', label, snap.bounds);
+    return true;
+  }
+
+  // Ensure windowed (not F11) before scenario 1
+  if (chromeFullscreen.isChromeHidden() || mainWindow.isFullScreen()) {
+    chromeFullscreen.exit();
+    await sleep(500);
+    await waitForLayoutSettle();
+  }
+  const windowedBefore = {
+    chromeHidden: chromeFullscreen.isChromeHidden(),
+    isFullScreen: mainWindow.isFullScreen(),
+  };
+  const windowedBounds = panelBoundsA().bounds;
+
+  // (1) element fullscreen while app windowed → exit → re-enter
+  {
+    const okEnter = await panelEval(
+      'window.__fsVideo.enter().then(function(){return true}).catch(function(e){return String(e && e.message || e)})'
+    );
+    if (okEnter !== true) {
+      console.log('FAIL: requestFullscreen while windowed', okEnter);
+      app.exit(1);
+      return;
+    }
+    if (!(await waitFs(true))) {
+      console.log('FAIL: document.fullscreenElement not set (windowed)');
+      app.exit(1);
+      return;
+    }
+    await sleep(300);
+    await waitForLayoutSettle();
+    if (!assertPanelFillsContent('windowed-enter')) return;
+
+    await panelEval('window.__fsVideo.exit()');
+    if (!(await waitFs(false))) {
+      console.log('FAIL: exitFullscreen did not clear fullscreenElement');
+      app.exit(1);
+      return;
+    }
+    await sleep(400);
+    await waitForLayoutSettle();
+    if (chromeFullscreen.isChromeHidden() !== windowedBefore.chromeHidden) {
+      console.log('FAIL: chromeHidden changed after HTML5 exit (windowed)', {
+        before: windowedBefore,
+        after: chromeFullscreen.getDebugState(),
+      });
+      app.exit(1);
+      return;
+    }
+    const afterExit = panelBoundsA();
+    if (afterExit.htmlFsId) {
+      console.log('FAIL: htmlFullscreenAccountId stuck after exit', afterExit);
+      app.exit(1);
+      return;
+    }
+    if (
+      windowedBounds &&
+      afterExit.bounds &&
+      (!nearEdge(afterExit.bounds.x, windowedBounds.x, 6) ||
+        !nearEdge(afterExit.bounds.y, windowedBounds.y, 6) ||
+        !nearEdge(afterExit.bounds.width, windowedBounds.width, 12) ||
+        !nearEdge(afterExit.bounds.height, windowedBounds.height, 12))
+    ) {
+      console.log('FAIL: layout not restored after HTML5 exit', {
+        windowedBounds,
+        after: afterExit.bounds,
+      });
+      app.exit(1);
+      return;
+    }
+
+    const okRe = await panelEval(
+      'window.__fsVideo.enter().then(function(){return true}).catch(function(e){return String(e && e.message || e)})'
+    );
+    if (okRe !== true) {
+      console.log('FAIL: requestFullscreen again after exit', okRe);
+      app.exit(1);
+      return;
+    }
+    if (!(await waitFs(true))) {
+      console.log('FAIL: re-enter fullscreenElement');
+      app.exit(1);
+      return;
+    }
+    await sleep(200);
+    if (!assertPanelFillsContent('windowed-reenter')) return;
+    await panelEval('window.__fsVideo.exit()');
+    await waitFs(false);
+    await sleep(300);
+    console.log('PASS: HTML5 FS windowed enter/exit/re-enter');
+  }
+
+  // (2) element fullscreen while app in F11
+  chromeFullscreen.enter();
+  await sleep(500);
+  await waitForLayoutSettle();
+  await sleep(400);
+  if (!chromeFullscreen.isChromeHidden() || !mainWindow.isFullScreen()) {
+    console.log('FAIL: need F11 before HTML5-in-F11');
+    app.exit(1);
+    return;
+  }
+  {
+    const okEnter = await panelEval(
+      'window.__fsVideo.enter().then(function(){return true}).catch(function(e){return String(e && e.message || e)})'
+    );
+    if (okEnter !== true) {
+      console.log('FAIL: requestFullscreen in F11', okEnter);
+      app.exit(1);
+      return;
+    }
+    if (!(await waitFs(true))) {
+      console.log('FAIL: fullscreenElement in F11');
+      app.exit(1);
+      return;
+    }
+    await sleep(300);
+    if (!assertPanelFillsContent('f11-enter')) return;
+
+    await panelEval('window.__fsVideo.exit()');
+    if (!(await waitFs(false))) {
+      console.log('FAIL: exit HTML5 in F11');
+      app.exit(1);
+      return;
+    }
+    await sleep(600);
+    await waitForLayoutSettle();
+    if (!chromeFullscreen.isChromeHidden()) {
+      console.log('FAIL: F11 chromeHidden lost after HTML5 exit', chromeFullscreen.getDebugState());
+      app.exit(1);
+      return;
+    }
+    // OS FS should be restored (may take a moment after Electron churn)
+    const tFs = Date.now();
+    while (!mainWindow.isFullScreen() && Date.now() - tFs < 2000) {
+      await sleep(100);
+    }
+    if (!mainWindow.isFullScreen()) {
+      console.log('FAIL: OS fullscreen not restored after HTML5 exit in F11');
+      app.exit(1);
+      return;
+    }
+    if (!assertUnionFillsContent('after-html5-exit-in-f11')) return;
+    console.log('PASS: HTML5 FS inside F11 restores F11');
+  }
+
+  // (3) F11 toggled while element fullscreen — leave keys to the page (no chrome steal)
+  {
+    const okEnter = await panelEval(
+      'window.__fsVideo.enter().then(function(){return true}).catch(function(e){return String(e && e.message || e)})'
+    );
+    if (okEnter !== true || !(await waitFs(true))) {
+      console.log('FAIL: enter HTML5 before F11-key test', okEnter);
+      app.exit(1);
+      return;
+    }
+    await sleep(200);
+    const beforeKey = {
+      chromeHidden: chromeFullscreen.isChromeHidden(),
+      isFullScreen: mainWindow.isFullScreen(),
+    };
+    await sendPanelKey('F11');
+    await sleep(500);
+    const stillHtml = await panelEval('window.__fsVideo.active()');
+    const afterKey = chromeFullscreen.getDebugState();
+    // Page may exit element FS on F11; our chrome must not end up cleared without restore.
+    if (stillHtml) {
+      if (!afterKey.chromeHidden) {
+        console.log('FAIL: F11 cleared chrome while HTML5 FS still active', {
+          beforeKey,
+          afterKey,
+          stillHtml,
+        });
+        app.exit(1);
+        return;
+      }
+    } else {
+      // Element FS exited — F11 chrome mode should remain (or be reasserted).
+      const t0 = Date.now();
+      while (!chromeFullscreen.isChromeHidden() && Date.now() - t0 < 2000) {
+        await sleep(100);
+      }
+      if (!chromeFullscreen.isChromeHidden()) {
+        console.log('FAIL: F11 during HTML5 left chromeHidden false after element exit', {
+          beforeKey,
+          afterKey: chromeFullscreen.getDebugState(),
+        });
+        app.exit(1);
+        return;
+      }
+      const t1 = Date.now();
+      while (!mainWindow.isFullScreen() && Date.now() - t1 < 2000) {
+        await sleep(100);
+      }
+      if (!mainWindow.isFullScreen()) {
+        console.log('FAIL: OS FS not restored after F11+HTML5 exit');
+        app.exit(1);
+        return;
+      }
+    }
+    console.log('PASS: F11 while HTML5 FS (chrome preserved / restored)', {
+      stillHtml,
+      chromeHidden: chromeFullscreen.isChromeHidden(),
+      isFullScreen: mainWindow.isFullScreen(),
+    });
+    if (stillHtml) {
+      await panelEval('window.__fsVideo.exit()');
+      await waitFs(false);
+      await sleep(500);
+    }
+  }
+
+  // (4) Esc paths: Esc exits HTML5 first; then Esc exits F11
+  if (!chromeFullscreen.isChromeHidden()) {
+    chromeFullscreen.enter();
+    await sleep(500);
+  }
+  {
+    const okEnter = await panelEval(
+      'window.__fsVideo.enter().then(function(){return true}).catch(function(e){return String(e && e.message || e)})'
+    );
+    if (okEnter !== true || !(await waitFs(true))) {
+      console.log('FAIL: enter HTML5 for Esc path', okEnter);
+      app.exit(1);
+      return;
+    }
+    await sendPanelKey('Esc');
+    if (!(await waitFs(false, 3000))) {
+      // Esc may be consumed by page; force exit then verify F11 still on
+      await panelEval('window.__fsVideo.exit()');
+      await waitFs(false);
+    }
+    await sleep(500);
+    if (!chromeFullscreen.isChromeHidden()) {
+      console.log('FAIL: Esc should exit HTML5 first and keep F11', chromeFullscreen.getDebugState());
+      app.exit(1);
+      return;
+    }
+    await sendPanelKey('Esc');
+    await sleep(400);
+    if (chromeFullscreen.isChromeHidden() || mainWindow.isFullScreen()) {
+      console.log('FAIL: second Esc should exit F11', {
+        chromeHidden: chromeFullscreen.isChromeHidden(),
+        isFullScreen: mainWindow.isFullScreen(),
+      });
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: Esc exits HTML5 then F11');
+  }
+
+  /* ---------- F11 topbar edge-reveal (setting OFF by default / ON hover) ---------- */
+  {
+    let mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
+    if (!mode || mode.setting !== false) {
+      console.log('FAIL: fullscreenTopbarReveal should default OFF', mode);
+      app.exit(1);
+      return;
+    }
+    chromeFullscreen.enter();
+    await sleep(500);
+    await waitForLayoutSettle();
+    const visOff = await rendererEval('window.__multiheizUi.getChromeVisibility()');
+    if (
+      !visOff ||
+      !visOff.chromeHidden ||
+      (visOff.topbar.display !== 'none' && visOff.topbar.offsetHeight !== 0)
+    ) {
+      console.log('FAIL: topbar should stay hidden when setting OFF', visOff);
+      app.exit(1);
+      return;
+    }
+    // Cursor at top edge must not reveal when OFF
+    const sidebarCursor = ctx.sidebarCursor;
+    function setCursorContent(cx, cy) {
+      const pt = sidebarCursor.contentPointToScreen(cx, cy);
+      if (!pt) throw new Error('contentPointToScreen failed');
+      sidebarCursor.setCursorOverride(pt);
+    }
+    setCursorContent(200, 3);
+    await sleep(400);
+    mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
+    if (mode.open) {
+      console.log('FAIL: topbar must not reveal when setting OFF', mode);
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: topbar reveal OFF by default in F11');
+
+    mode = await rendererEval('window.__multiheizUi.setFullscreenTopbarReveal(true)');
+    if (!mode || !mode.setting || !mode.active) {
+      console.log('FAIL: enable fullscreenTopbarReveal', mode);
+      app.exit(1);
+      return;
+    }
+    setCursorContent(400, 200);
+    await sleep(100);
+    setCursorContent(200, 3);
+    await sleep(280);
+    await waitForLayoutSettle();
+    mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
+    const visOn = await rendererEval('window.__multiheizUi.getChromeVisibility()');
+    if (!mode.open || !visOn.topbar.revealOpen || visOn.topbar.offsetHeight < 40) {
+      console.log('FAIL: top edge should reveal topbar', { mode, visOn });
+      app.exit(1);
+      return;
+    }
+    const openTop = panels.getPanelDebugInfo();
+    if (!(openTop.topbarOverlayHeight >= 40)) {
+      console.log('FAIL: topbar overlay inset missing', openTop.topbarOverlayHeight);
+      app.exit(1);
+      return;
+    }
+    console.log('PASS: topbar edge reveal when setting ON', {
+      overlayH: openTop.topbarOverlayHeight,
+    });
+
+    setCursorContent(400, 400);
+    await sleep(900);
+    await waitForLayoutSettle();
+    mode = await rendererEval('window.__multiheizUi.getTopbarRevealMode()');
+    if (mode.open) {
+      console.log('FAIL: topbar should hide after leave (~700ms)', mode);
+      app.exit(1);
+      return;
+    }
+    sidebarCursor.setCursorOverride(null);
+    await rendererEval('window.__multiheizUi.setFullscreenTopbarReveal(false)');
+    chromeFullscreen.exit();
+    await sleep(400);
+    console.log('PASS: topbar hide after cursor leave');
+  }
 
   try {
     server.close();

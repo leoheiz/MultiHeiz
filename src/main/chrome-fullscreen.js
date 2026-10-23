@@ -33,6 +33,24 @@ let chromeHidden = false;
 /** @type {Set<string>} */
 const htmlFullscreenAccounts = new Set();
 
+/**
+ * Our F11 chrome-hidden flag at the moment the first HTML5 element fullscreen
+ * started. Used to restore F11 after leave-html-full-screen (Electron often
+ * exits OS fullscreen when leaving element fullscreen).
+ * @type {boolean | null}
+ */
+let htmlFsSavedChromeHidden = null;
+
+/** Suppress clearing chrome-hidden while we re-enter OS FS after HTML5 exit. */
+let restoreOsFsAfterHtml = false;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let restoreOsFsTimer = null;
+/**
+ * Until this timestamp, leave-full-screen while chromeHidden re-asserts OS FS
+ * (HTML5 exit churn) instead of clearing F11 mode.
+ */
+let reassertOsFsUntil = 0;
+
 let toggleLockUntil = 0;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let hintTimer = null;
@@ -69,21 +87,121 @@ function isAnyHtmlFullscreen() {
   return htmlFullscreenAccounts.size > 0;
 }
 
+function clearRestoreOsFsTimer() {
+  if (restoreOsFsTimer) {
+    clearTimeout(restoreOsFsTimer);
+    restoreOsFsTimer = null;
+  }
+  restoreOsFsAfterHtml = false;
+}
+
+/**
+ * Re-enter OS fullscreen while keeping chrome-hidden (F11) after HTML5 exit.
+ */
+function reassertOsFullscreenForChrome() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    onLayoutChange();
+    return;
+  }
+  if (!chromeHidden) {
+    chromeHidden = true;
+    emitToRenderer({
+      type: 'chrome:hidden',
+      hidden: true,
+      showHint: false,
+    });
+  }
+  if (mainWindow.isFullScreen()) {
+    onLayoutChange();
+    return;
+  }
+  clearRestoreOsFsTimer();
+  restoreOsFsAfterHtml = true;
+  clearPendingEnterFs();
+  const onEnter = () => {
+    pendingEnterFsHandler = null;
+    restoreOsFsAfterHtml = false;
+    afterEnteredFullScreen(getFocusedPanelId(), false);
+    onLayoutChange();
+  };
+  pendingEnterFsHandler = onEnter;
+  mainWindow.once('enter-full-screen', onEnter);
+  try {
+    mainWindow.setFullScreen(true);
+  } catch {
+    restoreOsFsAfterHtml = false;
+    pendingEnterFsHandler = null;
+  }
+  restoreOsFsTimer = setTimeout(() => {
+    restoreOsFsTimer = null;
+    if (
+      pendingEnterFsHandler === onEnter &&
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.isFullScreen()
+    ) {
+      try {
+        mainWindow.removeListener('enter-full-screen', onEnter);
+      } catch {
+        /* ignore */
+      }
+      pendingEnterFsHandler = null;
+      restoreOsFsAfterHtml = false;
+      afterEnteredFullScreen(getFocusedPanelId(), false);
+      onLayoutChange();
+    } else {
+      restoreOsFsAfterHtml = false;
+      onLayoutChange();
+    }
+  }, 500);
+}
+
+/**
+ * After the last HTML5 element fullscreen exits: restore F11 OS fullscreen if
+ * we were in chrome-hidden mode, without flashing chrome back on.
+ */
+function restoreAfterLastHtmlFullscreen() {
+  const wantChrome = !!htmlFsSavedChromeHidden;
+  htmlFsSavedChromeHidden = null;
+  if (!wantChrome) {
+    onLayoutChange();
+    return;
+  }
+  // Electron often fires leave-full-screen right after leave-html-full-screen;
+  // briefly re-assert OS FS instead of clearing F11.
+  reassertOsFsUntil = Date.now() + 1500;
+  reassertOsFullscreenForChrome();
+}
+
 /**
  * @param {string} accountId
  * @param {boolean} entered
  */
 function noteHtmlFullscreen(accountId, entered) {
   if (!accountId) return;
-  if (entered) htmlFullscreenAccounts.add(accountId);
-  else htmlFullscreenAccounts.delete(accountId);
+  if (entered) {
+    if (htmlFullscreenAccounts.size === 0) {
+      htmlFsSavedChromeHidden = chromeHidden;
+    }
+    htmlFullscreenAccounts.add(accountId);
+  } else {
+    htmlFullscreenAccounts.delete(accountId);
+    if (htmlFullscreenAccounts.size === 0) {
+      restoreAfterLastHtmlFullscreen();
+    }
+  }
 }
 
 /**
  * @param {string} accountId
  */
 function clearHtmlFullscreen(accountId) {
-  if (accountId) htmlFullscreenAccounts.delete(accountId);
+  if (!accountId) return;
+  const had = htmlFullscreenAccounts.has(accountId);
+  htmlFullscreenAccounts.delete(accountId);
+  if (had && htmlFullscreenAccounts.size === 0) {
+    restoreAfterLastHtmlFullscreen();
+  }
 }
 
 function clearAlwaysOnTopTimer() {
@@ -252,6 +370,11 @@ function afterEnteredFullScreen(restoreAccountId, wantHint) {
 function setChromeHidden(hidden, opts = {}) {
   const next = !!hidden;
   const fromWindowEvent = !!opts.fromWindowEvent;
+  // Do not drop F11 chrome while a panel owns HTML5 element fullscreen
+  // (except the dedicated leave-full-screen / restore paths).
+  if (!next && isAnyHtmlFullscreen() && !opts.force) {
+    return;
+  }
   const changed = chromeHidden !== next;
   const restoreAccountId = getFocusedPanelId();
   const wantHint = !!(next && opts.showHint);
@@ -322,6 +445,8 @@ function exit(opts = {}) {
 }
 
 function toggle() {
+  // Never flip F11 chrome while a panel is in HTML5 element fullscreen.
+  if (isAnyHtmlFullscreen()) return;
   const now = Date.now();
   if (now < toggleLockUntil) return;
   toggleLockUntil = now + 80;
@@ -367,12 +492,24 @@ function handleBeforeInput(event, input, accountId) {
 
 /**
  * OS left fullscreen by other means — clear chrome-hidden cleanly.
+ * Skip while HTML5 element fullscreen is active (or we are restoring F11 after
+ * it): Electron often exits OS fullscreen when leaving element fullscreen.
  */
 function onLeaveFullScreen() {
   clearPendingEnterFs();
   ensureNotAlwaysOnTop();
   destroyHint();
+  if (isAnyHtmlFullscreen()) {
+    return;
+  }
+  if (restoreOsFsAfterHtml) {
+    return;
+  }
   if (!chromeHidden) return;
+  if (htmlFsSavedChromeHidden || Date.now() < reassertOsFsUntil) {
+    reassertOsFullscreenForChrome();
+    return;
+  }
   setChromeHidden(false, { fromWindowEvent: true });
 }
 
@@ -380,6 +517,9 @@ function getDebugState() {
   return {
     chromeHidden,
     htmlFullscreenAccounts: [...htmlFullscreenAccounts],
+    htmlFsSavedChromeHidden,
+    restoreOsFsAfterHtml,
+    reassertOsFsUntil,
   };
 }
 

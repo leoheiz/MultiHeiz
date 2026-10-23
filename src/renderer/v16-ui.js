@@ -3141,6 +3141,9 @@
           backgroundPreset: (form.backgroundPreset && form.backgroundPreset.value) || 'balanced',
           lightMode: !!(form.lightMode && form.lightMode.checked),
           sidebarAlwaysActive: !!(form.sidebarAlwaysActive && form.sidebarAlwaysActive.checked),
+          fullscreenTopbarReveal: !!(
+            form.fullscreenTopbarReveal && form.fullscreenTopbarReveal.checked
+          ),
           doh: {
             mode: (form.dohMode && form.dohMode.value) || 'off',
             provider: (form.dohProvider && form.dohProvider.value) || 'cloudflare',
@@ -3477,6 +3480,9 @@
     if (form.backgroundPreset) form.backgroundPreset.value = s.backgroundPreset || 'balanced';
     if (form.lightMode) form.lightMode.checked = !!s.lightMode;
     if (form.sidebarAlwaysActive) form.sidebarAlwaysActive.checked = !!s.sidebarAlwaysActive;
+    if (form.fullscreenTopbarReveal) {
+      form.fullscreenTopbarReveal.checked = !!s.fullscreenTopbarReveal;
+    }
     if (form.memoryCleanupEnabled) form.memoryCleanupEnabled.checked = !!s.memoryCleanupEnabled;
     if (form.memoryCleanupIntervalMin) {
       let mins = Number(s.memoryCleanupIntervalMin);

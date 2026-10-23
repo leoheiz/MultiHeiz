@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Main-process cursor polling for sidebar auto-hide.
+ * Main-process cursor polling for sidebar auto-hide and (optional) F11 topbar reveal.
  * DOM mouseenter/leave are unreliable on Windows (app-region:drag caption + WebContentsView).
  * screen.getCursorScreenPoint vs getContentBounds is the source of truth.
  */
@@ -14,6 +14,12 @@ const REVEAL_EDGE_PX = 12;
 const OUTSIDE_LEFT_PX = 8;
 /** Extra width beyond sidebarWidth while open (shadow / aim room). */
 const OPEN_MARGIN_PX = 8;
+/** Top-edge reveal zone while F11 topbar hover is enabled (~4–6 px). */
+const REVEAL_TOP_PX = 6;
+/** Also treat cursor just outside the top edge (fullscreen flush to monitor). */
+const OUTSIDE_TOP_PX = 8;
+/** Extra height beyond topbar while open (aim room). */
+const OPEN_TOP_MARGIN_PX = 8;
 /** Poll while looking for reveal. */
 const POLL_CLOSED_MS = 70;
 /** Poll while sidebar is revealed (keep-open). */
@@ -31,10 +37,17 @@ let open = false;
 let sidebarWidth = 240;
 let chromeHiddenFlag = false;
 
+/** F11 topbar edge-reveal (independent of sidebar). */
+let topbarEnabled = false;
+let topbarOpen = false;
+let topbarHeight = 48;
+
 /** @type {ReturnType<typeof setTimeout> | null} */
 let timer = null;
 /** @type {boolean | null} */
 let lastInside = null;
+/** @type {boolean | null} */
+let lastTopInside = null;
 
 /**
  * Selftest-only override of screen.getCursorScreenPoint (screen coords).
@@ -55,7 +68,7 @@ function init(win, emit, opts = {}) {
   }
   // Resume polling when the window becomes usable again (no CPU cost while minimized).
   const resume = () => {
-    if (enabled && !timer) tick();
+    if ((enabled || topbarEnabled) && !timer) tick();
   };
   try {
     win.on('focus', resume);
@@ -64,10 +77,12 @@ function init(win, emit, opts = {}) {
     win.on('minimize', () => {
       stopTimer();
       emitInside(false);
+      emitTopInside(false);
     });
     win.on('hide', () => {
       stopTimer();
       emitInside(false);
+      emitTopInside(false);
     });
   } catch {
     /* ignore */
@@ -113,7 +128,8 @@ function setCursorOverride(point) {
   }
   // Force a fresh classify on next tick / immediate tick
   lastInside = null;
-  if (enabled) tick();
+  lastTopInside = null;
+  if (enabled || topbarEnabled) tick();
   return true;
 }
 
@@ -147,7 +163,7 @@ function getPollBounds() {
 function shouldPollWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   if (!mainWindow.isVisible() || mainWindow.isMinimized()) return false;
-  // F11 (chrome-hidden) still polls — left-edge overlay reveal.
+  // F11 (chrome-hidden) still polls — left-edge / top-edge overlay reveal.
   if (mainWindow.isFocused()) return true;
   try {
     const pt = getCursorScreenPoint();
@@ -155,7 +171,7 @@ function shouldPollWindow() {
     return (
       pt.x >= b.x - OUTSIDE_LEFT_PX &&
       pt.x < b.x + b.width &&
-      pt.y >= b.y &&
+      pt.y >= b.y - OUTSIDE_TOP_PX &&
       pt.y < b.y + b.height
     );
   } catch {
@@ -191,33 +207,79 @@ function classifyCursor() {
   return { insideHot, insideOpen };
 }
 
+/**
+ * @returns {{ insideHot: boolean, insideOpen: boolean }}
+ */
+function classifyTopCursor() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { insideHot: false, insideOpen: false };
+  }
+  const bounds = getPollBounds();
+  if (!bounds) {
+    return { insideHot: false, insideOpen: false };
+  }
+  const pt = getCursorScreenPoint();
+  const inX = pt.x >= bounds.x && pt.x < bounds.x + bounds.width;
+  if (!inX) {
+    return { insideHot: false, insideOpen: false };
+  }
+
+  const top = bounds.y;
+  const outsideTop = pt.y >= top - OUTSIDE_TOP_PX && pt.y < top;
+  const nearTop = pt.y >= top && pt.y <= top + REVEAL_TOP_PX;
+  const insideHot = outsideTop || nearTop;
+
+  const openBottom = top + Math.max(0, topbarHeight) + OPEN_TOP_MARGIN_PX;
+  const insideOpen = pt.y >= top - OUTSIDE_TOP_PX && pt.y <= openBottom;
+
+  return { insideHot, insideOpen };
+}
+
 function emitInside(inside) {
   if (lastInside === inside) return;
   lastInside = inside;
   emitToRenderer({ type: 'sidebar:cursor', inside: !!inside });
 }
 
+function emitTopInside(inside) {
+  if (lastTopInside === inside) return;
+  lastTopInside = inside;
+  emitToRenderer({ type: 'topbar:cursor', inside: !!inside });
+}
+
+function anyTrackingEnabled() {
+  return enabled || topbarEnabled;
+}
+
 function tick() {
-  if (!enabled) {
+  if (!anyTrackingEnabled()) {
     stopTimer();
     return;
   }
   if (!shouldPollWindow()) {
     // Pause until focus/show/restore; treat as outside so pending reveal cancels.
-    emitInside(false);
+    if (enabled) emitInside(false);
+    if (topbarEnabled) emitTopInside(false);
     stopTimer();
     return;
   }
-  const { insideHot, insideOpen } = classifyCursor();
-  const inside = open ? insideOpen || insideHot : insideHot;
-  emitInside(inside);
+  if (enabled) {
+    const { insideHot, insideOpen } = classifyCursor();
+    const inside = open ? insideOpen || insideHot : insideHot;
+    emitInside(inside);
+  }
+  if (topbarEnabled) {
+    const top = classifyTopCursor();
+    const insideTop = topbarOpen ? top.insideOpen || top.insideHot : top.insideHot;
+    emitTopInside(insideTop);
+  }
   scheduleNext();
 }
 
 function scheduleNext() {
   stopTimer();
-  if (!enabled) return;
-  const ms = open ? POLL_OPEN_MS : POLL_CLOSED_MS;
+  if (!anyTrackingEnabled()) return;
+  const ms = open || topbarOpen ? POLL_OPEN_MS : POLL_CLOSED_MS;
   timer = setTimeout(() => {
     timer = null;
     tick();
@@ -230,6 +292,9 @@ function scheduleNext() {
  *   open?: boolean,
  *   sidebarWidth?: number,
  *   chromeHidden?: boolean,
+ *   topbarEnabled?: boolean,
+ *   topbarOpen?: boolean,
+ *   topbarHeight?: number,
  * }} opts
  */
 function setTracking(opts = {}) {
@@ -239,9 +304,15 @@ function setTracking(opts = {}) {
     sidebarWidth = Math.max(0, Math.round(opts.sidebarWidth));
   }
   if (typeof opts.chromeHidden === 'boolean') chromeHiddenFlag = opts.chromeHidden;
+  if (typeof opts.topbarEnabled === 'boolean') topbarEnabled = opts.topbarEnabled;
+  if (typeof opts.topbarOpen === 'boolean') topbarOpen = opts.topbarOpen;
+  if (typeof opts.topbarHeight === 'number' && Number.isFinite(opts.topbarHeight)) {
+    topbarHeight = Math.max(0, Math.round(opts.topbarHeight));
+  }
 
   lastInside = null;
-  if (enabled) {
+  lastTopInside = null;
+  if (anyTrackingEnabled()) {
     tick();
   } else {
     stopTimer();
@@ -251,6 +322,9 @@ function setTracking(opts = {}) {
     open,
     sidebarWidth,
     chromeHidden: chromeHiddenFlag,
+    topbarEnabled,
+    topbarOpen,
+    topbarHeight,
   };
 }
 
@@ -260,11 +334,18 @@ function getTracking() {
     open,
     sidebarWidth,
     chromeHidden: chromeHiddenFlag,
+    topbarEnabled,
+    topbarOpen,
+    topbarHeight,
     polling: !!timer,
     lastInside,
+    lastTopInside,
     revealEdgePx: REVEAL_EDGE_PX,
+    revealTopPx: REVEAL_TOP_PX,
     outsideLeftPx: OUTSIDE_LEFT_PX,
+    outsideTopPx: OUTSIDE_TOP_PX,
     openMarginPx: OPEN_MARGIN_PX,
+    openTopMarginPx: OPEN_TOP_MARGIN_PX,
   };
 }
 
@@ -284,8 +365,10 @@ function contentPointToScreen(contentX, contentY) {
 function dispose() {
   stopTimer();
   enabled = false;
+  topbarEnabled = false;
   cursorOverride = null;
   lastInside = null;
+  lastTopInside = null;
   mainWindow = null;
 }
 
@@ -298,11 +381,15 @@ module.exports = {
   getCursorScreenPoint,
   contentPointToScreen,
   classifyCursor,
+  classifyTopCursor,
   getPollBounds,
   dispose,
   REVEAL_EDGE_PX,
+  REVEAL_TOP_PX,
   OUTSIDE_LEFT_PX,
+  OUTSIDE_TOP_PX,
   OPEN_MARGIN_PX,
+  OPEN_TOP_MARGIN_PX,
   POLL_CLOSED_MS,
   POLL_OPEN_MS,
 };

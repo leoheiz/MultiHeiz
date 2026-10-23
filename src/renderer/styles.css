@@ -1950,6 +1950,19 @@ body.is-chrome-hidden #topbar,
 body.is-chrome-hidden #statusbar {
   display: none !important;
 }
+/* Optional: reveal topbar as overlay when cursor hits the top edge (setting ON). */
+body.is-chrome-hidden.topbar-reveal-open #topbar {
+  display: flex !important;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  width: 100%;
+  margin-left: 0;
+  max-width: none;
+  z-index: 30;
+  box-sizing: border-box;
+}
 /* Without overlay classes, keep sidebar/hotzone fully gone (safety). */
 body.is-chrome-hidden #sidebar,
 body.is-chrome-hidden #sidebar-hotzone {

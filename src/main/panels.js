@@ -152,6 +152,20 @@ let lastSlots = [];
  */
 let sidebarOverlayWidth = 0;
 
+/**
+ * F11 topbar edge-reveal overlay inset (CSS px). Same shift strategy as sidebar
+ * but on Y: views that overlap [0, overlayH) move y to overlayH (keep height).
+ * @type {number}
+ */
+let topbarOverlayHeight = 0;
+
+/**
+ * Account id whose page is in HTML5 element fullscreen — its WebContentsView
+ * must fill the whole content area until leave-html-full-screen.
+ * @type {string | null}
+ */
+let htmlFullscreenAccountId = null;
+
 /** Last on-screen size for parking hidden panels offscreen. */
 /** @type {Map<string, { width: number, height: number }>} */
 const lastOnScreenSize = new Map();
@@ -385,6 +399,26 @@ function getSidebarOverlayWidth() {
 }
 
 /**
+ * @param {number} px Top overlay height in CSS px (0 = no topbar overlay).
+ */
+function setTopbarOverlayHeight(px) {
+  const next = Math.max(0, Math.round(Number(px) || 0));
+  if (next === topbarOverlayHeight) return;
+  topbarOverlayHeight = next;
+  if (htmlFullscreenAccountId) {
+    applyHtmlFullscreenBounds(htmlFullscreenAccountId);
+    return;
+  }
+  if (lastSlots.length) {
+    applySlotBounds(lastSlots);
+  }
+}
+
+function getTopbarOverlayHeight() {
+  return topbarOverlayHeight;
+}
+
+/**
  * Map a logical slot to on-screen view bounds under the sidebar overlay strategy.
  * @param {{ x: number, y: number, width: number, height: number }} slot
  * @param {number} overlayW
@@ -408,6 +442,115 @@ function viewBoundsForSidebarOverlay(slot, overlayW) {
   }
   // Overlaps left strip: shift origin, keep width (may clip on the right).
   return { x: overlayW, y, width, height };
+}
+
+/**
+ * Apply topbar overlay shift-y (keep height) after sidebar shift-x.
+ * @param {{ x: number, y: number, width: number, height: number } | null} bounds
+ * @param {number} overlayH
+ * @returns {{ x: number, y: number, width: number, height: number } | null}
+ */
+function viewBoundsForTopbarOverlay(bounds, overlayH) {
+  if (!bounds) return null;
+  const x = bounds.x;
+  const y = bounds.y;
+  const width = bounds.width;
+  const height = bounds.height;
+  if (!(overlayH > 0) || width < 1 || height < 1) {
+    return bounds;
+  }
+  const bottom = y + height;
+  if (bottom <= overlayH) {
+    return null;
+  }
+  if (y >= overlayH) {
+    return bounds;
+  }
+  return { x, y: overlayH, width, height };
+}
+
+/**
+ * Full content-area bounds for the HTML5-fullscreen panel.
+ * @returns {{ x: number, y: number, width: number, height: number } | null}
+ */
+function contentAreaBounds() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  try {
+    const [width, height] = mainWindow.getContentSize();
+    const w = Math.max(1, Math.round(width) || 1);
+    const h = Math.max(1, Math.round(height) || 1);
+    return { x: 0, y: 0, width: w, height: h };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Raise a panel view above siblings (under the popover overlay if present).
+ * @param {import('electron').WebContentsView} view
+ */
+function raisePanelView(view) {
+  if (!mainWindow || mainWindow.isDestroyed() || !view) return;
+  try {
+    mainWindow.contentView.removeChildView(view);
+  } catch {
+    /* ignore */
+  }
+  try {
+    mainWindow.contentView.addChildView(view);
+  } catch {
+    /* ignore */
+  }
+  try {
+    popoverOverlay.onPanelsLayoutChanged();
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Expand the panel to the whole content area for HTML5 element fullscreen.
+ * @param {string} accountId
+ */
+function applyHtmlFullscreenBounds(accountId) {
+  const entry = panels.get(accountId);
+  if (!entry) return;
+  const full = contentAreaBounds();
+  if (!full) return;
+  try {
+    entry.view.setBounds(full);
+    entry.parked = false;
+    setViewVisible(entry, true);
+    raisePanelView(entry.view);
+    repaintPanel(accountId);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * @param {string} accountId
+ */
+function enterHtmlFullscreenLayout(accountId) {
+  if (!accountId) return;
+  htmlFullscreenAccountId = accountId;
+  applyHtmlFullscreenBounds(accountId);
+}
+
+/**
+ * @param {string} accountId
+ */
+function leaveHtmlFullscreenLayout(accountId) {
+  if (htmlFullscreenAccountId === accountId) {
+    htmlFullscreenAccountId = null;
+  }
+  if (lastSlots.length) {
+    applySlotBounds(lastSlots);
+  }
+}
+
+function getHtmlFullscreenAccountId() {
+  return htmlFullscreenAccountId;
 }
 
 function withTimeout(promise, ms) {
@@ -1525,11 +1668,16 @@ function createPanel(accountId) {
   } catch {
     /* older Electron without input-event */
   }
-  // Track HTML5 element fullscreen so Esc/F11 are left to the page when active.
+  // Track HTML5 element fullscreen so Esc/F11 are left to the page when active,
+  // and expand this WebContentsView to the full content area (restore on leave).
   view.webContents.on('enter-html-full-screen', () => {
     chromeFullscreen.noteHtmlFullscreen(accountId, true);
+    enterHtmlFullscreenLayout(accountId);
   });
   view.webContents.on('leave-html-full-screen', () => {
+    // Restore slot bounds before F11 OS-FS reassert (layout:recompute) so we
+    // do not briefly re-expand via htmlFullscreenAccountId.
+    leaveHtmlFullscreenLayout(accountId);
     chromeFullscreen.noteHtmlFullscreen(accountId, false);
   });
   // Block in-page navigations to non-http(s) schemes (defense in depth).
@@ -1788,6 +1936,9 @@ function destroyPanel(accountId, { keepLastUrl = true } = {}) {
   overlaySnapshots.delete(accountId);
   overlaySnapshotLru = overlaySnapshotLru.filter((id) => id !== accountId);
   chromeFullscreen.clearHtmlFullscreen(accountId);
+  if (htmlFullscreenAccountId === accountId) {
+    htmlFullscreenAccountId = null;
+  }
   if (focusedAccountId === accountId) focusedAccountId = null;
 }
 
@@ -1975,10 +2126,17 @@ function applySlotBounds(slots, opts = {}) {
       continue;
     }
 
-    const visual = viewBoundsForSidebarOverlay(
+    // HTML5 element fullscreen: this panel must fill the window; others keep slots.
+    if (htmlFullscreenAccountId && slot.accountId === htmlFullscreenAccountId) {
+      applyHtmlFullscreenBounds(slot.accountId);
+      continue;
+    }
+
+    const afterSidebar = viewBoundsForSidebarOverlay(
       { x, y, width, height },
       sidebarOverlayWidth
     );
+    const visual = viewBoundsForTopbarOverlay(afterSidebar, topbarOverlayHeight);
     if (!visual || visual.width < 1 || visual.height < 1) {
       parkPanelOffscreen(entry);
       continue;
@@ -2293,6 +2451,8 @@ function getPanelDebugInfo() {
     overlayCount: getOverlayCount(),
     overlayIds: [...activeOverlays],
     sidebarOverlayWidth,
+    topbarOverlayHeight,
+    htmlFullscreenAccountId,
     lastSlots: lastSlots.map((s) => ({ ...s })),
     panels: out,
   };
@@ -2884,7 +3044,14 @@ module.exports = {
   areOverlaysActive,
   setSidebarOverlayWidth,
   getSidebarOverlayWidth,
+  setTopbarOverlayHeight,
+  getTopbarOverlayHeight,
   viewBoundsForSidebarOverlay,
+  viewBoundsForTopbarOverlay,
+  enterHtmlFullscreenLayout,
+  leaveHtmlFullscreenLayout,
+  getHtmlFullscreenAccountId,
+  applyHtmlFullscreenBounds,
   getPanelDebugInfo,
   getMainUiProcessId,
   enableViewMutationLog,

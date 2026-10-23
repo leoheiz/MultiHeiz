@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('multiheiz', {
   catalogList: () => ipcRenderer.invoke('catalog:list'),
   syncLayout: (slots) => ipcRenderer.invoke('layout:sync', slots),
   setSidebarOverlay: (widthPx) => ipcRenderer.invoke('sidebar:set-overlay', widthPx),
+  setTopbarOverlay: (heightPx) => ipcRenderer.invoke('topbar:set-overlay', heightPx),
   setSidebarAutoHideTracking: (opts) =>
     ipcRenderer.invoke('sidebar:set-auto-hide-tracking', opts || {}),
   /** Subscribe to main-process cursor poll ({ inside }) for sidebar auto-hide. */

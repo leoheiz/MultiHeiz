@@ -80,6 +80,12 @@ const SIDEBAR_HOTZONE_PX = 6;
 const SIDEBAR_SHOW_DELAY_MS = 150;
 /** Delay before hiding after cursor left hot-zone/sidebar (main polling is source of truth) */
 const SIDEBAR_HIDE_DELAY_MS = 700;
+/** F11 topbar overlay height (matches --topbar-h / window-chrome.TOPBAR_HEIGHT) */
+const TOPBAR_OVERLAY_H = 48;
+/** Top-edge reveal zone (~4–6 px); main polls REVEAL_TOP_PX = 6 */
+const TOPBAR_HOTZONE_PX = 6;
+const TOPBAR_SHOW_DELAY_MS = 150;
+const TOPBAR_HIDE_DELAY_MS = 700;
 
 /** When true, user forced the sidebar open while under the auto-collapse breakpoint */
 let sidebarForceExpanded = false;
@@ -98,6 +104,14 @@ let sidebarCursorInside = null;
 let sidebarShowTimer = null;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let sidebarHideTimer = null;
+/** F11 topbar edge-reveal currently open (session; not persisted; no pin mode) */
+let topbarRevealOpen = false;
+/** Last top-edge inside/outside from main-process cursor polling */
+let topbarCursorInside = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let topbarShowTimer = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let topbarHideTimer = null;
 /** Current zoom factor for the focused panel */
 let focusedZoom = 1;
 /** @type {Map<string, number>} accountId -> zoom factor (for header chips) */
@@ -691,6 +705,11 @@ function applyState(next, opts = {}) {
     state.layout = normalizeLayout(state.layout);
     if (opts.soft) {
       // Settings-only path: keep panels/layout as-is; modules may refresh lightly.
+      // Topbar F11 reveal may have toggled — refresh polling / overlay inset.
+      if (!usesTopbarReveal() && topbarRevealOpen) {
+        resetTopbarRevealUi();
+      }
+      syncSidebarAutoHideTracking();
       scheduleSidebarModulesIdle();
       return;
     }
@@ -731,6 +750,21 @@ function isChromeHiddenMode() {
 }
 
 /**
+ * Setting: reveal top bar on top-edge hover while F11 chrome-hidden (OFF by default).
+ * No always-visible / pinned mode.
+ */
+function isFullscreenTopbarRevealEnabled() {
+  return !!(state.settings && state.settings.fullscreenTopbarReveal);
+}
+
+/**
+ * Topbar edge-reveal is active only in F11 when the setting is ON.
+ */
+function usesTopbarReveal() {
+  return isChromeHiddenMode() && isFullscreenTopbarRevealEnabled();
+}
+
+/**
  * Overlay + hot-zone behavior: normal auto-hide, or always while F11 chrome-hidden
  * (independent of fixed / auto-hide / legacy preference).
  */
@@ -746,6 +780,17 @@ function clearSidebarHoverTimers() {
   if (sidebarHideTimer) {
     clearTimeout(sidebarHideTimer);
     sidebarHideTimer = null;
+  }
+}
+
+function clearTopbarHoverTimers() {
+  if (topbarShowTimer) {
+    clearTimeout(topbarShowTimer);
+    topbarShowTimer = null;
+  }
+  if (topbarHideTimer) {
+    clearTimeout(topbarHideTimer);
+    topbarHideTimer = null;
   }
 }
 
@@ -779,12 +824,14 @@ function shouldHoldSidebarOpen() {
 
 /**
  * Tell main to start/stop cursor polling for auto-hide / F11 edge reveal + keep-open.
+ * Also drives optional F11 topbar top-edge reveal when the setting is ON.
  */
 function syncSidebarAutoHideTracking() {
   if (!window.multiheiz || typeof window.multiheiz.setSidebarAutoHideTracking !== 'function') {
     return;
   }
   const edge = usesSidebarOverlay();
+  const topReveal = usesTopbarReveal();
   try {
     window.multiheiz.setSidebarAutoHideTracking({
       enabled: edge,
@@ -794,10 +841,101 @@ function syncSidebarAutoHideTracking() {
         : clampSidebarWidth(state.ui && state.ui.sidebarWidth),
       // Still report chrome-hidden for debug; main keeps polling when enabled.
       chromeHidden: isChromeHiddenMode(),
+      topbarEnabled: topReveal,
+      topbarOpen: !!(topReveal && topbarRevealOpen),
+      topbarHeight: TOPBAR_OVERLAY_H,
     });
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * Sync main-process WebContentsView inset for the F11 topbar overlay strip.
+ * @param {boolean} open
+ */
+async function syncTopbarOverlayBounds(open) {
+  if (!window.multiheiz || typeof window.multiheiz.setTopbarOverlay !== 'function') return;
+  const h = open && usesTopbarReveal() ? TOPBAR_OVERLAY_H : 0;
+  try {
+    await window.multiheiz.setTopbarOverlay(h);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * @param {boolean} open
+ * @param {{ force?: boolean }} [opts]
+ */
+function setTopbarRevealOpen(open, opts = {}) {
+  if (!usesTopbarReveal()) {
+    open = false;
+  }
+  const next = !!open;
+  if (next === topbarRevealOpen && !opts.force) {
+    if (next) clearTopbarHoverTimers();
+    return;
+  }
+  topbarRevealOpen = next;
+  document.body.classList.toggle('topbar-reveal-open', next);
+  syncTopbarOverlayBounds(next);
+  syncSidebarAutoHideTracking();
+  scheduleSync();
+}
+
+function requestTopbarShow() {
+  if (!usesTopbarReveal()) return;
+  clearTopbarHoverTimers();
+  if (topbarRevealOpen) return;
+  topbarShowTimer = setTimeout(() => {
+    topbarShowTimer = null;
+    setTopbarRevealOpen(true);
+  }, TOPBAR_SHOW_DELAY_MS);
+}
+
+function requestTopbarHide() {
+  if (!usesTopbarReveal()) return;
+  if (!topbarRevealOpen) return;
+  if (topbarHideTimer) return;
+  if (topbarShowTimer) {
+    clearTimeout(topbarShowTimer);
+    topbarShowTimer = null;
+  }
+  topbarHideTimer = setTimeout(() => {
+    topbarHideTimer = null;
+    if (topbarCursorInside === true) return;
+    setTopbarRevealOpen(false);
+  }, TOPBAR_HIDE_DELAY_MS);
+}
+
+/**
+ * Main-process top-edge cursor poll (F11 topbar reveal).
+ * @param {boolean} inside
+ */
+function onTopbarCursorFromMain(inside) {
+  if (!usesTopbarReveal()) return;
+  topbarCursorInside = !!inside;
+  if (inside) {
+    if (topbarRevealOpen) {
+      clearTopbarHoverTimers();
+    } else {
+      requestTopbarShow();
+    }
+  } else if (topbarRevealOpen) {
+    requestTopbarHide();
+  } else if (topbarShowTimer) {
+    clearTimeout(topbarShowTimer);
+    topbarShowTimer = null;
+  }
+}
+
+function resetTopbarRevealUi() {
+  clearTopbarHoverTimers();
+  topbarRevealOpen = false;
+  topbarCursorInside = null;
+  document.body.classList.remove('topbar-reveal-open');
+  syncTopbarOverlayBounds(false);
 }
 
 /**
@@ -4817,6 +4955,7 @@ window.multiheiz.onEvent((payload) => {
     clearSidebarHoverTimers();
     sidebarFsPinned = false;
     sidebarCursorInside = null;
+    resetTopbarRevealUi();
     if (payload.hidden) {
       // Enter F11: sidebar hidden by default; left edge reveals as overlay.
       sidebarAutoHideOpen = false;
@@ -4831,6 +4970,7 @@ window.multiheiz.onEvent((payload) => {
       syncSidebarOverlayBounds(false);
     }
     updateSidebarCollapseClasses();
+    syncSidebarAutoHideTracking();
     scheduleSync();
     return;
   }
@@ -4843,6 +4983,10 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'sidebar:cursor') {
     onSidebarCursorFromMain(!!payload.inside);
+    return;
+  }
+  if (payload.type === 'topbar:cursor') {
+    onTopbarCursorFromMain(!!payload.inside);
     return;
   }
   if (payload.type === 'overlay:snapshots') {
@@ -5486,9 +5630,15 @@ window.__multiheizUi = {
     };
     const sb = measure(el.sidebar);
     const sbRect = el.sidebar ? el.sidebar.getBoundingClientRect() : null;
+    const tb = measure(topbarEl);
     return {
       chromeHidden: document.body.classList.contains('is-chrome-hidden'),
-      topbar: measure(topbarEl),
+      topbar: {
+        ...tb,
+        revealEnabled: isFullscreenTopbarRevealEnabled(),
+        revealOpen: !!topbarRevealOpen,
+        revealActive: usesTopbarReveal(),
+      },
       sidebar: {
         ...sb,
         // Overlay off-screen: width may be non-zero while visually hidden (translateX).
@@ -5497,6 +5647,27 @@ window.__multiheizUi = {
       },
       statusbar: measure(statusEl),
     };
+  },
+  getTopbarRevealMode: () => ({
+    setting: isFullscreenTopbarRevealEnabled(),
+    active: usesTopbarReveal(),
+    open: !!topbarRevealOpen,
+    chromeHidden: isChromeHiddenMode(),
+    cursorInside: topbarCursorInside,
+    hotzonePx: TOPBAR_HOTZONE_PX,
+    overlayH: TOPBAR_OVERLAY_H,
+    delays: { showMs: TOPBAR_SHOW_DELAY_MS, hideMs: TOPBAR_HIDE_DELAY_MS },
+  }),
+  setFullscreenTopbarReveal: async (on) => {
+    const st = await window.multiheiz.updateSettings({ fullscreenTopbarReveal: !!on });
+    if (st) applyState(st, { soft: true });
+    if (!usesTopbarReveal()) resetTopbarRevealUi();
+    syncSidebarAutoHideTracking();
+    return window.__multiheizUi.getTopbarRevealMode();
+  },
+  setTopbarRevealOpen: (open) => {
+    setTopbarRevealOpen(!!open, { force: true });
+    return window.__multiheizUi.getTopbarRevealMode();
   },
   getSidebarMode: () => {
     const cs = el.sidebar ? getComputedStyle(el.sidebar) : null;

@@ -3784,6 +3784,11 @@ function registerIpc() {
     return { ok: true, width: panels.getSidebarOverlayWidth() };
   });
 
+  ipcMain.handle('topbar:set-overlay', (_e, heightPx) => {
+    panels.setTopbarOverlayHeight(heightPx);
+    return { ok: true, height: panels.getTopbarOverlayHeight() };
+  });
+
   ipcMain.handle('sidebar:set-auto-hide-tracking', (_e, opts) => {
     return sidebarCursor.setTracking(opts || {});
   });
