@@ -103,6 +103,17 @@ function findWebPrefIssues(src, file) {
       issues.push(`${fileRel}: webSecurity false`);
     }
 
+    // nodeIntegrationInSubFrames exige sandbox+contextIsolation no mesmo bloco
+    if (has('nodeIntegrationInSubFrames', 'true')) {
+      const sandboxed = has('sandbox', 'true');
+      const isolated = has('contextIsolation', 'true');
+      if (!sandboxed || !isolated) {
+        issues.push(
+          `${fileRel}: nodeIntegrationInSubFrames:true sem sandbox:true+contextIsolation:true`
+        );
+      }
+    }
+
     // Preload + conteúdo remoto: painéis usam preload sandboxed (OK se nodeIntegration false)
     if (/preload\s*:/.test(block) && /panels\.js|early-replay|extensions\/popup/i.test(fileRel)) {
       if (has('nodeIntegration', 'true') || has('sandbox', 'false') || has('contextIsolation', 'false')) {
@@ -183,40 +194,33 @@ function checkCsp() {
   /** @type {string[]} */
   const missing = [];
   /** @type {string[]} */
-  const fixed = [];
+  const weak = [];
   const htmlFiles = [
     path.join(srcRenderer, 'index.html'),
     path.join(srcRenderer, 'popover-overlay.html'),
   ];
+  // Report-only: nunca escreve arquivos.
   for (const f of htmlFiles) {
     if (!fs.existsSync(f)) {
       missing.push(rel(f) + ' ausente');
       continue;
     }
-    let html = fs.readFileSync(f, 'utf8');
+    const html = fs.readFileSync(f, 'utf8');
     if (!/Content-Security-Policy/i.test(html)) {
-      // Correção simples e segura: meta CSP restritiva
-      const meta =
-        '  <meta\n' +
-        '    http-equiv="Content-Security-Policy"\n' +
-        '    content="default-src \'self\'; script-src \'self\' \'unsafe-inline\'; style-src \'self\' \'unsafe-inline\'; img-src \'self\' data:; object-src \'none\'; base-uri \'self\'"\n' +
-        '  />\n';
-      if (/<head[^>]*>/i.test(html)) {
-        html = html.replace(/<head([^>]*)>/i, '<head$1>\n' + meta);
-        fs.writeFileSync(f, html, 'utf8');
-        fixed.push(rel(f));
-      } else {
-        missing.push(rel(f));
-      }
+      missing.push(rel(f));
+      continue;
+    }
+    const m = html.match(
+      /http-equiv=["']Content-Security-Policy["'][^>]*content=["']([^"']+)["']/i
+    ) || html.match(
+      /content=["']([^"']+)["'][^>]*http-equiv=["']Content-Security-Policy["']/i
+    );
+    const csp = m ? m[1] : '';
+    if (/script-src[^;]*'unsafe-inline'/i.test(csp)) {
+      weak.push(rel(f) + ": script-src inclui 'unsafe-inline'");
     }
   }
-  // re-check
-  for (const f of htmlFiles) {
-    if (!fs.existsSync(f)) continue;
-    const html = fs.readFileSync(f, 'utf8');
-    if (!/Content-Security-Policy/i.test(html)) missing.push(rel(f));
-  }
-  return { missing, fixed };
+  return { missing, weak, fixed: [] };
 }
 
 function checkSafeStorage() {
@@ -309,7 +313,8 @@ function checkOverlayNoNode() {
 
 function runNpmAudit() {
   try {
-    const raw = execFileSync('npm', ['audit', '--omit=dev', '--json'], {
+    // Audit completo (inclui electron / devDeps — o runtime empacotado).
+    const raw = execFileSync('npm', ['audit', '--json'], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -336,15 +341,24 @@ function runNpmAudit() {
 }
 
 function summarizeAudit(data) {
+  let info = 0;
+  let low = 0;
+  let moderate = 0;
   let high = 0;
   let critical = 0;
   const meta = data.metadata && data.metadata.vulnerabilities;
   if (meta) {
+    info = Number(meta.info) || 0;
+    low = Number(meta.low) || 0;
+    moderate = Number(meta.moderate) || 0;
     high = Number(meta.high) || 0;
     critical = Number(meta.critical) || 0;
   } else if (data.vulnerabilities) {
     for (const v of Object.values(data.vulnerabilities)) {
       const sev = String(v.severity || '').toLowerCase();
+      if (sev === 'info') info++;
+      if (sev === 'low') low++;
+      if (sev === 'moderate') moderate++;
       if (sev === 'high') high++;
       if (sev === 'critical') critical++;
     }
@@ -353,7 +367,10 @@ function summarizeAudit(data) {
     critical > 0 ? 'FALHA' : high > 0 ? 'ATENÇÃO' : 'OK';
   return {
     status: /** @type {Status} */ (status),
-    result: `critical=${critical} high=${high}`,
+    result: `info=${info} low=${low} moderate=${moderate} high=${high} critical=${critical}`,
+    info,
+    low,
+    moderate,
     high,
     critical,
     details: [],
@@ -502,19 +519,19 @@ async function main() {
   /** @type {string[]} */
   const corrections = [];
 
-  // CSP (pode corrigir)
+  // CSP (somente relato — nunca escreve HTML)
   const csp = checkCsp();
-  if (csp.fixed.length) {
-    corrections.push('CSP adicionada em: ' + csp.fixed.join(', '));
-  }
+  const cspDetails = [...(csp.weak || [])];
   findings.push({
     id: 'csp',
     result:
-      csp.missing.length === 0
-        ? 'CSP presente em index.html e popover-overlay.html'
-        : 'CSP faltando: ' + csp.missing.join(', '),
-    status: csp.missing.length ? 'FALHA' : 'OK',
-    details: csp.fixed.map((f) => 'corrigido: ' + f),
+      csp.missing.length === 0 && !(csp.weak && csp.weak.length)
+        ? 'CSP presente (sem unsafe-inline em script-src)'
+        : csp.missing.length
+          ? 'CSP faltando: ' + csp.missing.join(', ')
+          : 'CSP fraca: ' + csp.weak.join('; '),
+    status: csp.missing.length ? 'FALHA' : csp.weak && csp.weak.length ? 'ATENÇÃO' : 'OK',
+    details: cspDetails,
   });
 
   // webPreferences
@@ -556,7 +573,7 @@ async function main() {
     ...checkLanguageToolAi(),
   });
 
-  console.log('\n--- npm audit --omit=dev ---');
+  console.log('\n--- npm audit (full, incl. electron/devDeps) ---');
   const audit = runNpmAudit();
   findings.push({
     id: 'npm-audit',
