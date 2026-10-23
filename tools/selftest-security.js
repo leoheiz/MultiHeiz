@@ -200,7 +200,35 @@ async function runNodeChecks() {
     !ipcGuard.isAllowedIpc({ sender: panelWc, senderFrame: null }, 'state:get'),
     'null frame rejected'
   );
+  const mainFr = { url: 'http://127.0.0.1:8/', parent: null };
+  const panelMain = {
+    sender: Object.assign(panelWc, { mainFrame: mainFr }),
+    senderFrame: mainFr,
+  };
+  assert(ipcGuard.isAllowedIpc(panelMain, 'panel:ai-open'), 'main frame ai-open');
+  assert(ipcGuard.isAllowedIpc(panelMain, 'panel:media-use'), 'main frame media-use');
+  assert(ipcGuard.isAllowedIpc(panelMain, 'panel:ctrl-wheel'), 'main frame ctrl-wheel');
+  const panelSub = {
+    sender: panelMain.sender,
+    senderFrame: { url: 'http://127.0.0.1:9/', parent: mainFr },
+  };
+  assert(!ipcGuard.isAllowedIpc(panelSub, 'panel:ai-open'), 'subframe ai-open rejected');
+  assert(!ipcGuard.isAllowedIpc(panelSub, 'panel:media-use'), 'subframe media-use rejected');
+  assert(!ipcGuard.isAllowedIpc(panelSub, 'panel:ctrl-wheel'), 'subframe ctrl-wheel rejected');
+  assert(
+    !ipcGuard.isAllowedIpc(panelSub, 'panel:languagetool-check'),
+    'cross-origin subframe LT rejected'
+  );
+  const panelSubSame = {
+    sender: panelMain.sender,
+    senderFrame: { url: 'http://127.0.0.1:8/embed', parent: mainFr },
+  };
+  assert(
+    ipcGuard.isAllowedIpc(panelSubSame, 'panel:languagetool-check'),
+    'same-origin subframe LT allowed'
+  );
   console.log('PASS: IPC guard rejects unknown frames');
+  console.log('PASS: IPC main-frame / LT same-origin policy');
 
   clearModuleMatch(/\/src\/main\/permissions/);
   installElectronStub({ tempDir: tempRoot, userData });
@@ -404,7 +432,78 @@ async function runNodeChecks() {
   }
 }
 
-function runElectronPhase() {
+/**
+ * Dois servidores locais (portas distintas = origens distintas) para
+ * selftest de iframe cross-origin vs frame principal.
+ * @returns {Promise<{ close: () => Promise<void>, topUrl: string, frameUrl: string }>}
+ */
+function startIpcFrameServers() {
+  let frameUrl = '';
+  const frameServer = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html><html><body>
+<script>
+window.__mhFrameProbe = {
+  hasAi: typeof window.__mhAi === 'function' || !!(window.__mhAi && window.__mhAi.open),
+  hasMedia: typeof window.__mhMediaUseReport === 'function',
+  hasLtForce: !!(window.__mhLt && typeof window.__mhLt.forceCheck === 'function'),
+};
+try {
+  if (window.__mhMediaUseReport) window.__mhMediaUseReport({ microphone: true, camera: false });
+} catch (e) {}
+try {
+  if (window.__mhAi && window.__mhAi.open) window.__mhAi.open();
+} catch (e2) {}
+try {
+  if (window.parent) window.parent.postMessage({ type: 'mh-frame-ready', probe: window.__mhFrameProbe }, '*');
+} catch (e3) {}
+</script>
+frame</body></html>`);
+  });
+  const topServer = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`<!DOCTYPE html><html><body>
+<iframe id="xo" src="${frameUrl}"></iframe>
+<script>
+window.__mhTopReady = false;
+window.__mhFrameProbe = null;
+window.addEventListener('message', function (ev) {
+  if (ev && ev.data && ev.data.type === 'mh-frame-ready') {
+    window.__mhFrameProbe = ev.data.probe || null;
+    window.__mhTopReady = true;
+  }
+});
+window.__mhPage = {
+  ready: true,
+  hasAi: !!(window.__mhAi && window.__mhAi.open),
+  hasMedia: typeof window.__mhMediaUseReport === 'function',
+};
+</script>
+top</body></html>`);
+  });
+  return new Promise((resolve, reject) => {
+    frameServer.listen(0, '127.0.0.1', () => {
+      const fp = frameServer.address().port;
+      frameUrl = `http://127.0.0.1:${fp}/`;
+      topServer.listen(0, '127.0.0.1', () => {
+        const tp = topServer.address().port;
+        resolve({
+          topUrl: `http://127.0.0.1:${tp}/`,
+          frameUrl,
+          close: () =>
+            Promise.all([
+              new Promise((r) => frameServer.close(() => r())),
+              new Promise((r) => topServer.close(() => r())),
+            ]),
+        });
+      });
+    });
+    frameServer.on('error', reject);
+    topServer.on('error', reject);
+  });
+}
+
+function runElectronPhase(extraEnv) {
   return new Promise((resolve, reject) => {
     const userdata = fs.mkdtempSync(path.join(os.tmpdir(), 'multiheiz-sec-'));
     const env = {
@@ -412,6 +511,7 @@ function runElectronPhase() {
       MULTIHEIZ_USERDATA: userdata,
       MULTIHEIZ_SELFTEST: 'security',
       ELECTRON_ENABLE_LOGGING: '1',
+      ...(extraEnv || {}),
     };
     console.log('\n=== selftest:security electron ===');
     const child = spawn(electronBin, ['.'], {
@@ -450,7 +550,15 @@ function runElectronPhase() {
 
 async function main() {
   await runNodeChecks();
-  await runElectronPhase();
+  const frames = await startIpcFrameServers();
+  try {
+    await runElectronPhase({
+      MULTIHEIZ_SEC_TOP_URL: frames.topUrl,
+      MULTIHEIZ_SEC_FRAME_URL: frames.frameUrl,
+    });
+  } finally {
+    await frames.close();
+  }
   console.log('PASS: selftest:security complete');
   process.exit(0);
 }

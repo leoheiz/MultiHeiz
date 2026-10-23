@@ -20,6 +20,8 @@ const PANEL_CHANNELS = new Set([
   'multiheiz/ext-early-done',
   // Indicador mic/câmera (panel-preload → main)
   'panel:media-use',
+  // Zoom Ctrl+wheel (panel-preload → main)
+  'panel:ctrl-wheel',
   // Volume fino: bootstrap sync (fonte + ganho) do panel-preload
   'panel:volume-sync',
   // Corretor LanguageTool (panel-preload → main)
@@ -29,6 +31,20 @@ const PANEL_CHANNELS = new Set([
   // IA experimental (panel-preload → main)
   'panel:ai-sync',
   'panel:ai-open',
+]);
+
+/** Só frame principal (iframe cross-origin não chama). */
+const MAIN_FRAME_ONLY_CHANNELS = new Set([
+  'panel:ai-open',
+  'panel:media-use',
+  'panel:ctrl-wheel',
+]);
+
+/** LanguageTool: main frame ou subframe same-origin do top. */
+const LT_PANEL_CHANNELS = new Set([
+  'panel:languagetool-sync',
+  'panel:languagetool-check',
+  'panel:languagetool-matches',
 ]);
 
 const INDEX_HTML = path.resolve(__dirname, '..', 'renderer', 'index.html');
@@ -134,6 +150,51 @@ function isTrustedPanelEvent(event) {
 }
 
 /**
+ * Frame principal do WebContents (não iframe).
+ * @param {object} event
+ * @returns {boolean}
+ */
+function isMainFrameEvent(event) {
+  if (!event || !event.senderFrame) return false;
+  try {
+    const frame = event.senderFrame;
+    const sender = event.sender;
+    if (sender && sender.mainFrame && frame === sender.mainFrame) return true;
+    if (frame.parent == null) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/**
+ * Subframe com a mesma origem do frame principal.
+ * @param {object} event
+ * @returns {boolean}
+ */
+function isSameOriginAsMainFrame(event) {
+  if (!event || !event.senderFrame) return false;
+  try {
+    const frame = event.senderFrame;
+    let topUrl = '';
+    if (event.sender && event.sender.mainFrame) {
+      topUrl = event.sender.mainFrame.url || '';
+    } else {
+      let f = frame;
+      while (f && f.parent) f = f.parent;
+      topUrl = (f && f.url) || '';
+    }
+    if (!frame.url || !topUrl) return false;
+    const fo = new URL(frame.url).origin;
+    const to = new URL(topUrl).origin;
+    if (!fo || fo === 'null' || !to || to === 'null') return false;
+    return fo === to;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * @param {object} event
  * @param {string} channel
  * @returns {boolean}
@@ -141,7 +202,14 @@ function isTrustedPanelEvent(event) {
 function isAllowedIpc(event, channel) {
   const ch = String(channel || '');
   if (PANEL_CHANNELS.has(ch)) {
-    return isTrustedPanelEvent(event);
+    if (!isTrustedPanelEvent(event)) return false;
+    if (MAIN_FRAME_ONLY_CHANNELS.has(ch)) {
+      return isMainFrameEvent(event);
+    }
+    if (LT_PANEL_CHANNELS.has(ch)) {
+      return isMainFrameEvent(event) || isSameOriginAsMainFrame(event);
+    }
+    return true;
   }
   return isTrustedUiEvent(event);
 }
@@ -294,12 +362,16 @@ function resetRejectCountForTest() {
 
 module.exports = {
   PANEL_CHANNELS,
+  MAIN_FRAME_ONLY_CHANNELS,
+  LT_PANEL_CHANNELS,
   INDEX_HTML,
   POPOVER_HTML,
   isAppRendererUrl,
   getAppRendererFileUrl,
   isTrustedUiEvent,
   isTrustedPanelEvent,
+  isMainFrameEvent,
+  isSameOriginAsMainFrame,
   isAllowedIpc,
   isUiWebContents,
   configure,

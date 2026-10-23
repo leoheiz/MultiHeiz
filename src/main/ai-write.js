@@ -134,6 +134,8 @@ let forEachPanelWc = null;
 let getPanelWc = null;
 /** @type {(() => string|null) | null} */
 let getFocusedAccountId = null;
+/** @type {((wc: import('electron').WebContents) => string|null) | null} */
+let resolveAccountIdFromWebContents = null;
 /** @type {((accountId: string) => { x: number, y: number, width?: number, height?: number } | null) | null} */
 let getPanelViewBounds = null;
 /** @type {((opts: object) => Promise<object>|object) | null} */
@@ -941,6 +943,7 @@ function onSettingsChanged(settings) {
  *   forEachPanelWebContents?: (cb: (wc: import('electron').WebContents) => void) => void,
  *   getPanelWebContents?: (accountId: string) => import('electron').WebContents|null,
  *   getFocusedAccountId?: () => string|null,
+ *   resolveAccountIdFromWebContents?: (wc: import('electron').WebContents) => string|null,
  *   getPanelViewBounds?: (accountId: string) => { x: number, y: number, width?: number, height?: number } | null,
  *   showPopover?: (opts: object) => Promise<object>|object,
  *   hidePopover?: (reason?: string) => void,
@@ -953,6 +956,9 @@ function installAiWrite(opts = {}) {
   if (typeof opts.forEachPanelWebContents === 'function') forEachPanelWc = opts.forEachPanelWebContents;
   if (typeof opts.getPanelWebContents === 'function') getPanelWc = opts.getPanelWebContents;
   if (typeof opts.getFocusedAccountId === 'function') getFocusedAccountId = opts.getFocusedAccountId;
+  if (typeof opts.resolveAccountIdFromWebContents === 'function') {
+    resolveAccountIdFromWebContents = opts.resolveAccountIdFromWebContents;
+  }
   if (typeof opts.getPanelViewBounds === 'function') getPanelViewBounds = opts.getPanelViewBounds;
   if (typeof opts.showPopover === 'function') showPopoverFn = opts.showPopover;
   if (typeof opts.hidePopover === 'function') hidePopoverFn = opts.hidePopover;
@@ -971,7 +977,15 @@ function installAiWrite(opts = {}) {
 
   ipcMain.handle('panel:ai-open', async (event) => {
     const wc = event && event.sender;
-    return openFromFocused({ webContents: wc });
+    let accountId = null;
+    if (typeof resolveAccountIdFromWebContents === 'function' && wc) {
+      try {
+        accountId = resolveAccountIdFromWebContents(wc);
+      } catch {
+        accountId = null;
+      }
+    }
+    return openFromFocused({ webContents: wc, accountId: accountId || undefined });
   });
 
   ipcMain.handle('ai:get-public', async () => publicMeta(currentConfig()));

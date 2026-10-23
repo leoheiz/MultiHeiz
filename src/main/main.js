@@ -6316,6 +6316,7 @@ app.whenReady().then(async () => {
       },
       getPanelWebContents: (id) => panels.getPanelCapture(id),
       getFocusedAccountId: () => panels.getFocusedAccountId && panels.getFocusedAccountId(),
+      resolveAccountIdFromWebContents: (wc) => panels.accountIdForWebContents(wc),
       getPanelViewBounds: (id) => {
         try {
           const info = panels.getPanelDebugInfo && panels.getPanelDebugInfo();

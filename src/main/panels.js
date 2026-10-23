@@ -1,8 +1,9 @@
 'use strict';
 
 const path = require('node:path');
-const { WebContentsView, BrowserWindow, session, shell, dialog } = require('electron');
+const { app, WebContentsView, BrowserWindow, session, shell, dialog, ipcMain } = require('electron');
 const { getState, updateState } = require('./state');
+const ipcGuard = require('./ipc-guard');
 const { resolveNavigateUrl } = require('./search-url');
 const {
   classifyScheme,
@@ -236,6 +237,28 @@ const RETRYABLE_CODES = new Set([
  * @param {(payload: object) => void} emit
  * @param {{ getPublicState?: () => object }} [opts]
  */
+let ctrlWheelIpcInstalled = false;
+
+function installCtrlWheelIpc() {
+  if (ctrlWheelIpcInstalled) return;
+  ctrlWheelIpcInstalled = true;
+  // Canal em PANEL_CHANNELS + mainFrameOnly (ipc-guard).
+  ipcMain.on('panel:ctrl-wheel', (event, data) => {
+    try {
+      const wc = event && event.sender;
+      const accountId = accountIdForWebContents(wc);
+      if (!accountId) return;
+      const deltaY = data && typeof data.deltaY === 'number' ? data.deltaY : 0;
+      const step = deltaY < 0 ? 0.1 : deltaY > 0 ? -0.1 : 0;
+      if (step === 0) return;
+      setFocusedAccount(accountId);
+      panelZoom(accountId, step);
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
 function initPanels(win, emit, opts) {
   mainWindow = win;
   emitToRenderer = emit;
@@ -246,6 +269,7 @@ function initPanels(win, emit, opts) {
     resolveAccountIdFromWebContents: accountIdForWebContents,
     getAccount,
   });
+  installCtrlWheelIpc();
 }
 
 /**
@@ -777,10 +801,27 @@ function trackLoginPopup(accountId, frameName, win) {
 }
 
 /**
+ * Flag para o preload expor APIs só de selftest (forceCheck/openOn/getDiag).
+ * Só em unpackaged + MULTIHEIZ_SELFTEST.
+ * @returns {string[]}
+ */
+function panelSelftestAdditionalArguments() {
+  try {
+    if (process.env.MULTIHEIZ_SELFTEST && app && !app.isPackaged) {
+      return ['--mh-selftest-apis=1'];
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+/**
  * BrowserWindow options for GIS/OAuth popups (same partition as the panel).
  * @param {Electron.Session} ses
  */
 function loginPopupBrowserOptions(ses) {
+  const extra = panelSelftestAdditionalArguments();
   return {
     width: 520,
     height: 720,
@@ -796,6 +837,7 @@ function loginPopupBrowserOptions(ses) {
       nodeIntegrationInSubFrames: true,
       preload: PANEL_PRELOAD,
       backgroundThrottling: false,
+      ...(extra.length ? { additionalArguments: extra } : {}),
     },
   };
 }
@@ -1153,6 +1195,7 @@ function createPanel(accountId) {
   } catch {
     /* ignore */
   }
+  const selftestArgs = panelSelftestAdditionalArguments();
   const view = new WebContentsView({
     webPreferences: {
       session: ses,
@@ -1164,6 +1207,7 @@ function createPanel(accountId) {
       preload: PANEL_PRELOAD,
       // Runtime control via setBackgroundThrottling / applyThrottlingTo
       backgroundThrottling: true,
+      ...(selftestArgs.length ? { additionalArguments: selftestArgs } : {}),
     },
   });
 
@@ -1439,36 +1483,27 @@ function createPanel(accountId) {
       /* ignore */
     }
   });
-  view.webContents.on('ipc-message', (_e, channel, data) => {
-    if (channel === 'panel:ctrl-wheel') {
-      const deltaY = data && typeof data.deltaY === 'number' ? data.deltaY : 0;
-      // wheel up (negative deltaY) = zoom in
-      const step = deltaY < 0 ? 0.1 : deltaY > 0 ? -0.1 : 0;
-      if (step !== 0) {
-        setFocusedAccount(accountId);
-        panelZoom(accountId, step);
-      }
+  view.webContents.on('ipc-message', (e, channel, data) => {
+    // ctrl-wheel / media-use: ipcMain + ipc-guard (main-frame). Não tratar aqui.
+    if (channel === 'panel:ctrl-wheel' || channel === 'panel:media-use') {
       return;
     }
     if (channel === 'panel:fps' && data && typeof data.fps === 'number') {
+      // FPS só do frame principal (evita iframe de selftest/profile poluir).
+      try {
+        const frame = e && e.senderFrame;
+        const mainFr = view.webContents.mainFrame;
+        if (frame && mainFr && frame !== mainFr) return;
+        if (frame && frame.parent != null) return;
+      } catch {
+        return;
+      }
       panelFps.set(accountId, data.fps);
       emitToRenderer({
         type: 'panel:fps',
         accountId,
         fps: data.fps,
       });
-      return;
-    }
-    // Indicador mic/câmera: panel-preload observa getUserMedia (sem evento media-access no Electron 44).
-    if (channel === 'panel:media-use' && data && typeof data === 'object') {
-      try {
-        permissions.setMediaInUse(accountId, {
-          microphone: !!data.microphone,
-          camera: !!data.camera,
-        });
-      } catch {
-        /* ignore */
-      }
     }
   });
   view.webContents.on('focus', () => {

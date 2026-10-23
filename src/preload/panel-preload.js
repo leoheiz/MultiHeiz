@@ -8,6 +8,33 @@
 
 const { ipcRenderer, contextBridge } = require('electron');
 
+/** Só frame de topo (não expor pontes de UI em iframes). */
+function isTopFrame() {
+  try {
+    return window === window.top;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * APIs de selftest (forceCheck/openOn/getDiag): exige MULTIHEIZ_SELFTEST +
+ * --mh-selftest-apis=1 (main só passa se !app.isPackaged).
+ */
+function allowSelftestApis() {
+  try {
+    if (!process.env.MULTIHEIZ_SELFTEST) return false;
+    const argv = process.argv || [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = String(argv[i] || '');
+      if (a === '--mh-selftest-apis' || a === '--mh-selftest-apis=1') return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 /**
  * Trusted-Types-safe UA/CH patch: apply structured data via a native function
  * (no new Function / <script> — Google accounts.google.com blocks those).
@@ -359,6 +386,7 @@ injectEarlySync();
  * O main world é recriado a cada navegação — reaplicamos o hook cedo (preload + rehook).
  */
 (function installMediaUseObserver() {
+  if (!isTopFrame()) return;
   try {
     contextBridge.exposeInMainWorld('__mhMediaUseReport', (payload) => {
       try {
@@ -1028,10 +1056,20 @@ injectEarlySync();
   }
 
   try {
-    contextBridge.exposeInMainWorld('__mhLt', {
+    /** @type {Record<string, unknown>} */
+    const ltApi = {
       applyReplacement: (offset, length, replacement) =>
         applyTextReplacement(activeEl, offset, length, replacement),
-      getDiag: () => ({
+      applyFirstSuggestion: () => {
+        if (!lastResult || !lastResult.matches || !lastResult.matches.length) return false;
+        const m = lastResult.matches[0];
+        const r = m.replacements && m.replacements[0];
+        if (!r) return false;
+        return applyTextReplacement(activeEl, m.offset, m.length, r);
+      },
+    };
+    if (allowSelftestApis()) {
+      ltApi.getDiag = () => ({
         enabled: !!(cfg && cfg.enabled),
         originDisabled: isOriginDisabled(),
         checksSent,
@@ -1041,9 +1079,9 @@ injectEarlySync();
         lastText: lastResult ? lastResult.text : '',
         hasOverlay: !!(overlayRoot && overlayRoot.childNodes && overlayRoot.childNodes.length),
         suggestOpen: !!suggestBox,
-      }),
+      });
       /** Selftest: força verificação imediata (sem debounce). */
-      forceCheck: async (sel) => {
+      ltApi.forceCheck = async (sel) => {
         const el = sel ? document.querySelector(sel) : activeEl || document.activeElement;
         if (!el) return { ok: false };
         activeEl = el;
@@ -1069,15 +1107,9 @@ injectEarlySync();
             hasOverlay: !!(overlayRoot && overlayRoot.childNodes && overlayRoot.childNodes.length),
           },
         };
-      },
-      applyFirstSuggestion: () => {
-        if (!lastResult || !lastResult.matches || !lastResult.matches.length) return false;
-        const m = lastResult.matches[0];
-        const r = m.replacements && m.replacements[0];
-        if (!r) return false;
-        return applyTextReplacement(activeEl, m.offset, m.length, r);
-      },
-    });
+      };
+    }
+    contextBridge.exposeInMainWorld('__mhLt', ltApi);
   } catch {
     /* ignore */
   }
@@ -1271,64 +1303,74 @@ injectEarlySync();
     /* ignore */
   }
 
-  try {
-    document.addEventListener(
-      'keydown',
-      (e) => {
-        if (!cfg.enabled) return;
-        const space = e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
-        if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || !space) return;
-        e.preventDefault();
-        e.stopPropagation();
-        void openAi();
-      },
-      true
-    );
-  } catch {
-    /* ignore */
+  if (isTopFrame()) {
+    try {
+      document.addEventListener(
+        'keydown',
+        (e) => {
+          if (!cfg.enabled) return;
+          const space = e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar';
+          if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || !space) return;
+          e.preventDefault();
+          e.stopPropagation();
+          void openAi();
+        },
+        true
+      );
+    } catch {
+      /* ignore */
+    }
   }
 
-  try {
-    contextBridge.exposeInMainWorld('__mhAi', {
-      readActive,
-      applyText,
-      open: openAi,
-      getDiag: () => ({
-        enabled: !!cfg.enabled,
-        openCount,
-        blockedCount,
-      }),
-      /** Selftest: foca seletor e abre. */
-      openOn: async (sel) => {
-        const el = sel ? document.querySelector(sel) : document.activeElement;
-        if (el && typeof el.focus === 'function') el.focus();
-        return openAi();
-      },
-      isBlocked: (sel) => {
-        const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
-        return isBlocked(el);
-      },
-    });
-  } catch {
-    /* ignore */
+  if (isTopFrame()) {
+    try {
+      /** @type {Record<string, unknown>} */
+      const aiApi = {
+        readActive,
+        applyText,
+        open: openAi,
+        isBlocked: (sel) => {
+          const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+          return isBlocked(el);
+        },
+      };
+      if (allowSelftestApis()) {
+        aiApi.getDiag = () => ({
+          enabled: !!cfg.enabled,
+          openCount,
+          blockedCount,
+        });
+        /** Selftest: foca seletor e abre. */
+        aiApi.openOn = async (sel) => {
+          const el = sel ? document.querySelector(sel) : document.activeElement;
+          if (el && typeof el.focus === 'function') el.focus();
+          return openAi();
+        };
+      }
+      contextBridge.exposeInMainWorld('__mhAi', aiApi);
+    } catch {
+      /* ignore */
+    }
   }
 })();
 
 /** Ctrl+wheel zoom — preventDefault so page pinch-zoom does not double-apply. */
 try {
-  window.addEventListener(
-    'wheel',
-    (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      try {
-        ipcRenderer.send('panel:ctrl-wheel', { deltaY: e.deltaY });
-      } catch {
-        /* ignore */
-      }
-    },
-    { passive: false, capture: true }
-  );
+  if (isTopFrame()) {
+    window.addEventListener(
+      'wheel',
+      (e) => {
+        if (!e.ctrlKey && !e.metaKey) return;
+        e.preventDefault();
+        try {
+          ipcRenderer.send('panel:ctrl-wheel', { deltaY: e.deltaY });
+        } catch {
+          /* ignore */
+        }
+      },
+      { passive: false, capture: true }
+    );
+  }
 } catch {
   /* ignore */
 }

@@ -133,6 +133,21 @@ async function runSecuritySelftest(ctx) {
     ipcGuard.isAllowedIpc(panelEvent, '@ghostery/adblocker/early-scriptlets'),
     'panel may call adblock early channel'
   );
+  assert(ipcGuard.isAllowedIpc(panelEvent, 'panel:ai-open'), 'main frame may panel:ai-open');
+  assert(ipcGuard.isAllowedIpc(panelEvent, 'panel:media-use'), 'main frame may panel:media-use');
+  assert(ipcGuard.isAllowedIpc(panelEvent, 'panel:ctrl-wheel'), 'main frame may panel:ctrl-wheel');
+
+  const subframeTrusted = {
+    sender: wc,
+    senderFrame: {
+      url: 'http://127.0.0.1:9/',
+      parent: panelFrame || { url: 'http://127.0.0.1:8/' },
+    },
+  };
+  assert(!ipcGuard.isMainFrameEvent(subframeTrusted), 'subframe is not main');
+  assert(!ipcGuard.isAllowedIpc(subframeTrusted, 'panel:ai-open'), 'subframe cannot panel:ai-open');
+  assert(!ipcGuard.isAllowedIpc(subframeTrusted, 'panel:media-use'), 'subframe cannot panel:media-use');
+  assert(!ipcGuard.isAllowedIpc(subframeTrusted, 'panel:ctrl-wheel'), 'subframe cannot panel:ctrl-wheel');
 
   const uiFrame = mainWindow.webContents.mainFrame;
   const uiEvent = { sender: mainWindow.webContents, senderFrame: uiFrame };
@@ -145,6 +160,7 @@ async function runSecuritySelftest(ctx) {
   };
   assert(!ipcGuard.isAllowedIpc(unknownEvent, 'state:get'), 'missing senderFrame rejected');
   console.log('PASS: IPC guard rejects unknown/panel-for-UI frames');
+  console.log('PASS: IPC main-frame-only for ai-open/media-use/ctrl-wheel');
 
   // --- Permissions: no auto-grant for geo/media; usb/hid/serial denied ---
   permissions.clearDecisionsForTest();
@@ -184,6 +200,64 @@ async function runSecuritySelftest(ctx) {
   const ses = require('electron').session.fromPartition(panels.partitionFor('acc-sec-a'));
   assert(typeof ses.setPermissionRequestHandler === 'function', 'session permission API');
   console.log('PASS: session permission handlers attached');
+
+  // --- iframe cross-origin: pontes de UI só no top; IPC de subframe ignorado ---
+  const topUrl = process.env.MULTIHEIZ_SEC_TOP_URL || '';
+  if (topUrl && topUrl.startsWith('http://127.0.0.1')) {
+    permissions.clearMediaInUse('acc-sec-a');
+    ipcGuard.resetRejectCountForTest();
+    const rejectsBefore = ipcGuard.getRejectCount();
+    await wc.loadURL(topUrl).catch(() => {});
+    await sleep(1200);
+    let topProbe = null;
+    for (let i = 0; i < 20; i++) {
+      topProbe = await wc
+        .executeJavaScript(
+          `(function(){
+            return {
+              ready: !!(window.__mhPage && window.__mhPage.ready),
+              hasAi: !!(window.__mhAi && window.__mhAi.open),
+              hasMedia: typeof window.__mhMediaUseReport === 'function',
+              frameProbe: window.__mhFrameProbe,
+              topReady: !!window.__mhTopReady,
+            };
+          })()`
+        )
+        .catch(() => null);
+      if (topProbe && topProbe.ready && topProbe.topReady) break;
+      await sleep(200);
+    }
+    assert(topProbe && topProbe.ready, 'top page loaded');
+    assert(topProbe.hasAi, 'top has __mhAi');
+    assert(topProbe.hasMedia, 'top has __mhMediaUseReport');
+    assert(topProbe.frameProbe, 'iframe posted probe');
+    assert(!topProbe.frameProbe.hasAi, 'iframe must not expose __mhAi');
+    assert(!topProbe.frameProbe.hasMedia, 'iframe must not expose __mhMediaUseReport');
+    await sleep(400);
+    const media = permissions.getMediaInUse('acc-sec-a');
+    assert(!media.microphone && !media.camera, 'iframe media-use ignored');
+    // Main frame still works
+    await wc
+      .executeJavaScript(
+        `(function(){
+          if (typeof window.__mhMediaUseReport === 'function') {
+            window.__mhMediaUseReport({ microphone: true, camera: false });
+          }
+          return true;
+        })()`
+      )
+      .catch(() => {});
+    await sleep(300);
+    const media2 = permissions.getMediaInUse('acc-sec-a');
+    assert(media2.microphone === true, 'main frame media-use works');
+    console.log(
+      'PASS: iframe cross-origin bridges hidden; media-use main-only',
+      'rejectsΔ=',
+      ipcGuard.getRejectCount() - rejectsBefore
+    );
+  } else {
+    console.log('SKIP: iframe IPC frames (no MULTIHEIZ_SEC_TOP_URL)');
+  }
 
   console.log('PASS: selftest:security electron complete');
   require('electron').app.exit(0);
