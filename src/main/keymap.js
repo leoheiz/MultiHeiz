@@ -295,8 +295,25 @@ function normalizeComboString(combo) {
       key = 'Home';
     } else if (low === 'end') {
       key = 'End';
-    } else if (/^f([1-9]|1[0-2])$/i.test(p)) {
+    } else if (low === 'insert') {
+      key = 'Insert';
+    } else if (low === 'delete' || low === 'del') {
+      key = 'Delete';
+    } else if (low === 'pause' || low === 'break') {
+      key = 'Pause';
+    } else if (low === 'scrolllock' || low === 'scroll') {
+      key = 'ScrollLock';
+    } else if (low === 'printscreen') {
+      key = 'PrintScreen';
+    } else if (low === 'pageup') {
+      key = 'PageUp';
+    } else if (low === 'pagedown') {
+      key = 'PageDown';
+    } else if (/^f([1-9]|1[0-9]|2[0-4])$/i.test(p)) {
       key = p.toUpperCase();
+    } else if (/^numpad/i.test(p)) {
+      key = p.charAt(0).toUpperCase() + p.slice(1);
+      if (key.startsWith('numpad')) key = 'Numpad' + key.slice(6);
     } else if (p.length === 1) {
       key = p.toUpperCase();
     } else {
@@ -332,12 +349,36 @@ function parseCombo(combo) {
 }
 
 /**
+ * Keys Electron's Menu accelerator parser rejects (panel before-input still works).
+ * @param {string} key
+ * @returns {boolean}
+ */
+function isMenuUnsupportedKey(key) {
+  const k = String(key || '');
+  if (!k) return true;
+  if (/^Numpad/i.test(k)) return true;
+  if (/^F(1[3-9]|2[0-4])$/i.test(k)) return true;
+  return (
+    k === 'Pause' ||
+    k === 'ScrollLock' ||
+    k === 'Insert' ||
+    k === 'Delete' ||
+    k === 'PrintScreen' ||
+    k === 'PageUp' ||
+    k === 'PageDown'
+  );
+}
+
+/**
  * Electron Menu accelerator (CmdOrCtrl on mac-friendly builds).
+ * Returns empty string when the key cannot be bound on the application menu
+ * (custom shortcuts still match via panel before-input-event).
  * @param {string} combo
  * @returns {string}
  */
 function comboToAccelerator(combo) {
   const p = parseCombo(combo);
+  if (isMenuUnsupportedKey(p.key)) return '';
   const bits = [];
   if (p.ctrl) bits.push('CmdOrCtrl');
   if (p.alt) bits.push('Alt');
@@ -372,7 +413,12 @@ function inputKeyName(input) {
   if (raw === 'ArrowRight') return 'Right';
   if (raw === 'ArrowUp') return 'Up';
   if (raw === 'ArrowDown') return 'Down';
-  if (/^f([1-9]|1[0-2])$/i.test(raw)) return raw.toUpperCase();
+  if (/^f([1-9]|1[0-9]|2[0-4])$/i.test(raw)) return raw.toUpperCase();
+  if (raw === 'Scroll' || raw === 'ScrollLock') return 'ScrollLock';
+  if (raw === 'Pause' || raw === 'Break') return 'Pause';
+  if (/^Numpad/i.test(raw)) {
+    return 'Numpad' + raw.slice(6);
+  }
   if (raw.length === 1) return raw.toUpperCase();
   return raw;
 }
@@ -602,6 +648,7 @@ module.exports = {
   normalizeComboString,
   parseCombo,
   comboToAccelerator,
+  isMenuUnsupportedKey,
   inputKeyName,
   inputMatchesCombo,
   resolveShortcut,

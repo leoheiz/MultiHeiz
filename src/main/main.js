@@ -311,6 +311,7 @@ const SELFTEST_DIAGNOSTICS = selftestMode === 'diagnostics';
 const SELFTEST_SHARED_SESSION = selftestMode === 'shared-session';
 const SELFTEST_SUSPEND = selftestMode === 'suspend';
 const SELFTEST_SHORTCUTS = selftestMode === 'shortcuts';
+const SELFTEST_SHORTCUT_CUSTOM = selftestMode === 'shortcut-custom';
 const SELFTEST_MINIMIZE_RESTORE = selftestMode === 'minimize-restore';
 const ANY_SELFTEST =
   SELFTEST ||
@@ -384,6 +385,7 @@ const ANY_SELFTEST =
   SELFTEST_SHARED_SESSION ||
   SELFTEST_SUSPEND ||
   SELFTEST_SHORTCUTS ||
+  SELFTEST_SHORTCUT_CUSTOM ||
   SELFTEST_MINIMIZE_RESTORE;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
@@ -490,7 +492,8 @@ function menuAccel(id) {
   const ks = (getState().settings && getState().settings.keyboardShortcuts) || null;
   const r = keymap.resolveShortcut(ks, id);
   if (r.disabled || !r.combo) return undefined;
-  return keymap.comboToAccelerator(r.combo);
+  const accel = keymap.comboToAccelerator(r.combo);
+  return accel || undefined;
 }
 
 function setupApplicationMenu() {
@@ -736,6 +739,7 @@ function createWindow() {
     SELFTEST_REALHOVER_FULLSCREEN ||
     SELFTEST_CONTEXTMENU ||
     SELFTEST_SHORTCUTS ||
+    SELFTEST_SHORTCUT_CUSTOM ||
     SELFTEST_MINIMIZE_RESTORE ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
@@ -782,6 +786,7 @@ function createWindow() {
     SELFTEST_ADBLOCK_REAL ||
     SELFTEST_SIDEBAR ||
     SELFTEST_MINIMIZE_RESTORE ||
+    SELFTEST_SHORTCUT_CUSTOM ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_WORKSPACE_DELETE ||
     SELFTEST_SHARED_SESSION ||
@@ -864,6 +869,7 @@ function createWindow() {
         SELFTEST_REALHOVER_FULLSCREEN ||
         SELFTEST_CONTEXTMENU ||
         SELFTEST_SHORTCUTS ||
+        SELFTEST_SHORTCUT_CUSTOM ||
         SELFTEST_MINIMIZE_RESTORE ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_SETTINGS_PERF ||
@@ -2057,6 +2063,34 @@ function createWindow() {
         try {
           const { runShortcutsSelftest } = require('./selftest-shortcuts');
           runShortcutsSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            panelShortcuts,
+            keymap,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_SHORTCUT_CUSTOM) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runShortcutCustomSelftest } = require('./selftest-shortcut-custom');
+          runShortcutCustomSelftest({
             mainWindow,
             panels,
             getState,

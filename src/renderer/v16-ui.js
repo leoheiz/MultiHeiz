@@ -2838,18 +2838,35 @@
       if (e.altKey) parts.push('Alt');
       if (e.shiftKey) parts.push('Shift');
       let key = e.key;
+      const code = String(e.code || '');
       if (key === ' ') key = 'Space';
       else if (key === 'Escape') key = 'Escape';
       else if (key === 'ArrowLeft') key = 'Left';
       else if (key === 'ArrowRight') key = 'Right';
       else if (key === 'ArrowUp') key = 'Up';
       else if (key === 'ArrowDown') key = 'Down';
-      else if (key === '+' || key === 'Add') key = 'Plus';
+      else if (key === '+' || key === 'Add' || code === 'NumpadAdd') key = 'Plus';
       else if (key === '=' ) key = '=';
+      else if (key === '-' || key === 'Subtract' || code === 'NumpadSubtract') key = '-';
       else if (key.length === 1) key = key.toUpperCase();
-      else if (/^f\d{1,2}$/i.test(key)) key = key.toUpperCase();
-      else if (key === 'Home' || key === 'End') {
-        /* keep */
+      else if (/^f([1-9]|1[0-9]|2[0-4])$/i.test(key)) key = key.toUpperCase();
+      else if (
+        key === 'Home' ||
+        key === 'End' ||
+        key === 'Insert' ||
+        key === 'Delete' ||
+        key === 'Pause' ||
+        key === 'ScrollLock' ||
+        key === 'PrintScreen' ||
+        key === 'PageUp' ||
+        key === 'PageDown'
+      ) {
+        /* keep named keys */
+      } else if (/^Numpad/i.test(code)) {
+        // Prefer KeyboardEvent.code for numpad so Numpad1 ≠ Digit1
+        key = code;
+      } else if (/^Numpad/i.test(key)) {
+        key = key;
       } else {
         return null;
       }

@@ -133,6 +133,19 @@ function isNavigableUrl(url, opts = {}) {
 }
 
 /**
+ * view-source: of an http(s) page — allowed for "Ver código-fonte" in-panel loads.
+ * Still classified blocked / not navigable for address-bar / open-in-new-panel policy.
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isViewSourceOfHttpUrl(url) {
+  const s = String(url || '');
+  if (!/^view-source:/i.test(s)) return false;
+  const inner = s.replace(/^view-source:/i, '');
+  return isNavigableUrl(inner);
+}
+
+/**
  * Selftests catalog/badges: não acessar a internet real — só loopback / data / about:blank.
  * @returns {boolean}
  */
@@ -349,6 +362,7 @@ function isKnownIdentityProviderUrl(url) {
 module.exports = {
   classifyScheme,
   isNavigableUrl,
+  isViewSourceOfHttpUrl,
   allowInternalDataUrls,
   sanitizeUserStartUrl,
   validateAndNormalizeStartUrl,

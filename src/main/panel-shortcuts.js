@@ -163,16 +163,10 @@ function panelViewSource(accountId) {
   }
   if (!url || url === 'about:blank') return;
   if (/^view-source:/i.test(url)) return;
+  // Only http(s) pages have a useful view-source; openUrlInNewPanel rejects the scheme.
+  if (!/^https?:\/\//i.test(url)) return;
   const src = 'view-source:' + url;
   noteAction('viewSource', accountId, { url: src });
-  if (panelsApi && typeof panelsApi.openUrlInNewPanel === 'function') {
-    try {
-      panelsApi.openUrlInNewPanel(accountId, src);
-      return;
-    } catch {
-      /* fall through */
-    }
-  }
   try {
     wc.loadURL(src).catch(() => {});
   } catch {

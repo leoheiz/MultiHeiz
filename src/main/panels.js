@@ -7,6 +7,7 @@ const { resolveNavigateUrl } = require('./search-url');
 const {
   classifyScheme,
   isNavigableUrl,
+  isViewSourceOfHttpUrl,
   allowInternalDataUrls,
   isKnownIdentityProviderUrl,
   isAboutBlank,
@@ -1719,7 +1720,11 @@ function createPanel(accountId) {
       typeof url === 'string' &&
       url.startsWith('data:text/html') &&
       url.includes('cert-error-page');
-    if (!isCertErrorData && !isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
+    if (
+      !isCertErrorData &&
+      !isNavigableUrl(url, { allowData: allowInternalDataUrls() }) &&
+      !isViewSourceOfHttpUrl(url)
+    ) {
       e.preventDefault();
       return;
     }
@@ -1741,7 +1746,11 @@ function createPanel(accountId) {
       typeof url === 'string' &&
       url.startsWith('data:text/html') &&
       url.includes('cert-error-page');
-    if (!isCertErrorData && !isNavigableUrl(url, { allowData: allowInternalDataUrls() })) {
+    if (
+      !isCertErrorData &&
+      !isNavigableUrl(url, { allowData: allowInternalDataUrls() }) &&
+      !isViewSourceOfHttpUrl(url)
+    ) {
       e.preventDefault();
       return;
     }
