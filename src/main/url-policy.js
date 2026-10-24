@@ -146,12 +146,12 @@ function isViewSourceOfHttpUrl(url) {
 }
 
 /**
- * Selftests catalog/badges: não acessar a internet real — só loopback / data / about:blank.
+ * Selftests catalog/badges/start-page/newwindow-start: não acessar a internet real — só loopback / data / about:blank.
  * @returns {boolean}
  */
 function isSelftestOfflineMode() {
   const m = String(process.env.MULTIHEIZ_SELFTEST || '');
-  return m === 'catalog' || m === 'badges';
+  return m === 'catalog' || m === 'badges' || m === 'start-page' || m === 'newwindow-start';
 }
 
 /**

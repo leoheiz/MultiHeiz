@@ -331,6 +331,7 @@ const SELFTEST_LINK_NEWWINDOW = selftestMode === 'link-newwindow';
 const SELFTEST_APP_MENU = selftestMode === 'app-menu';
 const SELFTEST_CLOSE_LAST = selftestMode === 'close-last';
 const SELFTEST_START_PAGE = selftestMode === 'start-page';
+const SELFTEST_NEWWINDOW_START = selftestMode === 'newwindow-start';
 const SELFTEST_WINDOW_MENU = selftestMode === 'window-menu';
 const SELFTEST_POPOVER_SCROLL = selftestMode === 'popover-scroll';
 const SELFTEST_LAYOUT = selftestMode === 'layout';
@@ -423,6 +424,7 @@ const ANY_SELFTEST =
   SELFTEST_APP_MENU ||
   SELFTEST_CLOSE_LAST ||
   SELFTEST_START_PAGE ||
+  SELFTEST_NEWWINDOW_START ||
   SELFTEST_WINDOW_MENU ||
   SELFTEST_POPOVER_SCROLL ||
   SELFTEST_LAYOUT ||
@@ -815,6 +817,7 @@ function createWindow() {
     SELFTEST_APP_MENU ||
     SELFTEST_CLOSE_LAST ||
     SELFTEST_START_PAGE ||
+    SELFTEST_NEWWINDOW_START ||
     SELFTEST_WINDOW_MENU ||
     SELFTEST_POPOVER_SCROLL ||
     SELFTEST_LAYOUT ||
@@ -879,6 +882,7 @@ function createWindow() {
     SELFTEST_APP_MENU ||
     SELFTEST_CLOSE_LAST ||
     SELFTEST_START_PAGE ||
+    SELFTEST_NEWWINDOW_START ||
     SELFTEST_WINDOW_MENU ||
     SELFTEST_POPOVER_SCROLL ||
     SELFTEST_LAYOUT ||
@@ -981,6 +985,7 @@ function createWindow() {
         SELFTEST_APP_MENU ||
         SELFTEST_CLOSE_LAST ||
         SELFTEST_START_PAGE ||
+        SELFTEST_NEWWINDOW_START ||
         SELFTEST_WINDOW_MENU ||
         SELFTEST_POPOVER_SCROLL ||
         SELFTEST_LAYOUT ||
@@ -2551,6 +2556,32 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_NEWWINDOW_START) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runNewWindowStartSelftest } = require('./selftest-newwindow-start');
+          runNewWindowStartSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_WINDOW_MENU) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -3541,6 +3572,10 @@ function publicState() {
     appearance: s.appearance,
     freeTiles: s.freeTiles || {},
     startPageByWorkspace: s.startPageByWorkspace || {},
+    customStartApps: Array.isArray(s.customStartApps) ? s.customStartApps : [],
+    startPageHiddenCatalogApps: Array.isArray(s.startPageHiddenCatalogApps)
+      ? s.startPageHiddenCatalogApps
+      : [],
     autostart: autostart.getStatus(),
   };
 }
@@ -4393,7 +4428,14 @@ function registerIpc() {
   ipcMain.handle('start-page:get', (_e, workspaceId) => {
     const s = getState();
     const wsId = workspaceId || s.activeWorkspaceId;
-    return startPage.getData({ workspaceId: wsId, state: s });
+    if (startPage.needsMigration(s)) {
+      // Legacy per-area custom tiles → global Apps (once), then persist.
+      updateState((st) => {
+        startPage.migrateCustomTiles(st);
+      });
+      flushSave();
+    }
+    return startPage.getData({ workspaceId: wsId, state: getState() });
   });
 
   ipcMain.handle('start-page:set', (_e, payload) => {
@@ -4409,23 +4451,95 @@ function registerIpc() {
     };
   });
 
+  /**
+   * Start page choice (URL typed / favorite / catalog app / custom app / most visited).
+   * - payload.accountId of a PENDING "Nova janela" → commit in place (same window).
+   * - otherwise → create a new window in payload.workspaceId (empty-area start page).
+   */
   ipcMain.handle('start-page:open', async (_e, payload) => {
     const { resolveNavigateUrl } = require('./search-url');
     const s = getState();
-    const raw = String((payload && payload.url) || '').trim();
+    const catalogId = payload && payload.catalogId ? String(payload.catalogId).trim() : '';
+    const catalogApp = catalogId ? catalog.getAppById(catalogId) : null;
+    const raw = catalogApp ? catalogApp.url : String((payload && payload.url) || '').trim();
     if (!raw) return { ok: false, error: 'Endereço vazio' };
     const resolved = resolveNavigateUrl(raw, s.settings || {});
     if (!resolved) return { ok: false, error: 'Endereço inválido' };
-    const title = String((payload && payload.title) || '').trim() || 'Janela';
-    const workspaceId = (payload && payload.workspaceId) || s.activeWorkspaceId;
+    let hostName = '';
+    try {
+      hostName = new URL(resolved).hostname.replace(/^www\./i, '');
+    } catch {
+      hostName = '';
+    }
+    const titleIn = String((payload && payload.title) || '').trim();
+    const workspaceIdIn = (payload && payload.workspaceId) || s.activeWorkspaceId;
+    const pendingId = payload && payload.accountId ? String(payload.accountId) : '';
+    const pending = pendingId
+      ? (s.accounts || []).find((a) => a && a.id === pendingId && a.pendingStartPage)
+      : null;
+
+    if (pending) {
+      const workspaceId = pending.workspaceId || workspaceIdIn;
+      const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
+      updateState((st) => {
+        const a = st.accounts.find((x) => x && x.id === pendingId);
+        if (!a) return;
+        delete a.pendingStartPage;
+        a.startUrl = resolved;
+        a.lastUrl = null;
+        if (catalogApp) {
+          const others = st.accounts.filter((x) => x && x.id !== pendingId);
+          a.name = catalog.uniqueNameInWorkspace(
+            catalogApp.defaultName || catalogApp.name,
+            others,
+            workspaceId
+          );
+          a.color = catalogApp.color || a.color;
+          a.catalogId = catalogApp.id;
+          a.catalogIcon = catalogApp.icon;
+        } else {
+          a.name = (titleIn || hostName || 'Janela').slice(0, 80);
+          if (!a.color) a.color = colors[st.accounts.length % colors.length];
+          delete a.catalogId;
+          delete a.catalogIcon;
+        }
+      });
+      flushSave();
+      try {
+        // Partition may have changed (area became "Navegador convencional"):
+        // drop any stale view; the layout sync recreates it with startUrl.
+        panels.rebindPanelSession(pendingId);
+      } catch {
+        /* ignore */
+      }
+      try {
+        adblock.attachAllAccountSessions();
+      } catch {
+        /* ignore */
+      }
+      const next = publicState();
+      const publicAccount = (next.accounts || []).find((a) => a.id === pendingId) || null;
+      emitToRenderer({ type: 'state:changed', state: next });
+      return { ok: true, committed: true, state: next, account: publicAccount };
+    }
+
+    const title = (catalogApp
+      ? catalogApp.defaultName || catalogApp.name
+      : titleIn || 'Janela'
+    ).slice(0, 80);
+    const workspaceId = workspaceIdIn;
     // Reuse account:create path via invoke-style call
     const created = await (async () => {
       const id = makeId('acc');
       const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
       const account = {
         id,
-        name: title.slice(0, 80),
-        color: colors[(s.accounts || []).length % colors.length],
+        name: catalogApp
+          ? catalog.uniqueNameInWorkspace(title, s.accounts, workspaceId)
+          : title,
+        color: catalogApp
+          ? catalogApp.color || colors[(s.accounts || []).length % colors.length]
+          : colors[(s.accounts || []).length % colors.length],
         startUrl: resolved,
         workspaceId,
         muted: false,
@@ -4440,6 +4554,10 @@ function registerIpc() {
         zoomFactor: 1,
         partitionId: id,
       };
+      if (catalogApp) {
+        account.catalogId = catalogApp.id;
+        account.catalogIcon = catalogApp.icon;
+      }
       const wsForAcc = (s.workspaces || []).find((w) => w && w.id === workspaceId);
       const wsConventional =
         wsForAcc &&
@@ -4605,6 +4723,9 @@ function registerIpc() {
     const workspaceId = (data && data.workspaceId) || s.activeWorkspaceId;
     const catalogId = data && data.catalogId ? String(data.catalogId).trim() : '';
     const catalogApp = catalogId ? catalog.getAppById(catalogId) : null;
+    // Nova janela → start page inside the panel; the real URL is chosen there
+    // (start-page:open commits it). No URL is needed and no WebContentsView is created.
+    const pendingStartPage = !!(data && data.pendingStartPage) && !catalogApp;
     let name = (data && data.name) || `Janela ${s.accounts.length + 1}`;
     let color = (data && data.color) || colors[s.accounts.length % colors.length];
     let startUrl = homepageFallback;
@@ -4620,6 +4741,13 @@ function registerIpc() {
       startUrl = catalogApp.url;
       catalogIcon = catalogApp.icon;
       // tweaks.userAgent: UA Chrome já é global — não aplica override por janela.
+    } else if (pendingStartPage) {
+      startUrl = 'about:blank';
+      name = catalog.uniqueNameInWorkspace(
+        (data && data.name) || 'Nova janela',
+        s.accounts,
+        workspaceId
+      );
     } else if (data && data.startUrl != null && String(data.startUrl).trim()) {
       const validated = validateAndNormalizeStartUrl(data.startUrl);
       if (!validated.ok) {
@@ -4669,6 +4797,7 @@ function registerIpc() {
       account.catalogId = catalogApp.id;
       account.catalogIcon = catalogIcon;
     }
+    if (pendingStartPage) account.pendingStartPage = true;
     updateState((st) => {
       st.accounts.push(account);
     });

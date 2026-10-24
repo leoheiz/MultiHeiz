@@ -43,7 +43,7 @@
         },
         {
           "tag": "Novo",
-          "text": "Ctrl+clique abre o link numa nova janela na mesma área."
+          "text": "Ctrl+clique abre o link numa nova janela na mesma área, com as mesmas configurações."
         },
         {
           "tag": "Novo",
@@ -51,7 +51,7 @@
         },
         {
           "tag": "Novo",
-          "text": "Monitor de memória na barra superior."
+          "text": "Monitor de memória na barra superior, com limpeza e suspensão de janelas no mesmo lugar."
         },
         {
           "tag": "Novo",
@@ -59,11 +59,15 @@
         },
         {
           "tag": "Novo",
-          "text": "Menu do app na logo."
+          "text": "Menu do app na logo, com todas as opções organizadas."
         },
         {
           "tag": "Novo",
           "text": "Página inicial nas áreas vazias, com favoritos e sites mais acessados."
+        },
+        {
+          "tag": "Novo",
+          "text": "Nova janela abre uma página inicial para escolher o app ou site."
         },
         {
           "tag": "Novo",
@@ -108,6 +112,10 @@
         {
           "tag": "Correção",
           "text": "O mini player mostra só o vídeo, não a página inteira."
+        },
+        {
+          "tag": "Correção",
+          "text": "O mini player continua o vídeo de onde estava."
         },
         {
           "tag": "Correção",

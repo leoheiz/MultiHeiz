@@ -120,7 +120,8 @@ function initV16(ctx) {
       const local = omnibox.suggest({
         query: String(o.query || ''),
         windowId: o.windowId || null,
-        accounts: (st && st.accounts) || [],
+        // A pending (not yet chosen) "Nova janela" has no real URL to suggest.
+        accounts: ((st && st.accounts) || []).filter((a) => a && !a.pendingStartPage),
         bookmarkItems: (bm && bm.items) || [],
         settings,
       });

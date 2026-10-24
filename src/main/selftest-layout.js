@@ -28,8 +28,42 @@ async function runLayoutSelftest(ctx) {
     }
   }
 
+  // Real-shaped fixtures in the THROWAWAY profile (never the user's profile):
+  // favorites bar with a loose item + a sub-folder, and history that only exists in
+  // OTHER areas' windows (the empty area must still show most-visited from it).
+  const bookmarks = require('./bookmarks');
+  const history = require('./history');
+  bookmarks.load();
+  bookmarks.addFavorite({
+    url: 'https://lay-fav.example/',
+    title: 'Lay Fav',
+    folderId: bookmarks.FOLDER_BAR,
+  });
+  const layFolder = bookmarks.createFolder('Pasta Lay', bookmarks.FOLDER_BAR);
+  bookmarks.addFavorite({
+    url: 'https://lay-in-folder.example/',
+    title: 'Lay In Folder',
+    folderId: layFolder.id,
+  });
+  bookmarks.flush();
+  history.load();
+  history.clearAll();
+  for (let i = 0; i < 10; i++) {
+    history.record({
+      url: `https://lay-other-${i}.example/`,
+      title: `Lay Other ${i}`,
+      favicon: '',
+      windowId: 'acc-lay-other',
+      windowName: 'Other area',
+    });
+  }
+  history.flush();
+
   updateState((s) => {
-    s.workspaces = [{ id: 'ws-lay', name: 'Lay' }];
+    s.workspaces = [
+      { id: 'ws-lay', name: 'Lay' },
+      { id: 'ws-lay-other', name: 'Other' },
+    ];
     s.activeWorkspaceId = 'ws-lay';
     s.layout = '2';
     s.page = 0;
@@ -40,6 +74,15 @@ async function runLayoutSelftest(ctx) {
         color: '#2bb8a6',
         startUrl: 'about:blank',
         workspaceId: 'ws-lay',
+        muted: false,
+        lastUrl: null,
+      },
+      {
+        id: 'acc-lay-other',
+        name: 'O',
+        color: '#3d8bfd',
+        startUrl: 'about:blank',
+        workspaceId: 'ws-lay-other',
         muted: false,
         lastUrl: null,
       },
@@ -89,7 +132,7 @@ async function runLayoutSelftest(ctx) {
 
       // Empty start page at this size
       updateState((s) => {
-        s.accounts = [];
+        s.accounts = (s.accounts || []).filter((a) => a && a.workspaceId !== 'ws-lay');
       });
       flushSave();
       emitToRenderer({ type: 'state:changed', state: publicState() });
@@ -103,6 +146,63 @@ async function runLayoutSelftest(ctx) {
       assert(start && start.w > 40 && start.h > 40, 'start page visible', start);
       assert(!start.ow, 'start page no horizontal overflow', start);
 
+      // Wait for async data paint, then check the Apps / favorites / most-visited layout.
+      let info = null;
+      for (let i = 0; i < 30; i++) {
+        info = await rendererEval(`window.__multiheizUi.getStartPageInfo()`);
+        if (info && info.present && info.apps && info.apps.length && info.mvTiles) break;
+        await sleep(100);
+      }
+      const tag = ' at ' + w + 'x' + h + ' z=' + z;
+      assert(info && info.present && info.mode === 'workspace', 'workspace start page' + tag, info);
+      assert(!info.appsSectionHidden && info.appsTitle === 'Apps', 'Apps section visible' + tag, info);
+      assert(info.apps.length >= 3 && info.hasAddCustom, 'Apps tiles + custom tile' + tag, info);
+      assert(
+        info.appIconSize >= 60 && info.appIconSize <= 76,
+        'Apps icons 64-72px' + tag,
+        info.appIconSize
+      );
+      assert(
+        info.omniboxHeight >= 44 && info.omniboxHeight <= 52,
+        'search ~48px tall' + tag,
+        info.omniboxHeight
+      );
+      assert(info.columnWidth <= 901, 'column max ~900px' + tag, info.columnWidth);
+      assert(
+        info.favs.some((u) => u.includes('lay-fav.example')) &&
+          info.favFolders.length >= 1 &&
+          info.favFolderItems.some((u) => u.includes('lay-in-folder.example')),
+        'global favorites bar + folder shown in empty area' + tag,
+        { favs: info.favs, folders: info.favFolders, items: info.favFolderItems }
+      );
+      assert(
+        info.mvTiles.some((t) => t.url.includes('lay-other-')),
+        'most visited from other areas shown' + tag,
+        info.mvTiles
+      );
+      assert(
+        Array.isArray(info.emptyHeadings) && info.emptyHeadings.length === 0,
+        'no section heading without content' + tag,
+        info.emptyHeadings
+      );
+      assert(info.appsPerRow >= 2, 'Apps wrap responsively' + tag, info.appsPerRow);
+      if (w / z >= 1100) {
+        assert(info.appsPerRow >= 6 && info.appsPerRow <= 8, '6-8 Apps per row' + tag, info.appsPerRow);
+      }
+      const gear = await rendererEval(`(() => {
+        const g = document.querySelector('.mh-start-gear');
+        const p = document.querySelector('.mh-start-page');
+        if (!g || !p) return null;
+        const a = g.getBoundingClientRect();
+        const b = p.getBoundingClientRect();
+        return { right: b.right - a.right, top: a.top - b.top, w: a.width };
+      })()`);
+      assert(
+        gear && gear.w > 4 && gear.right >= 0 && gear.right < 80 && gear.top >= 0 && gear.top < 60,
+        'gear at top-right' + tag,
+        gear
+      );
+
       // Restore one account for next iteration
       updateState((s) => {
         s.accounts = [
@@ -115,6 +215,7 @@ async function runLayoutSelftest(ctx) {
             muted: false,
             lastUrl: null,
           },
+          ...(s.accounts || []).filter((a) => a && a.workspaceId !== 'ws-lay'),
         ];
       });
       flushSave();
@@ -128,6 +229,30 @@ async function runLayoutSelftest(ctx) {
   } catch {
     /* ignore */
   }
+
+  // Pending "Nova janela" page (panel mode) uses the same layout inside the slot.
+  try {
+    mainWindow.setContentSize(1280, 720);
+  } catch {
+    /* ignore */
+  }
+  await sleep(200);
+  await waitForLayoutSettle();
+  const pend = await rendererEval(`window.__multiheizUi.createPendingStartWindow().then((a) => a && a.id)`);
+  assert(pend, 'pending window created');
+  let pinfo = null;
+  for (let i = 0; i < 30; i++) {
+    pinfo = await rendererEval(`window.__multiheizUi.getStartPageInfo(${JSON.stringify(pend)})`);
+    if (pinfo && pinfo.present && pinfo.apps && pinfo.apps.length) break;
+    await sleep(100);
+  }
+  assert(pinfo && pinfo.present && pinfo.mode === 'panel', 'pending start page in panel mode', pinfo);
+  assert(pinfo.width > 100 && pinfo.height > 100, 'pending start page size', pinfo);
+  assert(!pinfo.hasNewWindowBtn, 'panel mode hides "+ Nova janela"', pinfo);
+  assert(!pinfo.appsSectionHidden && pinfo.apps.length >= 3, 'pending page shows Apps', pinfo);
+  assert(pinfo.emptyHeadings.length === 0, 'pending page: no empty headings', pinfo.emptyHeadings);
+  assert(pinfo.hasAdvanced, 'pending page has Opções avançadas', pinfo);
+  console.log('PASS: pending start page layout');
 
   // Top bar overlap smoke
   const topbar = await rendererEval(`(() => {

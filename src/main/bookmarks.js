@@ -29,6 +29,18 @@ function makeId(prefix) {
 let migratedBakOnce = false;
 
 /**
+ * Ids that earlier builds / imports used for the favorites bar. Items still
+ * pointing at one of these (and no such folder exists) belong in folder-bar.
+ * @param {unknown} id
+ */
+function looksLikeLegacyBarId(id) {
+  const s = String(id || '').toLowerCase();
+  if (!s || s === FOLDER_OTHER || s === FOLDER_DEFAULT_LEGACY) return false;
+  if (/other|outros/.test(s)) return false;
+  return /(^|[-_ .])(bar|favbar|toolbar)([-_ .]|$)/.test(s) || /^(favorites|bookmarks)[-_ ]?bar$/.test(s);
+}
+
+/**
  * Migração não destrutiva: formatos antigos (array / flat / v1) → árvore v2.
  * Mantém campos extras; não remove chaves. Cria .bak uma vez.
  * @param {unknown} raw
@@ -68,6 +80,48 @@ function migrateBookmarksData(raw) {
   let bar = folders.find((f) => f.id === FOLDER_BAR || f.builtIn === 'bar');
   let other = folders.find((f) => f.id === FOLDER_OTHER || f.builtIn === 'other');
 
+  // Root cause of the "empty favorites bar": built-in folders whose id was not
+  // folder-bar / folder-other got renamed below, but their items kept the OLD id
+  // and were then swept into folder-other as orphans. Record old → new ids FIRST
+  // and remap items (and child folders' parentId) before any orphan handling.
+  /** @type {Record<string, string>} */
+  const idRemap = {};
+  for (const f of folders) {
+    if (!f || !f.id) continue;
+    if (f.builtIn === 'bar' && f.id !== FOLDER_BAR) idRemap[String(f.id)] = FOLDER_BAR;
+    else if (f.builtIn === 'other' && f.id !== FOLDER_OTHER) idRemap[String(f.id)] = FOLDER_OTHER;
+  }
+  if (bar && bar.id !== FOLDER_BAR && bar.id) idRemap[String(bar.id)] = FOLDER_BAR;
+  if (other && other.id !== FOLDER_OTHER && other.id) idRemap[String(other.id)] = FOLDER_OTHER;
+  // Persisted from earlier migrations so later loads can still heal strays.
+  const persistedLegacy =
+    parsed.legacyFolderIds && typeof parsed.legacyFolderIds === 'object'
+      ? parsed.legacyFolderIds
+      : {};
+  for (const [oldId, newId] of Object.entries(persistedLegacy)) {
+    const userFolderWithThatId = folders.some(
+      (f) => f && f.id === oldId && f.builtIn !== 'bar' && f.builtIn !== 'other'
+    );
+    if (
+      oldId &&
+      !userFolderWithThatId &&
+      (newId === FOLDER_BAR || newId === FOLDER_OTHER) &&
+      !Object.prototype.hasOwnProperty.call(idRemap, oldId)
+    ) {
+      idRemap[oldId] = newId;
+    }
+  }
+  const remapFolderId = (id) => {
+    const key = String(id || '');
+    return key && Object.prototype.hasOwnProperty.call(idRemap, key) ? idRemap[key] : id;
+  };
+  for (const it of items) {
+    if (it && it.folderId) it.folderId = remapFolderId(it.folderId);
+  }
+  for (const f of folders) {
+    if (f && f.parentId) f.parentId = remapFolderId(f.parentId);
+  }
+
   // Map legacy folder-default → other
   const legacy = folders.find((f) => f.id === FOLDER_DEFAULT_LEGACY);
   if (legacy && !other) {
@@ -103,6 +157,14 @@ function migrateBookmarksData(raw) {
     other.id = FOLDER_OTHER;
   }
 
+  // Ensure bar/other ids after rename (items were already remapped above)
+  folders = folders.map((f) => {
+    if (!f) return f;
+    if (f.builtIn === 'bar') return { ...f, id: FOLDER_BAR };
+    if (f.builtIn === 'other') return { ...f, id: FOLDER_OTHER };
+    return f;
+  });
+
   // Deduplicate by id
   const seen = new Set();
   folders = folders.filter((f) => {
@@ -111,19 +173,14 @@ function migrateBookmarksData(raw) {
     return true;
   });
 
-  // Ensure bar/other ids after rename
-  folders = folders.map((f) => {
-    if (f.builtIn === 'bar') return { ...f, id: FOLDER_BAR };
-    if (f.builtIn === 'other') return { ...f, id: FOLDER_OTHER };
-    return f;
-  });
-
   const folderIds = new Set(folders.map((f) => f.id));
   for (const it of items) {
     if (!it || typeof it !== 'object') continue;
     if (!it.id) it.id = makeId('bm');
     if (!it.folderId || !folderIds.has(it.folderId)) {
-      it.folderId = FOLDER_OTHER;
+      // Heal: items pointing at a missing id that looks like the OLD bar id go to
+      // the bar (not "other"); everything else still falls back to other.
+      it.folderId = it.folderId && looksLikeLegacyBarId(it.folderId) ? FOLDER_BAR : FOLDER_OTHER;
     }
     if (it.name == null && it.title) it.name = it.title;
     if (it.title == null && it.name) it.title = it.name;
@@ -148,6 +205,14 @@ function migrateBookmarksData(raw) {
     }
   }
 
+  // Old built-in ids are kept so later loads / imports can still remap strays.
+  const legacyFolderIds = { ...persistedLegacy };
+  for (const [oldId, newId] of Object.entries(idRemap)) {
+    if (oldId !== newId) legacyFolderIds[oldId] = newId;
+  }
+  expandedFolders = [...new Set(expandedFolders.map((id) => String(remapFolderId(id))))];
+  const remappedBuiltIns = Object.keys(idRemap).some((k) => !(k in persistedLegacy));
+
   const data = {
     ...parsed,
     version: 2,
@@ -155,8 +220,56 @@ function migrateBookmarksData(raw) {
     items,
     expandedFolders,
   };
+  if (Object.keys(legacyFolderIds).length) data.legacyFolderIds = legacyFolderIds;
 
-  return { data, migrated: wasFlat || Number(parsed.version) < 2 };
+  return { data, migrated: wasFlat || Number(parsed.version) < 2 || remappedBuiltIns };
+}
+
+/**
+ * Heal profiles already damaged by the old migration (bar items swept into
+ * "other"): compare with the one-shot .bak copy. Items whose URL lived in the bar
+ * (or one of its sub-folders) in the backup, but now sit in folder-other, move back.
+ * Pure + idempotent; only runs when the bar currently has no direct items.
+ * @param {object} data migrated data (mutated)
+ * @param {unknown} bakRaw parsed contents of bookmarks.json.bak
+ * @returns {boolean} true when anything changed
+ */
+function healFromBackup(data, bakRaw) {
+  if (!data || typeof data !== 'object' || !bakRaw || typeof bakRaw !== 'object') return false;
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (items.some((it) => it && it.folderId === FOLDER_BAR)) return false;
+  const bakFolders = Array.isArray(bakRaw.folders) ? bakRaw.folders : [];
+  const bakItems = Array.isArray(bakRaw.items) ? bakRaw.items : Array.isArray(bakRaw) ? bakRaw : [];
+  const barIds = new Set([FOLDER_BAR]);
+  for (const f of bakFolders) {
+    if (f && f.builtIn === 'bar' && f.id) barIds.add(String(f.id));
+  }
+  for (const it of bakItems) {
+    if (it && it.folderId && looksLikeLegacyBarId(it.folderId)) barIds.add(String(it.folderId));
+  }
+  const curFolderIds = new Set((data.folders || []).map((f) => f && f.id));
+  const wantByUrl = new Map();
+  for (const it of bakItems) {
+    if (!it || typeof it.url !== 'string') continue;
+    const fid = String(it.folderId || '');
+    if (barIds.has(fid)) wantByUrl.set(it.url, FOLDER_BAR);
+    else if (curFolderIds.has(fid) && fid !== FOLDER_OTHER) wantByUrl.set(it.url, fid);
+  }
+  let changed = false;
+  for (const it of items) {
+    if (!it || it.folderId !== FOLDER_OTHER) continue;
+    const want = wantByUrl.get(it.url);
+    if (want && want !== FOLDER_OTHER) {
+      it.folderId = want;
+      changed = true;
+    }
+  }
+  if (changed) {
+    const exp = Array.isArray(data.expandedFolders) ? data.expandedFolders : [];
+    if (!exp.includes(FOLDER_BAR)) exp.unshift(FOLDER_BAR);
+    data.expandedFolders = exp;
+  }
+  return changed;
 }
 
 /**
@@ -206,6 +319,20 @@ function backupOnce(filePath) {
   }
 }
 
+/** One-shot heal using bookmarks.json.bak (see healFromBackup). */
+function healFromBackupFile(data, filePath) {
+  if (!data || data.healedFromBak || !filePath) return;
+  try {
+    const bak = `${filePath}.bak`;
+    if (!fs.existsSync(bak)) return;
+    const raw = JSON.parse(fs.readFileSync(bak, 'utf8'));
+    healFromBackup(data, raw);
+    data.healedFromBak = true;
+  } catch {
+    /* ignore */
+  }
+}
+
 const store = createJsonStore('bookmarks.json', defaultBookmarks);
 
 function load() {
@@ -226,15 +353,17 @@ function load() {
   // Array / flat: migrate before json-store object-merge
   if (raw != null && (Array.isArray(raw) || (raw && typeof raw === 'object'))) {
     const { data: migrated, migrated: did } = migrateBookmarksData(raw);
-    healExpandedFolders(migrated);
     if (did && filePath) backupOnce(filePath);
+    healFromBackupFile(migrated, filePath);
+    healExpandedFolders(migrated);
     store.set(migrated);
     return migrated;
   }
   const data = store.load();
   const { data: migrated, migrated: did } = migrateBookmarksData(data);
-  healExpandedFolders(migrated);
   if (did && filePath) backupOnce(filePath);
+  healFromBackupFile(migrated, filePath);
+  healExpandedFolders(migrated);
   store.set(migrated);
   return migrated;
 }
@@ -463,6 +592,8 @@ module.exports = {
   flush,
   makeId,
   migrateBookmarksData,
+  healFromBackup,
+  looksLikeLegacyBarId,
   defaultBookmarks,
   FOLDER_BAR,
   FOLDER_OTHER,

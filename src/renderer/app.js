@@ -561,6 +561,10 @@ function canIncrementalApply(prev, next) {
   const idsPrev = (prev.accounts || []).map((a) => a.id).join('\0');
   const idsNext = (next.accounts || []).map((a) => a.id).join('\0');
   if (idsPrev !== idsNext) return false;
+  // A pending "Nova janela" turning into a real window swaps its content (start page → view).
+  const pendPrev = (prev.accounts || []).filter((a) => a.pendingStartPage).map((a) => a.id).join('\0');
+  const pendNext = (next.accounts || []).filter((a) => a.pendingStartPage).map((a) => a.id).join('\0');
+  if (pendPrev !== pendNext) return false;
   // Minimize/restore changes which tiles are on the grid — needs full render.
   const minPrev = (prev.accounts || [])
     .filter((a) => a.minimized)
@@ -1686,11 +1690,6 @@ async function handlePopoverAction(payload) {
     openSettingsSection('extensoes');
     return;
   }
-  if (type === 'favorites-pin') {
-    favoritesPopoverPinned = !!payload.pinned;
-    await refreshFavoritesPopover();
-    return;
-  }
   if (type === 'favorites-search') {
     favoritesPopoverQuery = String(payload.query || '');
     await refreshFavoritesPopover();
@@ -1735,11 +1734,6 @@ async function handlePopoverAction(payload) {
     if (window.MultiHeizV16 && window.MultiHeizV16.openManager) {
       window.MultiHeizV16.openManager('favorites');
     }
-    return;
-  }
-  if (type === 'history-pin') {
-    historyPopoverPinned = !!payload.pinned;
-    await refreshHistoryPopover();
     return;
   }
   if (type === 'history-search') {
@@ -2461,6 +2455,108 @@ function showAccountMenu(x, y, acc) {
   window.multiheiz.popupAccountMenu(acc.id, Math.round(x), Math.round(y));
 }
 
+/** Start page root (workspace page, or a pending window's page when accountId is given). */
+function spRoot(accountId) {
+  if (accountId) {
+    return el.grid.querySelector('.mh-start-page[data-account-id="' + accountId + '"]');
+  }
+  return el.grid.querySelector('.mh-start-page');
+}
+/** Account id whose start page should grab focus once (freshly created pending window). */
+let startPageAutofocusId = '';
+
+/**
+ * Host API for MultiHeizStartPage (shared by the empty-area page and pending windows).
+ * mode 'workspace': a choice creates a new window in the active area.
+ * mode 'panel': a choice commits INTO the pending window `acc` (same window).
+ * @param {'workspace'|'panel'} mode
+ * @param {object|null} acc
+ */
+function startPageHostApi(mode, acc) {
+  const accountId = mode === 'panel' && acc ? acc.id : '';
+  const autofocus = !!(accountId && startPageAutofocusId === accountId);
+  if (autofocus) startPageAutofocusId = '';
+  const commit = async (choice) => {
+    const c = choice || {};
+    try {
+      if (!window.multiheiz.startPageOpen) return;
+      const res = await window.multiheiz.startPageOpen({
+        url: c.url,
+        title: c.title || '',
+        catalogId: c.catalogId || '',
+        type: c.type || '',
+        workspaceId: state.activeWorkspaceId,
+        accountId: accountId || undefined,
+      });
+      if (res && res.ok === false) {
+        showToast((res && res.error) || 'Endereço inválido.');
+        return;
+      }
+      if (res && res.state) applyState(res.state);
+      scheduleSync();
+    } catch (err) {
+      console.warn('start-page commit', err);
+    }
+  };
+  return {
+    mode,
+    accountId,
+    autofocus,
+    getState: () => state,
+    applyState,
+    openNewWindow: () => void createPendingStartWindow(),
+    openUrl: (url, title, extra) => commit({ ...(extra || {}), url, title }),
+    commitChoice: commit,
+    openAdvancedOptions: (id) => openStartAdvancedOptions(id),
+    toast: (msg) => showToast(msg),
+  };
+}
+
+/**
+ * "Opções avançadas" on the start page → the existing account dialog
+ * (name, color, area, keep-alive / pause). For a pending window it edits that
+ * window and saving commits the typed address; in an empty area it creates one.
+ */
+function openStartAdvancedOptions(accountId) {
+  const acc = accountId ? (state.accounts || []).find((a) => a.id === accountId) : null;
+  if (acc) openAccountDialog(acc, { focusUrl: true });
+  else openAccountDialog(null, { focusUrl: true, customSite: true });
+}
+
+/**
+ * "Nova janela" (+ in the sidebar, menu "ui:new-account", empty-area start page):
+ * creates ONE pending window whose content is the start page; choosing something
+ * there navigates that same window. Closing it removes the account (normal close).
+ *
+ * Old chooser ("Escolher app" dialog) → new locations:
+ *  - Apps prontos + "Buscar app"      → seção "Apps" (catálogo embutido; ⋮ oculta, engrenagem restaura)
+ *  - "Site personalizado"             → tile "Site personalizado…" em Apps, ou digitar o endereço na pesquisa
+ *  - "Dos favoritos"                  → barra de favoritos da página inicial + sugestões "Favorito"
+ *  - nome / cor / categoria / manter ativa / pausar → link "Opções avançadas" (diálogo da janela)
+ * Kept as direct creates: Ctrl+click, "abrir na mesma sessão", openUrl/links, "criar de favorito".
+ */
+async function createPendingStartWindow() {
+  try {
+    const res = await window.multiheiz.createAccount({
+      pendingStartPage: true,
+      name: 'Nova janela',
+      workspaceId: state.activeWorkspaceId,
+    });
+    if (res && res.ok === false) {
+      showToast((res && res.error) || 'Não foi possível criar a janela.');
+      return null;
+    }
+    if (res && res.account) startPageAutofocusId = res.account.id;
+    if (res && res.state) applyState(res.state);
+    scheduleSync();
+    return res && res.account ? res.account : null;
+  } catch (err) {
+    console.warn('new pending window', err);
+    showToast('Não foi possível criar a janela.');
+    return null;
+  }
+}
+
 function renderGrid() {
   const all = accountsInWorkspace();
   const visible = visiblePageAccounts();
@@ -2487,29 +2583,7 @@ function renderGrid() {
 
   if (!all.length) {
     if (window.MultiHeizStartPage && typeof window.MultiHeizStartPage.build === 'function') {
-      const start = window.MultiHeizStartPage.build({
-        getState: () => state,
-        applyState,
-        openNewWindow: () => void openCatalogPicker(),
-        openUrl: async (url, title) => {
-          try {
-            if (!window.multiheiz.startPageOpen) return;
-            const res = await window.multiheiz.startPageOpen({
-              url,
-              title: title || 'Janela',
-              workspaceId: state.activeWorkspaceId,
-            });
-            if (res && res.ok === false) {
-              showToast((res && res.error) || 'Endereço inválido.');
-              return;
-            }
-            if (res && res.state) applyState(res.state);
-            scheduleSync();
-          } catch (err) {
-            console.warn('start-page openUrl', err);
-          }
-        },
-      });
+      const start = window.MultiHeizStartPage.build(startPageHostApi('workspace', null));
       el.grid.appendChild(start);
     } else {
       const hint = document.createElement('div');
@@ -2682,10 +2756,13 @@ function buildPanelSlot(acc, tile) {
   titleEl.textContent = nav.title || acc.name;
   const domainEl = document.createElement('div');
   domainEl.className = 'panel-domain';
-  domainEl.textContent = domain || acc.name;
+  domainEl.textContent = acc.pendingStartPage ? 'Página inicial' : domain || acc.name;
   titleBlock.append(titleEl, domainEl);
   titleBlock.addEventListener('dblclick', () => toggleMaximize(acc.id));
-  titleBlock.addEventListener('click', () => showUrlEditor(slot, acc));
+  titleBlock.addEventListener('click', () => {
+    if (acc.pendingStartPage) return; // address is chosen on the start page
+    showUrlEditor(slot, acc);
+  });
 
   const actions = document.createElement('div');
   actions.className = 'panel-header-actions';
@@ -2865,7 +2942,13 @@ function buildPanelSlot(acc, tile) {
   snap.dataset.accountId = acc.id;
   content.appendChild(snap);
 
-  if (forceSuspended.has(acc.id)) {
+  if (acc.pendingStartPage) {
+    // Nova janela: start page lives in the slot until a choice is committed
+    // (main creates no WebContentsView for pending windows).
+    if (window.MultiHeizStartPage && typeof window.MultiHeizStartPage.build === 'function') {
+      content.appendChild(window.MultiHeizStartPage.build(startPageHostApi('panel', acc)));
+    }
+  } else if (forceSuspended.has(acc.id)) {
     const ph = document.createElement('div');
     ph.className = 'panel-placeholder';
     ph.innerHTML =
@@ -4477,12 +4560,14 @@ async function pickCatalogFavorite(item) {
 function openAccountDialog(account, opts = {}) {
   editingAccountId = account ? account.id : null;
   const customSite = !account && !!opts.customSite;
-  el.dlgAccountTitle.textContent = account ? 'Editar janela' : 'Nova janela';
+  const pendingEdit = !!(account && account.pendingStartPage);
+  el.dlgAccountTitle.textContent = account && !pendingEdit ? 'Editar janela' : 'Nova janela';
   const form = el.formAccount;
   form.name.value = account ? account.name : '';
   form.color.value = account ? account.color : '#2bb8a6';
-  // Site personalizado: campo vazio (evita resto de https://www… e gravação parcial)
-  if (customSite) form.startUrl.value = '';
+  // Site personalizado / janela ainda na página inicial: campo vazio
+  // (evita resto de https://www… / about:blank e gravação parcial)
+  if (customSite || pendingEdit) form.startUrl.value = '';
   else form.startUrl.value = account ? account.startUrl : 'https://www.google.com';
   setAccountUrlError(false);
   const keepAlive = !!(account && account.keepAliveInBackground);
@@ -4765,8 +4850,6 @@ function openMemPopover() {
   });
 }
 
-/** @type {boolean} */
-let favoritesPopoverPinned = false;
 /** @type {string} */
 let favoritesPopoverQuery = '';
 /** @type {string[]} */
@@ -4782,7 +4865,6 @@ async function buildFavoritesPopoverData() {
     items: data.items || [],
     expandedFolders: favoritesExpandedFolders,
     query: favoritesPopoverQuery,
-    pinned: favoritesPopoverPinned,
   };
 }
 
@@ -4839,8 +4921,6 @@ async function openFavoritesPopover() {
   });
 }
 
-/** @type {boolean} */
-let historyPopoverPinned = false;
 /** @type {string} */
 let historyPopoverQuery = '';
 /** @type {'all'|'closed'} */
@@ -4855,7 +4935,6 @@ async function buildHistoryPopoverData() {
   return {
     entries,
     query: historyPopoverQuery,
-    pinned: historyPopoverPinned,
     tab: historyPopoverTab,
   };
 }
@@ -5056,7 +5135,7 @@ if (el.grid) {
   });
 }
 
-el.btnAddAccount.addEventListener('click', () => void openCatalogPicker());
+el.btnAddAccount.addEventListener('click', () => void createPendingStartWindow());
 if (el.catalogSearch) {
   el.catalogSearch.addEventListener('input', () => {
     // Só filtra enquanto o seletor está aberto (não captura teclas do formulário)
@@ -5567,6 +5646,29 @@ el.formAccount.addEventListener('submit', async (e) => {
   if (editingAccountId) {
     const accountId = editingAccountId;
     const prev = (state.accounts || []).find((a) => a.id === accountId);
+    if (prev && prev.pendingStartPage) {
+      // "Opções avançadas" of a pending Nova janela: save name/color/area/behavior,
+      // then commit the typed address as this window's choice (same window).
+      const upd = await window.multiheiz.updateAccount({ id: accountId, ...data });
+      if (upd && upd.ok === false) {
+        setAccountUrlError(true);
+        return;
+      }
+      applyState(upd && upd.state ? upd.state : upd);
+      const done = await window.multiheiz.startPageOpen({
+        accountId,
+        url: validated.url,
+        title: data.name || '',
+      });
+      if (done && done.ok === false) {
+        setAccountUrlError(true);
+        return;
+      }
+      if (done && done.state) applyState(done.state);
+      scheduleSync();
+      el.dlgAccount.close();
+      return;
+    }
     const oldStart = prev ? String(prev.startUrl || '') : '';
     const res = await window.multiheiz.updateAccount({ id: accountId, ...data });
     if (res && res.ok === false) {
@@ -5803,11 +5905,7 @@ document.addEventListener('click', (e) => {
   }
   // Click on chrome outside light popovers closes them (panels close via overlay blur).
   if (activePopoverId) {
-    if (activePopoverId === 'favorites-popover' && favoritesPopoverPinned) return;
-    if (activePopoverId === 'history-popover' && historyPopoverPinned) return;
     setTimeout(() => {
-      if (activePopoverId === 'favorites-popover' && favoritesPopoverPinned) return;
-      if (activePopoverId === 'history-popover' && historyPopoverPinned) return;
       if (activePopoverId) hideLightPopover('chrome-click');
     }, 0);
   }
@@ -5815,12 +5913,6 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (activePopoverId === 'favorites-popover' && favoritesPopoverPinned) {
-      favoritesPopoverPinned = false;
-    }
-    if (activePopoverId === 'history-popover' && historyPopoverPinned) {
-      historyPopoverPinned = false;
-    }
     if (activePopoverId) hideLightPopover('escape');
     else closeMenus();
   }
@@ -5859,29 +5951,9 @@ window.multiheiz.onEvent((payload) => {
     return;
   }
   if (payload.type === 'popover:close-request' || payload.type === 'popover:closed') {
-    if (
-      payload.type === 'popover:close-request' &&
-      payload.id === 'favorites-popover' &&
-      favoritesPopoverPinned
-    ) {
-      return;
-    }
-    if (
-      payload.type === 'popover:close-request' &&
-      payload.id === 'history-popover' &&
-      historyPopoverPinned
-    ) {
-      return;
-    }
     if (payload.id === 'volume-popover') {
       if (volumePopover && volumePopover.hideTimer) clearTimeout(volumePopover.hideTimer);
       volumePopover = null;
-    }
-    if (payload.id === 'favorites-popover' && payload.type === 'popover:closed') {
-      favoritesPopoverPinned = false;
-    }
-    if (payload.id === 'history-popover' && payload.type === 'popover:closed') {
-      historyPopoverPinned = false;
     }
     if (activePopoverId === payload.id) activePopoverId = null;
     return;
@@ -6047,7 +6119,7 @@ window.multiheiz.onEvent((payload) => {
     return;
   }
   if (payload.type === 'ui:new-account') {
-    void openCatalogPicker();
+    void createPendingStartWindow();
     return;
   }
   if (payload.type === 'ui:create-from-favorite' && payload.url) {
@@ -7207,32 +7279,79 @@ window.__multiheizUi = {
       accountDialogTitle: el.dlgAccountTitle.textContent,
     };
   },
-  getStartPageInfo: () => {
-    const root = el.grid.querySelector('.mh-start-page');
+  createPendingStartWindow: () => createPendingStartWindow(),
+  getStartPageInfo: (accountId) => {
+    const root = spRoot(accountId);
     if (!root) return { present: false };
     const r = root.getBoundingClientRect();
     const omnibox = root.querySelector('.mh-start-omnibox');
     const favBar = root.querySelector('.mh-start-favbar');
-    const tiles = [...root.querySelectorAll('.mh-start-tile:not(.mh-start-tile-add)')].map(
-      (n) => ({
-        url: n.dataset.url || '',
-        kind: n.dataset.kind || '',
-        id: n.dataset.tileId || '',
-        label: n.querySelector('.mh-start-tile-label')?.textContent || '',
-      })
-    );
+    const col = root.querySelector('.mh-start-column');
+    const appsSection = root.querySelector('.mh-start-apps');
+    const mvSection = root.querySelector('.mh-start-mv');
+    const tileInfo = (n) => ({
+      url: n.dataset.url || '',
+      kind: n.dataset.kind || '',
+      id: n.dataset.tileId || '',
+      catalogId: n.dataset.catalogId || '',
+      label: n.querySelector('.mh-start-tile-label')?.textContent || '',
+    });
+    const tiles = [...root.querySelectorAll('.mh-start-tile:not(.mh-start-tile-add)')].map(tileInfo);
+    const apps = [...root.querySelectorAll('.mh-start-apps-grid .mh-start-tile:not(.mh-start-tile-add)')].map(tileInfo);
+    const mvTiles = [...root.querySelectorAll('.mh-start-grid .mh-start-tile')].map(tileInfo);
+    const favs = [...root.querySelectorAll('.mh-start-fav:not(.is-folder)')].map((n) => n.dataset.url || '');
+    const favFolders = [...root.querySelectorAll('.mh-start-fav.is-folder')].map((n) => n.textContent || '');
+    const favFolderItems = [...root.querySelectorAll('.mh-start-fav-menu-item')].map((n) => n.dataset.url || '');
+    const cs = col ? getComputedStyle(col) : null;
+    const oRect = omnibox ? omnibox.getBoundingClientRect() : null;
+    const firstApp = root.querySelector('.mh-start-apps-grid .mh-start-tile-icon');
+    const iconRect = firstApp ? firstApp.getBoundingClientRect() : null;
+    const appTiles = [...root.querySelectorAll('.mh-start-apps-grid .mh-start-tile')];
+    let perRow = 0;
+    if (appTiles.length) {
+      const top0 = Math.round(appTiles[0].getBoundingClientRect().top);
+      perRow = appTiles.filter((n) => Math.round(n.getBoundingClientRect().top) === top0).length;
+    }
     return {
       present: true,
+      mode: root.dataset.mode || '',
+      accountId: root.dataset.accountId || '',
       width: r.width,
       height: r.height,
       hasOmnibox: !!omnibox,
+      omniboxHeight: oRect ? oRect.height : 0,
+      omniboxTop: oRect ? oRect.top - r.top : 0,
+      columnWidth: col ? col.getBoundingClientRect().width : 0,
+      columnMaxWidth: cs ? cs.maxWidth : '',
       favBarHidden: !!(favBar && favBar.hidden),
+      favs,
+      favFolders,
+      favFolderItems,
+      appsSectionHidden: !!(appsSection && appsSection.hidden),
+      appsTitle: appsSection && !appsSection.hidden
+        ? appsSection.querySelector('.mh-start-section-title')?.textContent || ''
+        : '',
+      mvSectionHidden: !!(mvSection && mvSection.hidden),
+      mvTitle: mvSection && !mvSection.hidden
+        ? mvSection.querySelector('.mh-start-section-title')?.textContent || ''
+        : '',
+      hasAddCustom: !!root.querySelector('.mh-start-tile-add'),
+      hasAdvanced: !!root.querySelector('.mh-start-advanced'),
+      hasNewWindowBtn: !!root.querySelector('.mh-start-new'),
+      appIconSize: iconRect ? Math.round(iconRect.width) : 0,
+      appsPerRow: perRow,
+      emptyHeadings: window.MultiHeizStartPage ? window.MultiHeizStartPage.emptyHeadings(root) : [],
       tiles,
-      data: window.MultiHeizStartPage ? window.MultiHeizStartPage.getLastData() : null,
+      apps,
+      mvTiles,
+      data: window.MultiHeizStartPage
+        ? window.MultiHeizStartPage.getLastData(accountId || undefined)
+        : null,
     };
   },
-  startPageOmniboxEnter: async (text) => {
-    const input = el.grid.querySelector('.mh-start-omnibox');
+  startPageOmniboxEnter: async (text, accountId) => {
+    const root = spRoot(accountId);
+    const input = root && root.querySelector('.mh-start-omnibox');
     if (!input) return { ok: false, reason: 'missing' };
     input.value = String(text || '');
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -7241,18 +7360,24 @@ window.__multiheizUi = {
     );
     return { ok: true };
   },
-  startPageClickTile: async (urlOrId) => {
+  startPageClickTile: async (urlOrId, accountId) => {
     const key = String(urlOrId || '');
-    const tiles = [...el.grid.querySelectorAll('.mh-start-tile:not(.mh-start-tile-add)')];
+    const root = spRoot(accountId);
+    const tiles = root
+      ? [...root.querySelectorAll('.mh-start-tile:not(.mh-start-tile-add)')]
+      : [];
     const tile =
-      tiles.find((n) => n.dataset.url === key || n.dataset.tileId === key) || null;
+      tiles.find(
+        (n) => n.dataset.url === key || n.dataset.tileId === key || n.dataset.catalogId === key
+      ) || null;
     if (!tile) return { ok: false, reason: 'missing' };
     tile.click();
     return { ok: true };
   },
-  startPageClickFavorite: async (url) => {
+  startPageClickFavorite: async (url, accountId) => {
     const key = String(url || '');
-    const btns = [...el.grid.querySelectorAll('.mh-start-fav:not(.is-folder)')];
+    const root = spRoot(accountId);
+    const btns = root ? [...root.querySelectorAll('.mh-start-fav:not(.is-folder)')] : [];
     const btn =
       btns.find((n) => (n.dataset.url || '') === key) ||
       btns.find(
@@ -7271,11 +7396,92 @@ window.__multiheizUi = {
     btn.click();
     return { ok: true };
   },
+  /** Open the "Site personalizado…" form, fill it and submit (real UI path). */
+  startPageAddCustomApp: async (title, url, accountId) => {
+    const root = spRoot(accountId);
+    const add = root && root.querySelector('.mh-start-tile-add');
+    if (!add) return { ok: false, reason: 'no-add-tile' };
+    add.click();
+    const form = root.querySelector('.mh-start-dialog');
+    if (!form) return { ok: false, reason: 'no-dialog' };
+    form.querySelector('input[name="title"]').value = String(title || '');
+    form.querySelector('input[name="url"]').value = String(url || '');
+    form.requestSubmit();
+    await new Promise((r) => setTimeout(r, 400));
+    return { ok: true, invalid: !!root.querySelector('.mh-start-dialog') };
+  },
+  startPageEditCustomApp: async (id, title, url, accountId) => {
+    const root = spRoot(accountId);
+    const tile = root && root.querySelector(`.mh-start-app[data-tile-id="${id}"]`);
+    if (!tile) return { ok: false, reason: 'missing' };
+    tile.querySelector('.mh-start-tile-more').click();
+    const editBtn = [...tile.querySelectorAll('.mh-start-menu-item')].find(
+      (b) => b.textContent === 'Editar'
+    );
+    if (!editBtn) return { ok: false, reason: 'no-edit' };
+    editBtn.click();
+    const form = root.querySelector('.mh-start-dialog');
+    if (!form) return { ok: false, reason: 'no-dialog' };
+    form.querySelector('input[name="title"]').value = String(title || '');
+    form.querySelector('input[name="url"]').value = String(url || '');
+    form.requestSubmit();
+    await new Promise((r) => setTimeout(r, 400));
+    return { ok: true };
+  },
+  /** ⋮ → Remover → inline confirm (confirm=false cancels). */
+  startPageRemoveCustomApp: async (id, confirm, accountId) => {
+    const root = spRoot(accountId);
+    const tile = root && root.querySelector(`.mh-start-app[data-tile-id="${id}"]`);
+    if (!tile) return { ok: false, reason: 'missing' };
+    tile.querySelector('.mh-start-tile-more').click();
+    const rm = [...tile.querySelectorAll('.mh-start-menu-item')].find((b) => b.textContent === 'Remover');
+    if (!rm) return { ok: false, reason: 'no-remove' };
+    rm.click();
+    const ask = tile.querySelector('.mh-start-menu-ask');
+    const yes = tile.querySelector('[data-role="confirm-remove"]');
+    if (!ask || !yes) return { ok: false, reason: 'no-confirm' };
+    if (confirm === false) {
+      [...tile.querySelectorAll('.mh-start-menu-item')].find((b) => b.textContent === 'Cancelar').click();
+      return { ok: true, cancelled: true };
+    }
+    yes.click();
+    await new Promise((r) => setTimeout(r, 400));
+    return { ok: true };
+  },
+  startPageHideApp: async (catalogId, accountId) => {
+    const root = spRoot(accountId);
+    const tile = root && root.querySelector(`.mh-start-app[data-catalog-id="${catalogId}"]`);
+    if (!tile) return { ok: false, reason: 'missing' };
+    tile.querySelector('.mh-start-tile-more').click();
+    const hide = [...tile.querySelectorAll('.mh-start-menu-item')].find((b) => b.textContent === 'Ocultar');
+    if (!hide) return { ok: false, reason: 'no-hide' };
+    hide.click();
+    await new Promise((r) => setTimeout(r, 400));
+    return { ok: true };
+  },
+  startPageRestoreApp: async (catalogId, accountId) => {
+    const root = spRoot(accountId);
+    if (!root) return { ok: false, reason: 'no-root' };
+    if (!root.querySelector('.mh-start-options')) root.querySelector('.mh-start-gear').click();
+    await new Promise((r) => setTimeout(r, 50));
+    const btn = root.querySelector(`.mh-start-restore[data-catalog-id="${catalogId}"]`);
+    if (!btn) return { ok: false, reason: 'missing' };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 400));
+    return { ok: true };
+  },
+  startPageClickAdvanced: (accountId) => {
+    const root = spRoot(accountId);
+    const btn = root && root.querySelector('.mh-start-advanced');
+    if (!btn) return { ok: false, reason: 'missing' };
+    btn.click();
+    return { ok: true };
+  },
   startPageSetCustomTiles: async (tiles) => {
     if (!window.multiheiz.startPageSet) return { ok: false };
     const res = await window.multiheiz.startPageSet({
       workspaceId: state.activeWorkspaceId,
-      customTiles: tiles || [],
+      customStartApps: tiles || [],
     });
     if (res && res.state) applyState(res.state);
     await new Promise((r) => setTimeout(r, 80));

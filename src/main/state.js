@@ -86,6 +86,12 @@ function defaultState() {
      */
     startPageByWorkspace: {},
     /**
+     * Start page "Apps" shared by every area: custom sites + hidden built-in catalog apps.
+     * customStartApps: [{ id, title, url, favicon?, order }]; startPageHiddenCatalogApps: [catalogId].
+     */
+    customStartApps: [],
+    startPageHiddenCatalogApps: [],
+    /**
      * Mini player (experimental): last position/size/opacity.
      * { x?, y?, width?, height?, opacityPercent? }
      */
@@ -301,6 +307,10 @@ function migrate(parsed) {
       parsed.startPageByWorkspace && typeof parsed.startPageByWorkspace === 'object'
         ? parsed.startPageByWorkspace
         : {},
+    customStartApps: Array.isArray(parsed.customStartApps) ? parsed.customStartApps : [],
+    startPageHiddenCatalogApps: Array.isArray(parsed.startPageHiddenCatalogApps)
+      ? parsed.startPageHiddenCatalogApps.map((x) => String(x || '')).filter(Boolean)
+      : [],
     layoutByWorkspace:
       parsed.layoutByWorkspace && typeof parsed.layoutByWorkspace === 'object'
         ? parsed.layoutByWorkspace
