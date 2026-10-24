@@ -6,7 +6,7 @@
  */
 
 const http = require('node:http');
-const { app, globalShortcut } = require('electron');
+const { app, BrowserWindow, globalShortcut } = require('electron');
 
 async function runMiniPlayerSelftest(ctx) {
   const {
@@ -152,6 +152,13 @@ async function runMiniPlayerSelftest(ctx) {
     await sleep(100);
   }
 
+  // Seek source so we can verify resume-at-time on close.
+  await wc.executeJavaScript(
+    `(() => { var v = document.getElementById('v'); v.currentTime = 1.25; return v.currentTime; })()`,
+    false
+  );
+  await sleep(100);
+
   const opened = await miniPlayer.open('acc-mini');
   assert(opened && opened.ok, 'open mini player', opened);
   await sleep(800);
@@ -164,6 +171,21 @@ async function runMiniPlayerSelftest(ctx) {
   const accel = snap.registeredAccel;
   assert(accel && globalShortcut.isRegistered(accel), 'isRegistered true', accel);
   console.log('PASS: open alwaysOnTop opacity shortcut');
+
+  const srcPaused = await wc.executeJavaScript(
+    `(() => { var v = document.getElementById('v') || document.querySelector('video'); return v ? !!v.paused : null; })()`,
+    false
+  );
+  assert(srcPaused === true, 'source video paused while mini open', srcPaused);
+  console.log('PASS: opening pauses source video');
+
+  // Seek mini player so close can resume source near this time.
+  await miniPlayer.contentExec(`(() => {
+    var v = window.__mhMiniIsolate && window.__mhMiniIsolate.video;
+    if (v) { v.currentTime = 2.5; v.play().catch(function(){}); }
+    return v ? v.currentTime : null;
+  })()`);
+  await sleep(200);
 
   miniPlayer.setOpacityPercent(55);
   await sleep(100);
@@ -220,8 +242,42 @@ async function runMiniPlayerSelftest(ctx) {
   assert(snap.focusable === true, 'focusable after main unlock');
   console.log('PASS: unlock via main-window button/IPC path');
 
-  miniPlayer.close();
-  await sleep(200);
+  // Resize: video rect should match viewport within ~1 frame / 50ms (no CSS re-inject).
+  if (typeof miniPlayer.contentExec === 'function') {
+    const wins = BrowserWindow.getAllWindows().filter(
+      (w) => w && !w.isDestroyed() && w.getTitle && /mini/i.test(String(w.getTitle() || ''))
+    );
+    const mpWin = wins[0] || BrowserWindow.getAllWindows().find((w) => w !== ctx.mainWindow);
+    if (mpWin && !mpWin.isDestroyed()) {
+      try {
+        mpWin.setSize(520, 340);
+      } catch {
+        /* ignore */
+      }
+      await sleep(50);
+      const fit = await miniPlayer.contentExec(`(() => {
+        var v = window.__mhMiniIsolate && window.__mhMiniIsolate.video;
+        if (!v) return { ok: false, reason: 'no-video' };
+        var r = v.getBoundingClientRect();
+        var w = window.innerWidth || 0;
+        var h = window.innerHeight || 0;
+        var tol = 4;
+        return {
+          ok: Math.abs(r.width - w) <= tol && Math.abs(r.height - h) <= tol &&
+            Math.abs(r.left) <= tol && Math.abs(r.top) <= tol,
+          r: { w: r.width, h: r.height, l: r.left, t: r.top },
+          viewport: { w: w, h: h },
+        };
+      })()`);
+      assert(fit && fit.ok, 'video rect matches viewport after setSize', fit);
+      console.log('PASS: resize video fits viewport within ~50ms');
+    } else {
+      console.log('PASS: resize skipped (no mini BrowserWindow title match)');
+    }
+  }
+
+  await miniPlayer.close();
+  await sleep(400);
   snap = miniPlayer.getSelftestSnapshot();
   assert(!snap.open, 'closed');
   assert(!snap.shortcutRegistered, 'shortcut unregistered after close');
@@ -229,6 +285,51 @@ async function runMiniPlayerSelftest(ctx) {
     assert(!globalShortcut.isRegistered(accel), 'isRegistered false after close');
   }
   console.log('PASS: close unregisters shortcut');
+
+  const miniWinsLeft = BrowserWindow.getAllWindows().filter((w) => {
+    if (!w || w.isDestroyed()) return false;
+    if (ctx.mainWindow && w === ctx.mainWindow) return false;
+    try {
+      return /mini/i.test(String(w.getTitle() || ''));
+    } catch {
+      return false;
+    }
+  });
+  assert(miniWinsLeft.length === 0, 'no mini BrowserWindow after close', miniWinsLeft.length);
+
+  let audible = false;
+  try {
+    audible = !!(wc.isCurrentlyAudible && wc.isCurrentlyAudible());
+  } catch {
+    audible = false;
+  }
+  assert(!audible, 'source not audible after close', audible);
+  const srcAfter = await wc.executeJavaScript(
+    `(() => {
+      var v = document.getElementById('v') || document.querySelector('video');
+      if (!v) return null;
+      var seekable = false;
+      try {
+        seekable = !!(v.seekable && v.seekable.length && v.seekable.end(0) > 0);
+      } catch (e) {}
+      return {
+        paused: !!v.paused,
+        t: Number(v.currentTime) || 0,
+        seekable: seekable,
+        muted: !!v.muted,
+      };
+    })()`,
+    false
+  );
+  assert(srcAfter && typeof srcAfter.t === 'number', 'source video state after close', srcAfter);
+  assert(srcAfter.paused === false, 'source resumed playing after close', srcAfter);
+  if (srcAfter.seekable) {
+    assert(Math.abs(srcAfter.t - 2.5) < 1.0, 'source resumed near mini time', srcAfter);
+    console.log('PASS: close destroys mini + resumes source at time');
+  } else {
+    // MediaStream / live sources are often not seekable; play+unmute restore still applies.
+    console.log('PASS: close destroys mini + resumes source play (not seekable stream)');
+  }
 
   try {
     server.close();

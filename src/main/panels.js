@@ -272,6 +272,20 @@ function installCtrlWheelIpc() {
       /* ignore */
     }
   });
+  // Ctrl+left-click on a link → new window (middle-click / window.open unchanged).
+  ipcMain.on('panel:ctrl-click-link', (event, data) => {
+    try {
+      const wc = event && event.sender;
+      const accountId = accountIdForWebContents(wc);
+      if (!accountId) return;
+      const url = data && data.url != null ? String(data.url) : '';
+      if (!url) return;
+      const focus = !!(data && data.focus);
+      openUrlInNewPanel(accountId, url, { focus });
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 function initPanels(win, emit, opts) {
@@ -294,7 +308,15 @@ function initPanels(win, emit, opts) {
  * @param {string} url
  * @returns {{ ok: boolean, reason?: string, windowId?: string }}
  */
-function openUrlInNewPanel(fromAccountId, url) {
+/**
+ * Open URL in a new MultiHeiz window in the same workspace, inheriting
+ * per-window settings from the source (partition/session, proxy, zoom, volume, flags).
+ * @param {string} fromAccountId
+ * @param {string} url
+ * @param {{ focus?: boolean }} [opts]
+ * @returns {{ ok: boolean, reason?: string, windowId?: string }}
+ */
+function openUrlInNewPanel(fromAccountId, url, opts = {}) {
   const raw = String(url || '').trim();
   if (!isNavigableUrl(raw) || classifyScheme(raw) !== 'web') {
     return { ok: false, reason: 'blocked-scheme' };
@@ -304,31 +326,69 @@ function openUrlInNewPanel(fromAccountId, url) {
     'acc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
   const from = getAccount(fromAccountId);
+  const partitionId = from
+    ? partition.resolvePartitionId(from)
+    : id;
+  const zoomFactor =
+    from && typeof from.zoomFactor === 'number' && from.zoomFactor >= 0.25 && from.zoomFactor <= 3
+      ? from.zoomFactor
+      : 1;
+  const volume =
+    from && typeof from.volume === 'number' && Number.isFinite(from.volume)
+      ? Math.max(0, Math.min(200, from.volume))
+      : 100;
   const account = {
     id,
     name: 'Janela',
-    color: colors[(st.accounts || []).length % colors.length],
+    color: (from && from.color) || colors[(st.accounts || []).length % colors.length],
     startUrl: sanitizeUserStartUrl(raw, 'https://www.google.com'),
     workspaceId: (from && from.workspaceId) || st.activeWorkspaceId,
+    partitionId,
     muted: false,
-    volume: 100,
-    pauseInBackground: false,
-    keepAliveInBackground: false,
-    privateHistory: false,
-    adblockEnabled: true,
-    showUnread: true,
+    volume,
+    pauseInBackground: !!(from && from.pauseInBackground),
+    keepAliveInBackground: !!(from && from.keepAliveInBackground),
+    privateHistory: !!(from && from.privateHistory),
+    adblockEnabled: from && from.adblockEnabled === false ? false : true,
+    showUnread: from && from.showUnread === false ? false : true,
     lastUrl: null,
-    zoomFactor: 1,
+    zoomFactor,
   };
+  if (from && from.catalogId) account.catalogId = from.catalogId;
+  if (from && from.catalogIcon) account.catalogIcon = from.catalogIcon;
+  if (from && from.proxy && typeof from.proxy === 'object') {
+    account.proxy = { ...from.proxy };
+  }
   updateState((s) => {
     s.accounts.push(account);
   });
+  try {
+    const adblock = require('./adblock');
+    adblock.attachAllAccountSessions();
+  } catch {
+    /* ignore */
+  }
   try {
     emitToRenderer({ type: 'state:changed', state: getPublicState() });
   } catch {
     /* ignore */
   }
   panelNavigate(id, raw);
+  if (account.proxy && account.proxy.type && account.proxy.type !== 'none') {
+    try {
+      const proxy = require('./proxy');
+      void proxy.applyProxyToSession(id);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (opts && opts.focus) {
+    try {
+      setFocusedAccount(id);
+    } catch {
+      /* ignore */
+    }
+  }
   return { ok: true, windowId: id };
 }
 
@@ -1963,6 +2023,14 @@ function destroyPanel(accountId, { keepLastUrl = true } = {}) {
   try {
     permissions.cancelPromptsForAccount(accountId);
     permissions.clearMediaInUse(accountId);
+  } catch {
+    /* ignore */
+  }
+  try {
+    const miniPlayer = require('./mini-player');
+    if (typeof miniPlayer.closeIfSource === 'function') {
+      miniPlayer.closeIfSource(accountId);
+    }
   } catch {
     /* ignore */
   }

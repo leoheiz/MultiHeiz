@@ -56,12 +56,13 @@ const ISOLATE_VIDEO_JS = `(() => {
       style.id = STYLE_ID;
       (document.head || document.documentElement).appendChild(style);
     }
+    // Native viewport units so resize reflows without JS re-inject.
     style.textContent = [
       'html, body { background:#000 !important; margin:0 !important; overflow:hidden !important; height:100% !important; width:100% !important; }',
       'body * { visibility:hidden !important; pointer-events:none !important; }',
       'video[' + ATTR + '], video[' + ATTR + '] * { visibility:visible !important; pointer-events:auto !important; }',
       'video[' + ATTR + '] {',
-      '  position:fixed !important; inset:0 !important; width:100% !important; height:100% !important;',
+      '  position:fixed !important; inset:0 !important; width:100vw !important; height:100vh !important;',
       '  max-width:none !important; max-height:none !important; object-fit:contain !important;',
       '  z-index:2147483647 !important; background:#000 !important; margin:0 !important;',
       '  transform:none !important; left:0 !important; top:0 !important;',
@@ -184,6 +185,8 @@ let contentView = null;
 let sourceAccountId = null;
 /** @type {boolean} */
 let sourceWasAudioMuted = false;
+/** @type {{ muted: boolean, wasPlaying: boolean } | null} */
+let sourceVideoSnapshot = null;
 /** @type {boolean} */
 let locked = false;
 /** @type {number} */
@@ -194,6 +197,40 @@ let registeredAccel = null;
 let ipcWired = false;
 /** @type {boolean} */
 let isolationApplied = false;
+/** @type {boolean} */
+let closing = false;
+
+const SOURCE_PAUSE_JS = `(() => {
+  const list = Array.from(document.querySelectorAll('video'));
+  if (!list.length) return { ok: false };
+  const playing = list.find((v) => !v.paused && v.readyState >= 2);
+  const v = playing || list[0];
+  const state = {
+    ok: true,
+    currentTime: Number(v.currentTime) || 0,
+    paused: !!v.paused,
+    muted: !!v.muted,
+    wasPlaying: !v.paused,
+  };
+  try { v.pause(); } catch (e) {}
+  try { v.muted = true; } catch (e) {}
+  window.__mhMiniSourceVideo = v;
+  window.__mhMiniSourceState = state;
+  return state;
+})()`;
+
+const STOP_MEDIA_JS = `(() => {
+  document.querySelectorAll('video, audio').forEach((el) => {
+    try { el.pause(); } catch (e) {}
+    try {
+      el.removeAttribute('src');
+      el.src = '';
+      el.srcObject = null;
+    } catch (e) {}
+    try { el.load(); } catch (e) {}
+  });
+  return true;
+})()`;
 
 /** Selftest flags */
 /** @type {{ ignoreMouseEvents: boolean, focusable: boolean, locked: boolean }} */
@@ -474,7 +511,77 @@ function setOpacityPercent(pct) {
   }
 }
 
-function restoreSourceAudio() {
+/**
+ * Pause + mute the source panel's <video> so only the mini player plays.
+ * @param {string} accountId
+ * @returns {Promise<void>}
+ */
+async function pauseSourceMedia(accountId) {
+  const wc = wcFor(accountId);
+  if (!wc) return;
+  try {
+    const snap = await wc.executeJavaScript(SOURCE_PAUSE_JS, true);
+    if (snap && snap.ok) {
+      sourceVideoSnapshot = {
+        muted: !!snap.muted,
+        wasPlaying: !!snap.wasPlaying,
+      };
+    } else {
+      sourceVideoSnapshot = { muted: false, wasPlaying: false };
+    }
+  } catch {
+    sourceVideoSnapshot = { muted: false, wasPlaying: false };
+  }
+}
+
+/**
+ * Resume source video at the mini player's last time (if any).
+ * @param {number|null} resumeTime
+ * @param {boolean} miniWasPlaying
+ * @returns {Promise<void>}
+ */
+async function resumeSourceMedia(resumeTime, miniWasPlaying) {
+  const id = sourceAccountId;
+  const snap = sourceVideoSnapshot;
+  sourceVideoSnapshot = null;
+  if (!id) return;
+  const wc = wcFor(id);
+  const restoreMuted = snap ? !!snap.muted : false;
+  const shouldPlay = miniWasPlaying || (snap && snap.wasPlaying);
+  if (wc) {
+    try {
+      const t = Number(resumeTime);
+      const timeLit = Number.isFinite(t) ? String(t) : 'NaN';
+      await wc.executeJavaScript(
+        `(() => {
+  const v = window.__mhMiniSourceVideo || document.querySelector('video');
+  if (!v) return { ok: false };
+  const t = ${timeLit};
+  if (Number.isFinite(t) && t >= 0) {
+    try { v.currentTime = t; } catch (e) {}
+  }
+  try { v.muted = ${restoreMuted ? 'true' : 'false'}; } catch (e) {}
+  if (${shouldPlay ? 'true' : 'false'}) {
+    v.play().catch(function () {});
+  }
+  return { ok: true, currentTime: Number(v.currentTime) || 0, paused: !!v.paused };
+})()`,
+        true
+      );
+    } catch {
+      /* ignore */
+    }
+    try {
+      wc.setAudioMuted(!!sourceWasAudioMuted);
+    } catch {
+      /* ignore */
+    }
+  }
+  sourceAccountId = null;
+  sourceWasAudioMuted = false;
+}
+
+function restoreSourceAudioOnly() {
   if (!sourceAccountId) return;
   const wc = wcFor(sourceAccountId);
   if (wc) {
@@ -485,6 +592,58 @@ function restoreSourceAudio() {
     }
   }
   sourceAccountId = null;
+  sourceWasAudioMuted = false;
+  sourceVideoSnapshot = null;
+}
+
+/**
+ * Stop all media in the mini content view and tear down its webContents.
+ * @returns {Promise<{ currentTime: number|null, wasPlaying: boolean }>}
+ */
+async function stopAndTearDownContent() {
+  let currentTime = null;
+  let wasPlaying = false;
+  const cv = contentView;
+  contentView = null;
+  if (!cv || !cv.webContents || cv.webContents.isDestroyed()) {
+    return { currentTime, wasPlaying };
+  }
+  const wc = cv.webContents;
+  try {
+    const st = await wc.executeJavaScript(
+      `window.__mhMiniIsolate && window.__mhMiniIsolate.mediaState && window.__mhMiniIsolate.mediaState()`,
+      true
+    );
+    if (st && typeof st === 'object') {
+      currentTime = Number(st.currentTime);
+      if (!Number.isFinite(currentTime)) currentTime = null;
+      wasPlaying = !st.paused;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    await wc.executeJavaScript(STOP_MEDIA_JS, true);
+  } catch {
+    /* ignore */
+  }
+  try {
+    wc.setAudioMuted(true);
+  } catch {
+    /* ignore */
+  }
+  try {
+    await wc.loadURL('about:blank');
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (typeof wc.close === 'function') wc.close();
+    else if (typeof wc.destroy === 'function') wc.destroy();
+  } catch {
+    /* ignore */
+  }
+  return { currentTime, wasPlaying };
 }
 
 async function applyVideoIsolation() {
@@ -527,32 +686,66 @@ function wireContentIsolation(wc) {
   }
 }
 
-function destroyMini() {
+/**
+ * Fully tear down mini player (media stopped, shortcut gone, source resumed).
+ * @returns {Promise<void>}
+ */
+async function destroyMini() {
+  if (closing) return;
+  closing = true;
   unregisterLockShortcut();
   persistGeometry();
-  restoreSourceAudio();
+  let resumeTime = null;
+  let miniWasPlaying = false;
+  try {
+    const media = await stopAndTearDownContent();
+    resumeTime = media.currentTime;
+    miniWasPlaying = media.wasPlaying;
+  } catch {
+    /* ignore */
+  }
+  try {
+    await resumeSourceMedia(resumeTime, miniWasPlaying);
+  } catch {
+    restoreSourceAudioOnly();
+  }
   locked = false;
   isolationApplied = false;
   selftestFlags = { ignoreMouseEvents: false, focusable: true, locked: false };
   const win = miniWin;
-  if (chromeView && chromeView.webContents) {
+  const chrome = chromeView;
+  chromeView = null;
+  contentView = null;
+  miniWin = null;
+  if (chrome && chrome.webContents) {
     try {
-      ipcGuard.unregisterUiWebContents(chromeView.webContents);
+      ipcGuard.unregisterUiWebContents(chrome.webContents);
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (!chrome.webContents.isDestroyed()) {
+        if (typeof chrome.webContents.close === 'function') chrome.webContents.close();
+        else if (typeof chrome.webContents.destroy === 'function') chrome.webContents.destroy();
+      }
     } catch {
       /* ignore */
     }
   }
-  chromeView = null;
-  contentView = null;
-  miniWin = null;
   notifyLockState();
   if (win && !win.isDestroyed()) {
+    try {
+      win.removeAllListeners('closed');
+    } catch {
+      /* ignore */
+    }
     try {
       win.destroy();
     } catch {
       /* ignore */
     }
   }
+  closing = false;
 }
 
 function isOpen() {
@@ -641,13 +834,15 @@ async function open(accountId) {
   }
 
   if (isOpen()) {
-    close();
+    await close();
   }
 
   const persisted = readPersisted();
   opacityPercent = persisted.opacityPercent;
   locked = false;
   isolationApplied = false;
+  closing = false;
+  sourceVideoSnapshot = null;
   selftestFlags = { ignoreMouseEvents: false, focusable: true, locked: false };
 
   const hide = selftestOn();
@@ -743,7 +938,7 @@ async function open(accountId) {
     miniWin.contentView.addChildView(contentView);
     miniWin.contentView.addChildView(chromeView);
   } catch (err) {
-    destroyMini();
+    await destroyMini();
     return {
       ok: false,
       reason: 'view-failed',
@@ -752,27 +947,16 @@ async function open(accountId) {
   }
 
   layoutChildren();
+  // Bounds only — never re-inject isolation CSS/JS on resize (viewport CSS handles video).
   miniWin.on('resize', () => layoutChildren());
   miniWin.on('move', () => {
     /* persisted on close */
   });
-  miniWin.on('closed', () => {
-    if (chromeView && chromeView.webContents) {
-      try {
-        ipcGuard.unregisterUiWebContents(chromeView.webContents);
-      } catch {
-        /* ignore */
-      }
-    }
-    chromeView = null;
-    contentView = null;
-    miniWin = null;
-    unregisterLockShortcut();
-    restoreSourceAudio();
-    locked = false;
-    isolationApplied = false;
-    selftestFlags = { ignoreMouseEvents: false, focusable: true, locked: false };
-    notifyLockState();
+  // Intercept X / Alt+F4 so we can stop media + resume source before the window dies.
+  miniWin.on('close', (e) => {
+    if (closing) return;
+    e.preventDefault();
+    void close();
   });
 
   try {
@@ -815,7 +999,7 @@ async function open(accountId) {
   await loadWithTimeout(contentView.webContents, url, 12000);
   await applyVideoIsolation();
 
-  // Mute source so audio comes from the mini player only.
+  // Pause + mute source media so only the mini player plays (root cause of dual playback).
   try {
     sourceWasAudioMuted = !!srcWc.isAudioMuted();
     srcWc.setAudioMuted(true);
@@ -824,6 +1008,7 @@ async function open(accountId) {
     sourceAccountId = id;
     sourceWasAudioMuted = false;
   }
+  await pauseSourceMedia(id);
 
   registerLockShortcut();
 
@@ -843,15 +1028,28 @@ async function open(accountId) {
   return { ok: true };
 }
 
-function close() {
+/**
+ * Close mini player: stop media, destroy views/window, resume source, unregister shortcut.
+ * @returns {Promise<{ ok: boolean }>}
+ */
+async function close() {
   if (!isOpen()) {
     unregisterLockShortcut();
-    restoreSourceAudio();
+    restoreSourceAudioOnly();
     notifyLockState();
     return { ok: true };
   }
-  destroyMini();
+  await destroyMini();
   return { ok: true };
+}
+
+/**
+ * Close if the given account is the mini player's source (panel destroyed / removed).
+ * @param {string} accountId
+ */
+function closeIfSource(accountId) {
+  if (!accountId || sourceAccountId !== String(accountId)) return;
+  void close();
 }
 
 async function mediaCommand(cmd, value) {
@@ -901,6 +1099,7 @@ module.exports = {
   configure,
   open,
   close,
+  closeIfSource,
   isOpen,
   toggleLock,
   applyLock,

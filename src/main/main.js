@@ -8,6 +8,7 @@ const {
   nativeImage,
   session,
   Menu,
+  clipboard,
   screen,
   desktopCapturer,
   dialog,
@@ -319,6 +320,9 @@ const SELFTEST_SHORTCUT_CUSTOM = selftestMode === 'shortcut-custom';
 const SELFTEST_MINIMIZE_RESTORE = selftestMode === 'minimize-restore';
 const SELFTEST_PIP = selftestMode === 'pip';
 const SELFTEST_MINIPLAYER = selftestMode === 'miniplayer';
+const SELFTEST_WORKSPACE_CTXMENU = selftestMode === 'workspace-ctxmenu';
+const SELFTEST_MEMORY_SCHEDULE = selftestMode === 'memory-schedule';
+const SELFTEST_LINK_NEWWINDOW = selftestMode === 'link-newwindow';
 const SELFTEST_DIAG_CERTISIGN = selftestMode === 'diag-certisign';
 const ANY_SELFTEST =
   SELFTEST ||
@@ -398,6 +402,9 @@ const ANY_SELFTEST =
   SELFTEST_MINIMIZE_RESTORE ||
   SELFTEST_PIP ||
   SELFTEST_MINIPLAYER ||
+  SELFTEST_WORKSPACE_CTXMENU ||
+  SELFTEST_MEMORY_SCHEDULE ||
+  SELFTEST_LINK_NEWWINDOW ||
   SELFTEST_DIAG_CERTISIGN;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
@@ -461,6 +468,8 @@ const APP_STARTED_AT = Date.now();
  * @type {{ accountId: string, x: number, y: number, labels: string[], at: number } | null}
  */
 let lastAccountMenuPopup = null;
+/** @type {{ x: number, y: number, labels: string[], at: number, clipboardUrl?: boolean } | null} */
+let lastWorkspaceBgMenuPopup = null;
 /** @type {{ x: number, y: number, labels: string[], at: number } | null} */
 let lastTopMenuPopup = null;
 
@@ -758,6 +767,9 @@ function createWindow() {
     SELFTEST_MINIMIZE_RESTORE ||
     SELFTEST_PIP ||
     SELFTEST_MINIPLAYER ||
+    SELFTEST_WORKSPACE_CTXMENU ||
+    SELFTEST_MEMORY_SCHEDULE ||
+    SELFTEST_LINK_NEWWINDOW ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
@@ -809,6 +821,9 @@ function createWindow() {
     SELFTEST_SHORTCUT_CUSTOM ||
     SELFTEST_PIP ||
     SELFTEST_MINIPLAYER ||
+    SELFTEST_WORKSPACE_CTXMENU ||
+    SELFTEST_MEMORY_SCHEDULE ||
+    SELFTEST_LINK_NEWWINDOW ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
     SELFTEST_HISTORY ||
@@ -898,6 +913,9 @@ function createWindow() {
         SELFTEST_MINIMIZE_RESTORE ||
         SELFTEST_PIP ||
         SELFTEST_MINIPLAYER ||
+        SELFTEST_WORKSPACE_CTXMENU ||
+        SELFTEST_MEMORY_SCHEDULE ||
+        SELFTEST_LINK_NEWWINDOW ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_FAVORITES_POPOVER ||
         SELFTEST_HISTORY ||
@@ -2204,6 +2222,85 @@ function createWindow() {
             waitForPanels,
             app,
             miniPlayer,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_WORKSPACE_CTXMENU) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runWorkspaceCtxmenuSelftest } = require('./selftest-workspace-ctxmenu');
+          runWorkspaceCtxmenuSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_MEMORY_SCHEDULE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runMemoryScheduleSelftest } = require('./selftest-memory-schedule');
+          runMemoryScheduleSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            memory,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_LINK_NEWWINDOW) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runLinkNewwindowSelftest } = require('./selftest-link-newwindow');
+          runLinkNewwindowSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -4395,8 +4492,19 @@ function registerIpc() {
     return popupAccountMenu(payload || {});
   });
 
+  ipcMain.handle('menu:workspace-bg', (_e, payload) => {
+    return popupWorkspaceBackgroundMenu(payload || {});
+  });
+
   ipcMain.handle('menu:top', (_e, payload) => {
     return popupTopMenu(payload || {});
+  });
+
+  ipcMain.handle('selftest:last-workspace-bg-menu', () => lastWorkspaceBgMenuPopup);
+
+  ipcMain.handle('selftest:clear-workspace-bg-menu', () => {
+    lastWorkspaceBgMenuPopup = null;
+    return true;
   });
 
   ipcMain.handle('panel:zoom', (_e, payload) => {
@@ -6174,6 +6282,184 @@ function popupAccountMenu(opts) {
   return { ok: true, intercepted: false, labels, x, y, accountId };
 }
 
+/**
+ * Context menu on empty workspace background (gaps / empty-hint, not on a panel).
+ * @param {{ x?: number, y?: number }} opts
+ */
+function popupWorkspaceBackgroundMenu(opts) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false, reason: 'missing' };
+  }
+  const x = Math.round(Number(opts && opts.x) || 0);
+  const y = Math.round(Number(opts && opts.y) || 0);
+  const st = getState();
+  const wsId = st.activeWorkspaceId;
+  const ws = (st.workspaces || []).find((w) => w && w.id === wsId) || null;
+
+  let clipText = '';
+  try {
+    clipText = String(clipboard.readText() || '').trim();
+  } catch {
+    clipText = '';
+  }
+  // Selftest override: Electron clipboard can be flaky headless; allow explicit URL.
+  if (process.env.MULTIHEIZ_SELFTEST && process.env.MULTIHEIZ_SELFTEST_CLIPBOARD_URL) {
+    clipText = String(process.env.MULTIHEIZ_SELFTEST_CLIPBOARD_URL || '').trim();
+  }
+  const clipValidated = clipText ? validateAndNormalizeStartUrl(clipText) : { ok: false };
+  const hasClipboardUrl = !!(clipValidated && clipValidated.ok && clipValidated.url);
+
+  /** @type {Electron.MenuItemConstructorOptions[]} */
+  const favSubmenu = [];
+  try {
+    const bookmarks = require('./bookmarks');
+    const list = bookmarks.list();
+    const items = (list && list.items) || [];
+    for (const it of items.slice(0, 40)) {
+      if (!it || !it.url) continue;
+      const label = String(it.name || it.title || it.url).slice(0, 64);
+      favSubmenu.push({
+        label,
+        click: () => {
+          emitToRenderer({
+            type: 'ui:create-from-favorite',
+            url: it.url,
+            name: it.name || it.title || 'Favorito',
+          });
+        },
+      });
+    }
+  } catch {
+    /* ignore */
+  }
+  if (!favSubmenu.length) {
+    favSubmenu.push({ label: '(nenhum favorito)', enabled: false });
+  }
+
+  const layoutValue = normalizeLayout(st.layout);
+  /** @type {{ value: string, label: string }[]} */
+  const layoutOpts = [
+    { value: '1', label: '1' },
+    { value: '2', label: '2' },
+    { value: '4', label: '4' },
+    { value: '6', label: '6' },
+    { value: 'auto', label: 'Auto' },
+    { value: 'livre', label: 'Livre' },
+  ];
+
+  /** @type {Electron.MenuItemConstructorOptions[]} */
+  const template = [
+    {
+      label: 'Nova janela',
+      click: () => emitToRenderer({ type: 'ui:new-account' }),
+    },
+    {
+      label: 'Nova janela a partir de um favorito',
+      submenu: favSubmenu,
+    },
+  ];
+  if (hasClipboardUrl) {
+    template.push({
+      label: 'Colar endereço e abrir',
+      click: () => {
+        emitToRenderer({
+          type: 'ui:paste-url-open',
+          url: clipValidated.url,
+        });
+      },
+    });
+  }
+  template.push(
+    {
+      label: 'Layout',
+      submenu: layoutOpts.map((o) => ({
+        label: o.label,
+        type: 'radio',
+        checked: layoutValue === o.value,
+        click: () => {
+          const normalized = normalizeLayout(o.value);
+          updateState((s) => {
+            if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
+              s.layoutByWorkspace = {};
+            }
+            s.layout = normalized;
+            s.layoutByWorkspace[s.activeWorkspaceId] = normalized;
+            s.page = 0;
+            if (!s.pageByWorkspace) s.pageByWorkspace = {};
+            s.pageByWorkspace[s.activeWorkspaceId] = 0;
+          });
+          emitToRenderer({ type: 'state:changed', state: publicState() });
+        },
+      })),
+    },
+    {
+      label: 'Liberar memória',
+      click: () => {
+        void memory.freeMemory().then((res) => {
+          emitToRenderer({ type: 'ui:free-mem-result', result: res || null });
+        });
+      },
+    },
+    {
+      label: 'Renomear área',
+      enabled: !!ws,
+      click: () => {
+        if (ws) emitToRenderer({ type: 'ui:edit-workspace', workspaceId: ws.id });
+      },
+    },
+    {
+      label: 'Configurações',
+      click: () => emitToRenderer({ type: 'ui:open-settings' }),
+    }
+  );
+
+  const labels = [];
+  for (const t of template) {
+    labels.push(String(t.label || ''));
+    if (Array.isArray(t.submenu)) {
+      for (const sub of t.submenu) {
+        if (sub && sub.label) labels.push(String(sub.label));
+      }
+    }
+  }
+  lastWorkspaceBgMenuPopup = {
+    x,
+    y,
+    labels,
+    at: Date.now(),
+    clipboardUrl: hasClipboardUrl,
+  };
+
+  if (
+    SELFTEST_INPUT ||
+    SELFTEST_V18 ||
+    SELFTEST_V19 ||
+    SELFTEST_V110 ||
+    envGet('MULTIHEIZ_MENU_INTERCEPT') === '1' ||
+    selftestMode === 'workspace-ctxmenu'
+  ) {
+    return {
+      ok: true,
+      intercepted: true,
+      labels,
+      x,
+      y,
+      clipboardUrl: hasClipboardUrl,
+    };
+  }
+
+  const menu = Menu.buildFromTemplate(template);
+  menu.popup({ window: mainWindow, x, y });
+  return {
+    ok: true,
+    intercepted: false,
+    labels,
+    x,
+    y,
+    clipboardUrl: hasClipboardUrl,
+  };
+}
+
 function popupAdblockMenu(payload) {
   const accountId = payload && payload.accountId;
   const x = Math.round(Number(payload && payload.x) || 0);
@@ -7108,6 +7394,11 @@ app.on('before-quit', () => {
     } catch {
       /* ignore */
     }
+  }
+  try {
+    miniPlayer.close();
+  } catch {
+    /* ignore */
   }
   flushSave();
   if (v16) v16.flushAll();
