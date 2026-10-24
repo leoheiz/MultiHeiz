@@ -22,6 +22,8 @@ const PANEL_CHANNELS = new Set([
   'panel:media-use',
   // Zoom Ctrl+wheel (panel-preload → main)
   'panel:ctrl-wheel',
+  // Ctrl+left-click link → new MultiHeiz window (panel-preload → main)
+  'panel:ctrl-click-link',
   // Volume fino: bootstrap sync (fonte + ganho) do panel-preload
   'panel:volume-sync',
   // Corretor LanguageTool (panel-preload → main)
@@ -38,6 +40,7 @@ const MAIN_FRAME_ONLY_CHANNELS = new Set([
   'panel:ai-open',
   'panel:media-use',
   'panel:ctrl-wheel',
+  'panel:ctrl-click-link',
 ]);
 
 /** LanguageTool: main frame ou subframe same-origin do top. */

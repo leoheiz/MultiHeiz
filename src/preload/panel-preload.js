@@ -1375,6 +1375,48 @@ try {
   /* ignore */
 }
 
+/**
+ * Ctrl+left-click on a link opens a new MultiHeiz window (same area + settings).
+ * Middle-click and plain click are left alone (existing blankLinkMode / window.open).
+ */
+try {
+  if (isTopFrame()) {
+    document.addEventListener(
+      'click',
+      (e) => {
+        if (!e.ctrlKey && !e.metaKey) return;
+        if (e.button !== 0) return;
+        if (e.altKey) return;
+        const t = e.target;
+        if (!t || typeof t.closest !== 'function') return;
+        const a = t.closest('a[href]');
+        if (!a) return;
+        let href = '';
+        try {
+          href = String(a.href || a.getAttribute('href') || '').trim();
+        } catch {
+          href = '';
+        }
+        if (!href || href === '#' || /^javascript:/i.test(href)) return;
+        if (!/^https?:\/\//i.test(href)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          ipcRenderer.send('panel:ctrl-click-link', {
+            url: href,
+            focus: !!(e.shiftKey),
+          });
+        } catch {
+          /* ignore */
+        }
+      },
+      true
+    );
+  }
+} catch {
+  /* ignore */
+}
+
 // Sonda FPS (rAF contínuo): só PROFILE ou selftest:fps.
 // NÃO ligar em todo MULTIHEIZ_SELFTEST — em check:perf / idle isso mantém rAF
 // 60 Hz em painéis quietos e infla cpuAvgPct. A barra de status usa a sonda UI
