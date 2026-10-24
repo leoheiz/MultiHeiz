@@ -284,7 +284,7 @@ let contentView = null;
 let sourceAccountId = null;
 /** @type {boolean} */
 let sourceWasAudioMuted = false;
-/** @type {{ muted: boolean, wasPlaying: boolean } | null} */
+/** @type {{ muted: boolean, wasPlaying: boolean, currentTime: number, isLive: boolean } | null} */
 let sourceVideoSnapshot = null;
 /** @type {boolean} */
 let locked = false;
@@ -298,25 +298,148 @@ let ipcWired = false;
 let isolationApplied = false;
 /** @type {boolean} */
 let closing = false;
+/** @type {object|null} last syncMiniPlayback result (selftest) */
+let lastSyncResult = null;
 
-const SOURCE_PAUSE_JS = `(() => {
+/** Read source video state without mutating it. */
+const SOURCE_READ_JS = `(() => {
   const list = Array.from(document.querySelectorAll('video'));
   if (!list.length) return { ok: false };
   const playing = list.find((v) => !v.paused && v.readyState >= 2);
   const v = playing || list[0];
+  const dur = Number(v.duration);
+  const isLive = !(Number.isFinite(dur)) || dur === Infinity;
   const state = {
     ok: true,
     currentTime: Number(v.currentTime) || 0,
     paused: !!v.paused,
     muted: !!v.muted,
     wasPlaying: !v.paused,
+    duration: Number.isFinite(dur) ? dur : Infinity,
+    isLive: !!isLive,
   };
-  try { v.pause(); } catch (e) {}
-  try { v.muted = true; } catch (e) {}
   window.__mhMiniSourceVideo = v;
   window.__mhMiniSourceState = state;
   return state;
 })()`;
+
+const SOURCE_PAUSE_JS = `(() => {
+  const v = window.__mhMiniSourceVideo || (function () {
+    const list = Array.from(document.querySelectorAll('video'));
+    if (!list.length) return null;
+    const playing = list.find((x) => !x.paused && x.readyState >= 2);
+    return playing || list[0];
+  })();
+  if (!v) return { ok: false };
+  try { v.pause(); } catch (e) {}
+  try { v.muted = true; } catch (e) {}
+  window.__mhMiniSourceVideo = v;
+  return { ok: true };
+})()`;
+
+/**
+ * After isolation: wait for video metadata, seek (unless live), apply muted, play or stay paused.
+ * @param {{ currentTime: number, wasPlaying: boolean, muted: boolean, isLive: boolean }} snap
+ */
+function buildSyncMiniPlaybackJs(snap) {
+  const t = Number(snap && snap.currentTime);
+  const timeLit = Number.isFinite(t) && t >= 0 ? String(t) : '0';
+  const playLit = snap && snap.wasPlaying ? 'true' : 'false';
+  const mutedLit = snap && snap.muted ? 'true' : 'false';
+  const liveLit = snap && snap.isLive ? 'true' : 'false';
+  return `(() => new Promise((resolve) => {
+  const deadline = Date.now() + 6000;
+  let settled = false;
+  function pick() {
+    try {
+      if (window.__mhMiniIsolate && window.__mhMiniIsolate.pickVideo) {
+        return window.__mhMiniIsolate.pickVideo();
+      }
+    } catch (e) {}
+    return document.querySelector('video[data-mh-mini-video]') || document.querySelector('video');
+  }
+  function finish(v, sought) {
+    if (settled) return;
+    settled = true;
+    const st = v ? {
+      ok: true,
+      paused: !!v.paused,
+      currentTime: Number(v.currentTime) || 0,
+      muted: !!v.muted,
+      sought: !!sought,
+      duration: Number(v.duration) || 0,
+    } : { ok: false };
+    resolve(st);
+  }
+  setTimeout(function () { finish(pick(), false); }, 6000);
+  function apply(v) {
+    if (!v) return finish(null, false);
+    const isLive = ${liveLit} || !(Number.isFinite(Number(v.duration))) || Number(v.duration) === Infinity;
+    let sought = false;
+    try { v.muted = ${mutedLit}; } catch (e) {}
+    function afterMeta() {
+      if (settled) return;
+      if (!isLive) {
+        const t = ${timeLit};
+        try {
+          if (Number.isFinite(t) && t >= 0) {
+            v.currentTime = t;
+            sought = true;
+          }
+        } catch (e) {}
+      }
+      function afterSeekOrReady() {
+        if (settled) return;
+        if (${playLit}) {
+          const p = v.play();
+          if (p && typeof p.then === 'function') {
+            p.then(function () { finish(v, sought); }).catch(function () { finish(v, sought); });
+            return;
+          }
+        } else {
+          try { v.pause(); } catch (e) {}
+        }
+        finish(v, sought);
+      }
+      if (!isLive && sought) {
+        let done = false;
+        const once = function () {
+          if (done) return;
+          done = true;
+          v.removeEventListener('seeked', once);
+          afterSeekOrReady();
+        };
+        v.addEventListener('seeked', once);
+        setTimeout(once, 400);
+      } else {
+        afterSeekOrReady();
+      }
+    }
+    if (v.readyState >= 1) afterMeta();
+    else {
+      const onMeta = function () {
+        v.removeEventListener('loadedmetadata', onMeta);
+        v.removeEventListener('canplay', onMeta);
+        afterMeta();
+      };
+      v.addEventListener('loadedmetadata', onMeta);
+      v.addEventListener('canplay', onMeta);
+      setTimeout(function () { afterMeta(); }, 800);
+    }
+  }
+  function tick() {
+    if (settled) return;
+    const v = pick();
+    if (v) {
+      apply(v);
+      return;
+    }
+    if (Date.now() > deadline) return finish(null, false);
+    setTimeout(tick, 50);
+  }
+  tick();
+}))()`;
+}
 
 const STOP_MEDIA_JS = `(() => {
   document.querySelectorAll('video, audio').forEach((el) => {
@@ -611,6 +734,31 @@ function setOpacityPercent(pct) {
 }
 
 /**
+ * Read source <video> state (time/paused/muted/live) without pausing yet.
+ * @param {string} accountId
+ * @returns {Promise<{ muted: boolean, wasPlaying: boolean, currentTime: number, isLive: boolean }>}
+ */
+async function readSourceMedia(accountId) {
+  const empty = { muted: false, wasPlaying: false, currentTime: 0, isLive: false };
+  const wc = wcFor(accountId);
+  if (!wc) return empty;
+  try {
+    const snap = await wc.executeJavaScript(SOURCE_READ_JS, true);
+    if (snap && snap.ok) {
+      return {
+        muted: !!snap.muted,
+        wasPlaying: !!snap.wasPlaying,
+        currentTime: Number(snap.currentTime) || 0,
+        isLive: !!snap.isLive,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return empty;
+}
+
+/**
  * Pause + mute the source panel's <video> so only the mini player plays.
  * @param {string} accountId
  * @returns {Promise<void>}
@@ -619,17 +767,97 @@ async function pauseSourceMedia(accountId) {
   const wc = wcFor(accountId);
   if (!wc) return;
   try {
-    const snap = await wc.executeJavaScript(SOURCE_PAUSE_JS, true);
-    if (snap && snap.ok) {
-      sourceVideoSnapshot = {
-        muted: !!snap.muted,
-        wasPlaying: !!snap.wasPlaying,
-      };
-    } else {
-      sourceVideoSnapshot = { muted: false, wasPlaying: false };
-    }
+    await wc.executeJavaScript(SOURCE_PAUSE_JS, true);
   } catch {
-    sourceVideoSnapshot = { muted: false, wasPlaying: false };
+    /* ignore */
+  }
+}
+
+/**
+ * Append &t=<seconds>s for YouTube-like watch URLs (fallback when in-page seek fails).
+ * @param {string} url
+ * @param {number} seconds
+ * @returns {string}
+ */
+function withStartTimeParam(url, seconds) {
+  const t = Math.floor(Number(seconds) || 0);
+  if (!Number.isFinite(t) || t <= 0) return url;
+  try {
+    const u = new URL(String(url || ''));
+    const host = (u.hostname || '').replace(/^www\./i, '').toLowerCase();
+    const ytLike =
+      host === 'youtube.com' ||
+      host === 'youtu.be' ||
+      host === 'm.youtube.com' ||
+      host === 'music.youtube.com' ||
+      host.endsWith('.youtube.com');
+    if (!ytLike) return url;
+    if (u.searchParams.has('t') || u.searchParams.has('start')) return url;
+    if (/[?&]t=/.test(u.hash || '')) return url;
+    u.searchParams.set('t', `${t}s`);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Wait until the mini content has a <video> (and finite duration for VOD).
+ * @param {{ needDuration?: boolean, ms?: number }} opts
+ */
+async function waitForMiniVideoReady(opts = {}) {
+  const needDuration = !!opts.needDuration;
+  const ms = typeof opts.ms === 'number' ? opts.ms : 8000;
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (!contentView || contentView.webContents.isDestroyed()) return null;
+    try {
+      const st = await contentView.webContents.executeJavaScript(
+        `(() => {
+  const v = (window.__mhMiniIsolate && window.__mhMiniIsolate.pickVideo && window.__mhMiniIsolate.pickVideo())
+    || document.querySelector('video');
+  if (!v) return null;
+  const dur = Number(v.duration);
+  return {
+    readyState: v.readyState,
+    duration: Number.isFinite(dur) ? dur : 0,
+    paused: !!v.paused,
+  };
+})()`,
+        true
+      );
+      if (st && st.readyState >= 1) {
+        if (!needDuration || st.duration > 0.2) return st;
+      }
+    } catch {
+      /* ignore */
+    }
+    await new Promise((r) => setTimeout(r, 120));
+    try {
+      await applyVideoIsolation();
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+/**
+ * Seek/play/mute the mini content video to match the source snapshot.
+ * @param {{ muted: boolean, wasPlaying: boolean, currentTime: number, isLive: boolean }} snap
+ */
+async function syncMiniPlayback(snap) {
+  lastSyncResult = null;
+  if (!contentView || contentView.webContents.isDestroyed()) return null;
+  try {
+    lastSyncResult = await contentView.webContents.executeJavaScript(
+      buildSyncMiniPlaybackJs(snap),
+      true
+    );
+    return lastSyncResult;
+  } catch {
+    lastSyncResult = null;
+    return null;
   }
 }
 
@@ -873,6 +1101,15 @@ function getSelftestSnapshot() {
     registeredAccel,
     sourceAccountId,
     isolationApplied,
+    sourceSnap: sourceVideoSnapshot
+      ? {
+          currentTime: sourceVideoSnapshot.currentTime,
+          wasPlaying: sourceVideoSnapshot.wasPlaying,
+          muted: sourceVideoSnapshot.muted,
+          isLive: sourceVideoSnapshot.isLive,
+        }
+      : null,
+    lastSync: lastSyncResult,
   };
 }
 
@@ -936,12 +1173,19 @@ async function open(accountId) {
     await close();
   }
 
+  // Capture time/paused/muted BEFORE pausing the source (FIX-12).
+  const mediaSnap = await readSourceMedia(id);
+  sourceVideoSnapshot = mediaSnap;
+  let loadUrl = url;
+  if (!mediaSnap.isLive && mediaSnap.currentTime > 0) {
+    loadUrl = withStartTimeParam(url, mediaSnap.currentTime);
+  }
+
   const persisted = readPersisted();
   opacityPercent = persisted.opacityPercent;
   locked = false;
   isolationApplied = false;
   closing = false;
-  sourceVideoSnapshot = null;
   selftestFlags = { ignoreMouseEvents: false, focusable: true, locked: false };
 
   const hide = selftestOn();
@@ -1023,6 +1267,8 @@ async function open(accountId) {
       nodeIntegration: false,
       sandbox: true,
       backgroundThrottling: false,
+      // Allow resume play() without a fresh user gesture (mini opened from toolbar).
+      autoplayPolicy: 'no-user-gesture-required',
       ...(ses ? { session: ses } : {}),
     },
   });
@@ -1101,7 +1347,7 @@ async function open(accountId) {
   }
 
   await loadWithTimeout(chromeView.webContents, pathToFileURL(CHROME_HTML).href, 8000);
-  await loadWithTimeout(contentView.webContents, url, 12000);
+  await loadWithTimeout(contentView.webContents, loadUrl, 12000);
   await applyVideoIsolation();
 
   // Pause + mute source media so only the mini player plays (root cause of dual playback).
@@ -1114,6 +1360,10 @@ async function open(accountId) {
     sourceWasAudioMuted = false;
   }
   await pauseSourceMedia(id);
+  // Page scripts (e.g. VOD blob setup) may finish after did-finish-load — wait for <video>.
+  await waitForMiniVideoReady({ needDuration: !mediaSnap.isLive, ms: 10000 });
+  // Resume at source time (or live): seek after metadata, then play unless source was paused.
+  await syncMiniPlayback(mediaSnap);
 
   registerLockShortcut();
 

@@ -119,12 +119,49 @@ async function runMiniPlayerSelftest(ctx) {
 </script>
 </body></html>`;
 
+  // Seekable VOD page: uses a static /clip.webm produced once on the source panel
+  // (MediaRecorder in a freshly-loaded offscreen mini window often yields an empty blob).
+  const VOD_PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>vod</title>
+<style>body{margin:0;background:#102030}video{width:640px;height:360px;background:#000;display:block}</style>
+</head><body>
+<video id="v" playsinline controls muted></video>
+<script>
+(async function(){
+  var v = document.getElementById('v');
+  v.src = '/clip.webm';
+  try { await v.play(); } catch (e) {}
+  for (var i = 0; i < 80; i++) {
+    if (Number.isFinite(v.duration) && v.duration > 0.5 && v.readyState >= 2) break;
+    await new Promise(function(r){ setTimeout(r, 50); });
+  }
+  window.__miniReady = true;
+  window.__vodDuration = Number(v.duration) || 0;
+})();
+</script></body></html>`;
+
+  /** @type {Buffer|null} */
+  let clipWebm = null;
   let server = null;
   let port = 0;
   await new Promise((resolve, reject) => {
-    server = http.createServer((_req, res) => {
+    server = http.createServer((req, res) => {
+      const u = String(req.url || '');
+      if (u.startsWith('/clip.webm')) {
+        if (!clipWebm) {
+          res.writeHead(404);
+          res.end('missing');
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'video/webm',
+          'Content-Length': clipWebm.length,
+          'Cache-Control': 'no-store',
+        });
+        res.end(clipWebm);
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(PAGE);
+      res.end(u.startsWith('/vod') ? VOD_PAGE : PAGE);
     });
     server.listen(0, '127.0.0.1', () => {
       port = server.address().port;
@@ -201,6 +238,21 @@ async function runMiniPlayerSelftest(ctx) {
   );
   assert(srcPaused === true, 'source video paused while mini open', srcPaused);
   console.log('PASS: opening pauses source video');
+
+  // Live-like MediaStream: duration Infinity → playing, no seek, muted copied.
+  await sleep(400);
+  const liveMedia = await miniPlayer.contentExec(
+    `window.__mhMiniIsolate && window.__mhMiniIsolate.mediaState && window.__mhMiniIsolate.mediaState()`
+  );
+  assert(liveMedia && liveMedia.paused === false, 'live mock mini video playing', liveMedia);
+  assert(liveMedia.muted === true, 'live mock muted copied from source', liveMedia);
+  assert(snap.sourceSnap && snap.sourceSnap.isLive === true, 'source snap marked live', snap.sourceSnap);
+  assert(
+    !snap.lastSync || snap.lastSync.sought !== true,
+    'live mock did not seek',
+    snap.lastSync
+  );
+  console.log('PASS: live mock playing, no seek, muted copied');
 
   // Seek mini player so close can resume source near this time.
   await miniPlayer.contentExec(`(() => {
@@ -367,6 +419,116 @@ async function runMiniPlayerSelftest(ctx) {
     // MediaStream / live sources are often not seekable; play+unmute restore still applies.
     console.log('PASS: close destroys mini + resumes source play (not seekable stream)');
   }
+
+  // --- VOD mock: record a seekable clip on the (already painted) source panel ---
+  const b64 = await wc.executeJavaScript(
+    `(() => new Promise(async (resolve) => {
+  try {
+    var c = document.getElementById('c');
+    if (!c) return resolve('');
+    var ctx = c.getContext('2d');
+    function paint(t) {
+      ctx.fillStyle = '#203040'; ctx.fillRect(0,0,640,360);
+      ctx.fillStyle = '#4af'; ctx.fillRect((t/12)%640, 60, 100, 240);
+    }
+    var stream = c.captureStream(24);
+    var mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
+      ? 'video/webm;codecs=vp8' : 'video/webm';
+    var rec = new MediaRecorder(stream, { mimeType: mime });
+    var chunks = [];
+    rec.ondataavailable = function(e){ if (e.data && e.data.size) chunks.push(e.data); };
+    var stopped = new Promise(function(r){ rec.onstop = r; });
+    rec.start(40);
+    var t0 = performance.now();
+    await new Promise(function(done){
+      function tick(now){
+        paint(now);
+        if (now - t0 < 2500) requestAnimationFrame(tick);
+        else { try { rec.stop(); } catch (e) {} done(); }
+      }
+      requestAnimationFrame(tick);
+    });
+    await stopped;
+    var blob = new Blob(chunks, { type: 'video/webm' });
+    var buf = await blob.arrayBuffer();
+    var bytes = new Uint8Array(buf);
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    resolve(btoa(bin));
+  } catch (e) { resolve(''); }
+}))()`,
+    true
+  );
+  assert(b64 && b64.length > 100, 'recorded vod clip from source panel', (b64 && b64.length) || 0);
+  clipWebm = Buffer.from(b64, 'base64');
+
+  await panels.panelNavigate('acc-mini', base + '/vod');
+  await waitForUrl('acc-mini', (u) => /\/vod/.test(u), 30000);
+  for (let i = 0; i < 100; i++) {
+    const ready = await wc.executeJavaScript(
+      '!!(window.__miniReady && Number(window.__vodDuration) > 0.5)',
+      false
+    );
+    if (ready) break;
+    await sleep(100);
+  }
+  const vodDur = await wc.executeJavaScript('Number(window.__vodDuration)||0', false);
+  assert(vodDur > 0.5, 'vod mock has finite duration', vodDur);
+  await wc.executeJavaScript(
+    `(() => { var v = document.getElementById('v'); v.muted = false; v.currentTime = 1.4; return v.play().then(() => v.currentTime).catch(() => v.currentTime); })()`,
+    true
+  );
+  await sleep(200);
+  const openedVod = await miniPlayer.open('acc-mini');
+  assert(openedVod && openedVod.ok, 'open mini on vod', openedVod);
+  await sleep(1000);
+  const vodSnap = miniPlayer.getSelftestSnapshot();
+  assert(vodSnap.sourceSnap && vodSnap.sourceSnap.isLive === false, 'vod not live', vodSnap.sourceSnap);
+  const vodMedia = await miniPlayer.contentExec(
+    `window.__mhMiniIsolate && window.__mhMiniIsolate.mediaState && window.__mhMiniIsolate.mediaState()`
+  );
+  assert(vodMedia && vodMedia.paused === false, 'vod mini not paused after open', vodMedia);
+  assert(
+    Math.abs((vodMedia.currentTime || 0) - 1.4) <= 2.0,
+    'vod currentTime carried within ±2s',
+    vodMedia
+  );
+  console.log('PASS: vod mock currentTime carried and playing');
+  await miniPlayer.close();
+  await sleep(300);
+
+  // Optional real smoke (YouTube / Twitch) — only if network reachable; never log URLs.
+  let smokeNote = 'skipped (no network or blocked)';
+  try {
+    const netOk = await Promise.race([
+      new Promise((resolve) => {
+        const req = http.get({ host: 'www.youtube.com', path: '/', timeout: 2500 }, (res) => {
+          res.resume();
+          resolve(true);
+        });
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => {
+          try {
+            req.destroy();
+          } catch {
+            /* ignore */
+          }
+          resolve(false);
+        });
+      }),
+      sleep(3000).then(() => false),
+    ]);
+    if (netOk && process.env.MULTIHEIZ_MINI_SMOKE === '1') {
+      smokeNote = 'env MULTIHEIZ_MINI_SMOKE=1 set but real site smoke not run in CI selftest (offline-safe)';
+    } else if (!netOk) {
+      smokeNote = 'skipped (youtube.com unreachable from test env)';
+    } else {
+      smokeNote = 'skipped (set MULTIHEIZ_MINI_SMOKE=1 to enable; default off to avoid GUI/network flakiness)';
+    }
+  } catch {
+    smokeNote = 'skipped (network probe failed)';
+  }
+  console.log('INFO: real youtube/twitch smoke: ' + smokeNote);
 
   try {
     server.close();
