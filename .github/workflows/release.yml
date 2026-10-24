@@ -17,9 +17,17 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+      - name: Fix Electron chrome-sandbox permissions
+        run: |
+          if [ -f node_modules/electron/dist/chrome-sandbox ]; then
+            sudo chown root:root node_modules/electron/dist/chrome-sandbox || true
+            sudo chmod 4755 node_modules/electron/dist/chrome-sandbox || true
+          fi
       - run: npm run check:encoding
       - name: Install xvfb
         run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Allow unprivileged user namespaces for Electron sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Static/unit security checks (+ electron selftest via xvfb)
         run: xvfb-run -a npm run check:security-review
 
