@@ -39,7 +39,10 @@
 
       <div id="main-col">
         <header id="topbar">
-          <img id="app-icon" class="app-icon" src="../../build/icon.png" alt="" width="18" height="18" draggable="false" />
+          <button type="button" id="btn-app-menu" class="btn-app-menu" title="Menu do MultiHeiz" aria-label="Menu do MultiHeiz" aria-haspopup="menu" aria-expanded="false">
+            <img id="app-icon" class="app-icon" src="../../build/icon.png" alt="" width="18" height="18" draggable="false" />
+            <span class="app-menu-caret" aria-hidden="true">▾</span>
+          </button>
           <div class="tabs-wrap">
             <div id="workspace-tabs" class="tabs" role="tablist"></div>
             <button type="button" id="btn-tabs-more" class="btn icon ghost tabs-more hidden" title="Mais áreas de trabalho" aria-label="Mais áreas de trabalho" aria-haspopup="menu">
@@ -95,9 +98,6 @@
           <button type="button" id="btn-downloads" class="btn icon ghost" title="Downloads (Ctrl+J)" aria-label="Downloads">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg>
             <span id="downloads-badge" class="top-badge hidden">0</span>
-          </button>
-          <button type="button" id="btn-overflow" class="btn icon ghost" title="Mais opções" aria-label="Mais opções">
-            <span class="overflow-glyph" aria-hidden="true">›</span>
           </button>
           <button type="button" id="btn-settings" class="btn icon ghost" title="Configurações" aria-label="Configurações">
             <!-- Lucide icons: settings (ISC) — https://lucide.dev -->
@@ -1107,6 +1107,7 @@
       </form>
     </dialog>
 
+    <script src="app-menu.js"></script>
     <script src="v16-ui.js"></script>
     <script src="app.js"></script>
   </body>

@@ -922,6 +922,28 @@ html[data-theme='claro'] .sidebar-item:hover {
   app-region: no-drag;
 }
 
+.btn-app-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 4px 0 2px;
+  margin: 0 2px 0 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.btn-app-menu:hover,
+.btn-app-menu[aria-expanded='true'] {
+  background: var(--accent-dim);
+}
+
 .app-icon {
   width: 18px;
   height: 18px;
@@ -929,6 +951,86 @@ html[data-theme='claro'] .sidebar-item:hover {
   border-radius: 4px;
   object-fit: contain;
   pointer-events: none;
+}
+
+.app-menu-caret {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.85;
+  transform: translateY(1px);
+}
+
+.mh-app-menu {
+  min-width: 220px;
+  max-width: 320px;
+  z-index: 80;
+  padding: 4px;
+}
+
+.mh-app-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.mh-app-menu-item:hover,
+.mh-app-menu-item.is-active {
+  background: var(--accent-dim);
+}
+
+.mh-app-menu-item:disabled,
+.mh-app-menu-item[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mh-app-menu-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mh-app-menu-ico {
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.mh-app-menu-accel {
+  margin-left: auto;
+  color: var(--muted, color-mix(in srgb, var(--text) 55%, transparent));
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mh-app-menu-caret {
+  margin-left: auto;
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.mh-app-menu-item.is-checked .mh-app-menu-label::before {
+  content: '✓';
+  display: inline-block;
+  width: 1em;
+  margin-right: 2px;
+}
+
+.mh-app-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 
 .win-controls {
@@ -2525,14 +2627,6 @@ dialog label.check-row input[type='checkbox'],
   text-align: center;
 }
 #btn-downloads { position: relative; }
-
-#btn-overflow .overflow-glyph {
-  display: inline-block;
-  font-size: 22px;
-  line-height: 1;
-  font-weight: 600;
-  transform: translateY(-1px);
-}
 
 .panel-slot:not(.focused) .panel-header {
   opacity: 0.68;

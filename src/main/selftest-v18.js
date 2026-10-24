@@ -437,22 +437,17 @@ window.__iframeEarly = window.__mhEarlyOk === true;
     /Tela cheia/i,
     /^Ajuda$/i,
     /Silenciar todas/i,
-    /Novidades/i,
+    /Notas de versão|Novidades/i,
     /Atalhos/i,
   ];
   for (const re of needLabels) {
     if (!topMenu.labels.some((l) => re.test(l))) {
-      console.log('FAIL: overflow menu missing', re, topMenu.labels);
+      console.log('FAIL: app menu missing', re, topMenu.labels);
       app.exit(1);
       return;
     }
   }
-  if (topMenu.labels.some((l) => /^Zoom/i.test(l))) {
-    console.log('FAIL: overflow menu should not have Zoom (moved to panel menu)', topMenu.labels);
-    app.exit(1);
-    return;
-  }
-  console.log('PASS: overflow › menu labels');
+  console.log('PASS: app menu labels (legacy overflow items)');
 
   panels.setFocusedAccount('acc-v18-b');
   if (panels.getFocusedAccountId() !== 'acc-v18-b') {

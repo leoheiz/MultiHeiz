@@ -75,6 +75,9 @@ contextBridge.exposeInMainWorld('multiheiz', {
   popupWorkspaceBgMenu: (x, y) =>
     ipcRenderer.invoke('menu:workspace-bg', { x, y }),
   popupTopMenu: (x, y) => ipcRenderer.invoke('menu:top', { x, y }),
+  getAppMenuStructure: () => ipcRenderer.invoke('menu:app-structure'),
+  runAppMenuAction: (id, data) =>
+    ipcRenderer.invoke('menu:app-action', { id, data: data || null }),
   panelZoom: (accountId, delta) => ipcRenderer.invoke('panel:zoom', { accountId, delta }),
   panelNavigate: (accountId, url) => ipcRenderer.invoke('panel:navigate', { accountId, url }),
   panelHome: (accountId) => ipcRenderer.invoke('panel:home', accountId),

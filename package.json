@@ -57,6 +57,7 @@
     "selftest:pip": "node tools/selftest-pip.js",
     "selftest:miniplayer": "node tools/selftest-miniplayer.js",
     "selftest:workspace-ctxmenu": "node tools/selftest-workspace-ctxmenu.js",
+    "selftest:app-menu": "node tools/selftest-app-menu.js",
     "selftest:memory-schedule": "node tools/selftest-memory-schedule.js",
     "selftest:memory-monitor": "node tools/selftest-memory-monitor.js",
     "selftest:omnibox": "node tools/selftest-omnibox.js",

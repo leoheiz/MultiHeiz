@@ -53,6 +53,7 @@ const unread = require('./unread');
 const partition = require('./partition');
 const autostart = require('./autostart');
 const keymap = require('./keymap');
+const { createAppMenu } = require('./app-menu');
 const panelShortcuts = require('./panel-shortcuts');
 const pictureInPicture = require('./picture-in-picture');
 const miniPlayer = require('./mini-player');
@@ -326,6 +327,7 @@ const SELFTEST_MEMORY_MONITOR = selftestMode === 'memory-monitor';
 const SELFTEST_OMNIBOX = selftestMode === 'omnibox';
 const SELFTEST_VIDEO_DETECT = selftestMode === 'video-detect';
 const SELFTEST_LINK_NEWWINDOW = selftestMode === 'link-newwindow';
+const SELFTEST_APP_MENU = selftestMode === 'app-menu';
 const SELFTEST_DIAG_CERTISIGN = selftestMode === 'diag-certisign';
 const ANY_SELFTEST =
   SELFTEST ||
@@ -411,6 +413,7 @@ const ANY_SELFTEST =
   SELFTEST_OMNIBOX ||
   SELFTEST_VIDEO_DETECT ||
   SELFTEST_LINK_NEWWINDOW ||
+  SELFTEST_APP_MENU ||
   SELFTEST_DIAG_CERTISIGN;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
@@ -479,6 +482,13 @@ let lastAccountMenuPopup = null;
 let lastWorkspaceBgMenuPopup = null;
 /** @type {{ x: number, y: number, labels: string[], at: number } | null} */
 let lastTopMenuPopup = null;
+
+/** @type {ReturnType<typeof createAppMenu>|null} */
+let appMenuApi = null;
+
+/** Alt-alone arming for app menu (main UI + panels). */
+let appMenuAltArmed = false;
+let appMenuAltSawOther = false;
 
 function whichLabelForStoreUrl(url) {
   try {
@@ -780,6 +790,7 @@ function createWindow() {
     SELFTEST_OMNIBOX ||
     SELFTEST_VIDEO_DETECT ||
     SELFTEST_LINK_NEWWINDOW ||
+    SELFTEST_APP_MENU ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
@@ -837,6 +848,7 @@ function createWindow() {
     SELFTEST_OMNIBOX ||
     SELFTEST_VIDEO_DETECT ||
     SELFTEST_LINK_NEWWINDOW ||
+    SELFTEST_APP_MENU ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
     SELFTEST_HISTORY ||
@@ -932,6 +944,7 @@ function createWindow() {
         SELFTEST_OMNIBOX ||
         SELFTEST_VIDEO_DETECT ||
         SELFTEST_LINK_NEWWINDOW ||
+        SELFTEST_APP_MENU ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_FAVORITES_POPOVER ||
         SELFTEST_HISTORY ||
@@ -1051,12 +1064,27 @@ function createWindow() {
       }
     },
   });
+  appMenuApi = createAppMenu({
+    getState,
+    updateState,
+    publicState,
+    emitToRenderer,
+    panels,
+    chromeFullscreen,
+    getMainWindow: () => mainWindow,
+    normalizeLayout,
+    runPanelAction: (actionId) => {
+      const id = panels.getFocusedAccountId();
+      if (id) panelShortcuts.runAction(id, actionId);
+    },
+  });
   panelShortcuts.configure({
     getMainWindow: () => mainWindow,
     emitToRenderer,
     panels,
     chromeFullscreen,
     rebuildApplicationMenu: () => setupApplicationMenu(),
+    handleAppMenuKeys: (e, input, accountId) => handleAppMenuChromeKeys(e, input, accountId),
   });
   panelShortcuts.ensureIpc();
   miniPlayer.configure({
@@ -1168,9 +1196,10 @@ function createWindow() {
   mainWindow.on('hide', emitWindowVisibility);
   mainWindow.on('show', emitWindowVisibility);
 
-  // F11 / Esc when focus is on the main UI (not a panel WebContentsView)
+  // F11 / Esc / F10 / Alt-alone when focus is on the main UI (not a panel WebContentsView)
   mainWindow.webContents.on('before-input-event', (e, input) => {
     chromeFullscreen.handleBeforeInput(e, input, null);
+    handleAppMenuChromeKeys(e, input);
   });
 
   // Sync overlay colors if appearance was loaded after options snapshot
@@ -2396,6 +2425,34 @@ function createWindow() {
             waitForLayoutSettle,
             waitForPanels,
             app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_APP_MENU) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runAppMenuSelftest } = require('./selftest-app-menu');
+          runAppMenuSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            appMenuApi,
+            popupTopMenu,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);
@@ -4595,6 +4652,17 @@ function registerIpc() {
     return popupTopMenu(payload || {});
   });
 
+  ipcMain.handle('menu:app-structure', () => {
+    if (!appMenuApi) return { tree: [], labels: [], ids: [] };
+    return appMenuApi.getStructure();
+  });
+
+  ipcMain.handle('menu:app-action', (_e, payload) => {
+    if (!appMenuApi) return { ok: false, reason: 'not-ready' };
+    const id = payload && payload.id;
+    return appMenuApi.runAction(String(id || ''), (payload && payload.data) || null);
+  });
+
   ipcMain.handle('selftest:last-workspace-bg-menu', () => lastWorkspaceBgMenuPopup);
 
   ipcMain.handle('selftest:clear-workspace-bg-menu', () => {
@@ -6022,118 +6090,117 @@ async function runBgSelftest() {
   app.exit(0);
 }
 
-/* ---------- Top bar overflow menu (v1.8 B5) ---------- */
+/* ---------- App menu (logo / legacy menu:top) ---------- */
 
 /**
- * Native Menu.popup for top-bar "›" overflow.
+ * F10 opens the app menu; Alt pressed and released alone opens it.
+ * Alt+key shortcuts are never intercepted. When accountId is set (panel focus),
+ * Alt-alone is skipped if the page's active element is a text field.
+ * @param {Electron.Event} event
+ * @param {Electron.Input} input
+ * @param {string|null} [accountId]
+ * @returns {boolean}
+ */
+function handleAppMenuChromeKeys(event, input, accountId) {
+  if (!input) return false;
+  const key = String(input.key || '');
+  const code = String(input.code || '');
+  const isAlt = key === 'Alt' || code === 'AltLeft' || code === 'AltRight';
+
+  if (input.type === 'keyDown') {
+    if (key === 'F10' && !input.control && !input.alt && !input.meta && !input.shift) {
+      event.preventDefault();
+      emitToRenderer({ type: 'ui:app-menu', open: true });
+      return true;
+    }
+    if (isAlt && !input.control && !input.meta && !input.shift) {
+      appMenuAltArmed = true;
+      appMenuAltSawOther = false;
+      return false;
+    }
+    if (appMenuAltArmed && !isAlt) {
+      appMenuAltSawOther = true;
+    }
+    return false;
+  }
+
+  if (input.type === 'keyUp' && isAlt) {
+    const alone = appMenuAltArmed && !appMenuAltSawOther && !input.control && !input.meta && !input.shift;
+    appMenuAltArmed = false;
+    appMenuAltSawOther = false;
+    if (!alone) return false;
+
+    const openMenu = () => {
+      event.preventDefault();
+      emitToRenderer({ type: 'ui:app-menu', open: true });
+    };
+
+    if (!accountId) {
+      openMenu();
+      return true;
+    }
+
+    // Panel focus: skip Alt-alone when typing in a text field.
+    try {
+      const cap = panels.getPanelCapture(accountId);
+      if (cap && !cap.isDestroyed()) {
+        void cap
+          .executeJavaScript(
+            `(() => {
+              const el = document.activeElement;
+              if (!el) return false;
+              const tag = (el.tagName || '').toLowerCase();
+              if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+              return !!el.isContentEditable;
+            })()`,
+            true
+          )
+          .then((inField) => {
+            if (!inField) emitToRenderer({ type: 'ui:app-menu', open: true });
+          })
+          .catch(() => {
+            emitToRenderer({ type: 'ui:app-menu', open: true });
+          });
+        event.preventDefault();
+        return true;
+      }
+    } catch {
+      /* fall through */
+    }
+    openMenu();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Legacy menu:top — returns app-menu labels (v18/v19) or opens the DOM menu.
  * @param {{ x?: number, y?: number }} opts
  */
 function popupTopMenu(opts) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return { ok: false, reason: 'missing' };
   }
+  if (!appMenuApi) {
+    return { ok: false, reason: 'not-ready' };
+  }
   const x = Math.round(Number(opts && opts.x) || 0);
   const y = Math.round(Number(opts && opts.y) || 0);
-  const st = getState();
-
-  /** @type {Electron.MenuItemConstructorOptions[]} */
-  const template = [
-    {
-      label: 'Recarregar todas',
-      click: () => panels.panelReloadAll(st.activeWorkspaceId),
-    },
-    {
-      label: 'Som',
-      submenu: [
-        {
-          label: 'Silenciar todas',
-          click: () => {
-            panels.panelMuteAll(true, st.activeWorkspaceId);
-            emitToRenderer({ type: 'state:changed', state: publicState() });
-          },
-        },
-        {
-          label: 'Ativar som',
-          click: () => {
-            panels.panelMuteAll(false, st.activeWorkspaceId);
-            emitToRenderer({ type: 'state:changed', state: publicState() });
-          },
-        },
-      ],
-    },
-    {
-      label: 'Layout',
-      submenu: ['1', '2', '4', '6', 'auto', 'livre'].map((layout) => ({
-        label: layout === 'livre' ? 'Livre' : layout === 'auto' ? 'Auto' : layout,
-        type: 'radio',
-        checked: normalizeLayout(st.layout) === layout,
-        click: () => {
-          updateState((s) => {
-            if (!s.layoutByWorkspace || typeof s.layoutByWorkspace !== 'object') {
-              s.layoutByWorkspace = {};
-            }
-            s.layout = layout;
-            s.layoutByWorkspace[s.activeWorkspaceId] = layout;
-            s.page = 0;
-            if (!s.pageByWorkspace) s.pageByWorkspace = {};
-            s.pageByWorkspace[s.activeWorkspaceId] = 0;
-            s.maximizedAccountId = null;
-            if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
-            s.maximizedByWorkspace[s.activeWorkspaceId] = null;
-          });
-          emitToRenderer({ type: 'state:changed', state: publicState() });
-        },
-      })),
-    },
-    {
-      label: 'Downloads',
-      click: () => emitToRenderer({ type: 'ui:downloads' }),
-    },
-    {
-      label: 'Tela cheia (F11)',
-      click: () => {
-        chromeFullscreen.toggle();
-      },
-    },
-    {
-      label: 'Ajuda',
-      submenu: [
-        {
-          label: 'Novidades',
-          click: () => emitToRenderer({ type: 'ui:novidades', reason: 'menu', auto: false }),
-        },
-        {
-          label: 'Atalhos',
-          click: () => emitToRenderer({ type: 'ui:help-shortcuts' }),
-        },
-      ],
-    },
-  ];
-
-  const labels = [];
-  for (const t of template) {
-    labels.push(String(t.label || ''));
-    if (Array.isArray(t.submenu)) {
-      for (const sub of t.submenu) {
-        labels.push(String(sub.label || ''));
-      }
-    }
-  }
-  lastTopMenuPopup = { x, y, labels, at: Date.now() };
-
-  if (
+  const intercept =
     SELFTEST_INPUT ||
     SELFTEST_V18 ||
     SELFTEST_V19 ||
     SELFTEST_V110 ||
-    envGet('MULTIHEIZ_MENU_INTERCEPT') === '1'
-  ) {
-    return { ok: true, intercepted: true, labels, x, y };
-  }
-
-  const menu = Menu.buildFromTemplate(template);
-  menu.popup({ window: mainWindow, x, y });
-  return { ok: true, intercepted: false, labels, x, y };
+    SELFTEST_APP_MENU ||
+    envGet('MULTIHEIZ_MENU_INTERCEPT') === '1';
+  const result = appMenuApi.popupTopMenu({ x, y, intercept });
+  lastTopMenuPopup = {
+    x,
+    y,
+    labels: (result && result.labels) || [],
+    at: Date.now(),
+  };
+  return result;
 }
 
 /* ---------- Native account menu (v1.4.1) ---------- */

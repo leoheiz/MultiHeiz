@@ -243,7 +243,7 @@ const el = {
   btnPrev: document.getElementById('btn-prev'),
   btnNext: document.getElementById('btn-next'),
   btnAddAccount: document.getElementById('btn-add-account'),
-  btnOverflow: document.getElementById('btn-overflow'),
+  btnAppMenu: document.getElementById('btn-app-menu'),
   btnWsAdd: document.getElementById('btn-ws-add'),
   btnSettings: document.getElementById('btn-settings'),
   topbar: document.getElementById('topbar'),
@@ -1435,6 +1435,9 @@ function closeMenus() {
   document.querySelectorAll('.context-menu').forEach((n) => n.remove());
   document.querySelectorAll('.panel-ext-menu').forEach((n) => n.remove());
   document.querySelectorAll('.panel-site-perm-popover').forEach((n) => n.remove());
+  if (window.MultiHeizAppMenu && window.MultiHeizAppMenu.close) {
+    window.MultiHeizAppMenu.close();
+  }
   const lightIds = new Set([
     'volume-popover',
     'context-menu',
@@ -5067,13 +5070,63 @@ if (el.dlgCatalog) {
 }
 el.btnWsAdd.addEventListener('click', () => openWorkspaceDialog(null));
 el.btnSettings.addEventListener('click', openSettings);
-if (el.btnOverflow) {
-  el.btnOverflow.addEventListener('click', (e) => {
-    const r = el.btnOverflow.getBoundingClientRect();
-    window.multiheiz.popupTopMenu(Math.round(r.left), Math.round(r.bottom + 2));
-    e.stopPropagation();
+
+async function openAppMenuFromLogo(opts) {
+  closeMenus();
+  if (window.MultiHeizAppMenu && window.MultiHeizAppMenu.isOpen && window.MultiHeizAppMenu.isOpen()) {
+    window.MultiHeizAppMenu.close();
+    return;
+  }
+  let tree = opts && opts.tree;
+  if (!tree && window.multiheiz.getAppMenuStructure) {
+    const st = await window.multiheiz.getAppMenuStructure();
+    tree = st && st.tree;
+  }
+  if (!tree || !window.MultiHeizAppMenu) return;
+  const anchor = el.btnAppMenu || document.getElementById('btn-app-menu');
+  window.MultiHeizAppMenu.open({
+    tree,
+    anchorEl: opts && opts.x != null ? null : anchor,
+    x: opts && opts.x,
+    y: opts && opts.y,
   });
 }
+
+window.__multiheizOpenAppMenu = () => {
+  void openAppMenuFromLogo();
+};
+
+if (window.MultiHeizAppMenu && window.MultiHeizAppMenu.init) {
+  window.MultiHeizAppMenu.init({
+    onAction: (actionId, data) => {
+      if (window.multiheiz.runAppMenuAction) {
+        void window.multiheiz.runAppMenuAction(actionId, data || null);
+      }
+    },
+  });
+}
+
+if (el.btnAppMenu) {
+  el.btnAppMenu.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void openAppMenuFromLogo();
+  });
+}
+
+// Ctrl+, → Configurações (shown in app menu)
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (e.key === ',' && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      const t = e.target;
+      const tag = t && t.tagName ? String(t.tagName).toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || (t && t.isContentEditable)) return;
+      e.preventDefault();
+      openSettings();
+    }
+  },
+  true
+);
 if (el.btnTabsMore) {
   el.btnTabsMore.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -5921,6 +5974,36 @@ window.multiheiz.onEvent((payload) => {
     }
     return;
   }
+  if (payload.type === 'ui:app-menu') {
+    if (payload.open === false) {
+      if (window.MultiHeizAppMenu) window.MultiHeizAppMenu.close();
+      return;
+    }
+    void openAppMenuFromLogo({
+      tree: payload.tree,
+      x: payload.x,
+      y: payload.y,
+    });
+    return;
+  }
+  if (payload.type === 'ui:new-workspace') {
+    openWorkspaceDialog(null);
+    return;
+  }
+  if (payload.type === 'ui:memory-monitor') {
+    openMemPopover();
+    return;
+  }
+  if (payload.type === 'ui:open-settings-section') {
+    openSettingsSection(payload.section || 'geral');
+    return;
+  }
+  if (payload.type === 'ui:open-module' && payload.moduleId) {
+    if (window.MultiHeizV16 && window.MultiHeizV16.openModule) {
+      window.MultiHeizV16.openModule(payload.moduleId);
+    }
+    return;
+  }
   if (payload.type === 'ui:new-account') {
     void openCatalogPicker();
     return;
@@ -6492,6 +6575,14 @@ window.__multiheizUi = {
     return { ok: true, id };
   },
   openSettings: () => openSettings(),
+  openAppMenu: () => openAppMenuFromLogo(),
+  closeAppMenu: () => {
+    if (window.MultiHeizAppMenu) window.MultiHeizAppMenu.close();
+  },
+  getAppMenuDebug: () =>
+    window.MultiHeizAppMenu && window.MultiHeizAppMenu.getDebugState
+      ? window.MultiHeizAppMenu.getDebugState()
+      : { open: false },
   setClockSkewBanner,
   closeSettings: () => {
     if (el.dlgSettings.open) el.dlgSettings.close();
@@ -7239,7 +7330,7 @@ function setWindowMaximizedUi(maximized) {
 function isTopbarInteractiveTarget(target) {
   if (!target || !target.closest) return false;
   return !!target.closest(
-    'button, select, input, a, label, .tabs, .tab, .layout-label, .pager, .win-controls, .app-icon'
+    'button, select, input, a, label, .tabs, .tab, .layout-label, .pager, .win-controls, .app-icon, .btn-app-menu'
   );
 }
 

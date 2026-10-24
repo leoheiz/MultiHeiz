@@ -64,6 +64,7 @@ function noteAction(action, accountId, detail) {
  *   panels: object,
  *   chromeFullscreen: object,
  *   rebuildApplicationMenu?: () => void,
+ *   handleAppMenuKeys?: (event: Electron.Event, input: Electron.Input, accountId: string|null) => boolean,
  * }} deps
  */
 function configure(deps) {
@@ -72,7 +73,12 @@ function configure(deps) {
   panelsApi = deps.panels;
   chromeFullscreenApi = deps.chromeFullscreen;
   rebuildMenu = typeof deps.rebuildApplicationMenu === 'function' ? deps.rebuildApplicationMenu : null;
+  handleAppMenuKeys =
+    typeof deps.handleAppMenuKeys === 'function' ? deps.handleAppMenuKeys : null;
 }
+
+/** @type {((event: Electron.Event, input: Electron.Input, accountId: string|null) => boolean)|null} */
+let handleAppMenuKeys = null;
 
 function keyboardSettings() {
   try {
@@ -579,7 +585,13 @@ function handleEscape(event, accountId) {
  */
 function handleBeforeInput(event, input, accountId) {
   ensureIpc();
-  if (!input || input.type !== 'keyDown') return false;
+  if (!input) return false;
+
+  if (handleAppMenuKeys && handleAppMenuKeys(event, input, accountId)) {
+    return true;
+  }
+
+  if (input.type !== 'keyDown') return false;
 
   // Escape is special (find / FS / stop)
   const keyName = keymap.inputKeyName(input);
