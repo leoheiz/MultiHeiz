@@ -37,6 +37,8 @@ async function runMiniPlayerSelftest(ctx) {
     }
   }
 
+  // Twitch/YouTube-like: nested fixed-size wrapper, transform:scale, overflow:hidden,
+  // and a resize script that sets inline video width/height (must not beat isolation).
   const PAGE = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>mini</title>
 <style>
   body { margin:0; background:#102030; color:#eee; font:16px sans-serif; }
@@ -45,6 +47,9 @@ async function runMiniPlayerSelftest(ctx) {
   #main { margin-left:180px; margin-top:80px; padding:16px; }
   #comments { margin-top:24px; padding:12px; background:#1a2838; }
   img.banner { width:100%; max-width:640px; height:120px; background:#555; display:block; }
+  .player-shell { width:640px; height:360px; overflow:hidden; position:relative; background:#000; }
+  .player-scale { width:640px; height:360px; transform:scale(1); transform-origin:top left; contain:layout style; }
+  .player-inner { width:640px; height:360px; position:relative; overflow:hidden; }
 </style>
 </head>
 <body>
@@ -53,43 +58,61 @@ async function runMiniPlayerSelftest(ctx) {
 <main id="main">
   <img class="banner" alt="banner" width="640" height="120" />
   <p>Lots of surrounding text that must not appear in the mini player.</p>
-  <video id="v" width="320" height="180" autoplay muted loop playsinline
-    style="display:block;width:320px;height:180px;background:#000"></video>
+  <div class="player-shell">
+    <div class="player-scale">
+      <div class="player-inner" id="player-inner">
+        <video id="v" width="640" height="360" autoplay muted loop playsinline
+          style="display:block;width:640px;height:360px;background:#000"></video>
+      </div>
+    </div>
+  </div>
   <section id="comments">
     <h2>Comments</h2>
     <p>Comment one about the video.</p>
     <p>Comment two with more text.</p>
   </section>
 </main>
-<canvas id="c" width="320" height="180" style="display:none"></canvas>
+<canvas id="c" width="640" height="360" style="display:none"></canvas>
 <script>
 (function(){
   var c = document.getElementById('c');
   var ctx = c.getContext('2d');
   function frame(t) {
     ctx.fillStyle = '#203040';
-    ctx.fillRect(0, 0, 320, 180);
+    ctx.fillRect(0, 0, 640, 360);
     ctx.fillStyle = '#e8a838';
-    ctx.fillRect((t / 16) % 320, 40, 40, 100);
+    ctx.fillRect((t / 16) % 640, 80, 80, 200);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
   var v = document.getElementById('v');
   v.srcObject = c.captureStream(24);
   v.play().catch(function(){});
+  function syncInlineSize() {
+    var vid = document.getElementById('v') || document.querySelector('video');
+    if (!vid) return;
+    var w = Math.round(window.innerWidth * 0.5) || 640;
+    var h = Math.round(window.innerHeight * 0.5) || 360;
+    vid.width = w; vid.height = h;
+    vid.style.width = w + 'px';
+    vid.style.height = h + 'px';
+  }
+  window.addEventListener('resize', syncInlineSize);
+  syncInlineSize();
   window.__miniReady = true;
   window.__replaceVideo = function() {
     var old = document.getElementById('v');
     var parent = old.parentNode;
     var nv = document.createElement('video');
     nv.id = 'v';
-    nv.width = 320; nv.height = 180;
+    nv.width = 640; nv.height = 360;
     nv.autoplay = true; nv.muted = true; nv.loop = true;
     nv.setAttribute('playsinline', '');
-    nv.style.cssText = 'display:block;width:320px;height:180px;background:#000';
+    nv.style.cssText = 'display:block;width:640px;height:360px;background:#000';
     nv.srcObject = c.captureStream(24);
     parent.replaceChild(nv, old);
     nv.play().catch(function(){});
+    syncInlineSize();
     return true;
   };
 })();
@@ -242,35 +265,49 @@ async function runMiniPlayerSelftest(ctx) {
   assert(snap.focusable === true, 'focusable after main unlock');
   console.log('PASS: unlock via main-window button/IPC path');
 
-  // Resize: video rect should match viewport within ~1 frame / 50ms (no CSS re-inject).
+  // Resize: video element rect must match viewport (object-fit:contain) within 2px
+  // across several sizes / aspect ratios — including after player JS sets inline size.
   if (typeof miniPlayer.contentExec === 'function') {
     const wins = BrowserWindow.getAllWindows().filter(
       (w) => w && !w.isDestroyed() && w.getTitle && /mini/i.test(String(w.getTitle() || ''))
     );
     const mpWin = wins[0] || BrowserWindow.getAllWindows().find((w) => w !== ctx.mainWindow);
     if (mpWin && !mpWin.isDestroyed()) {
-      try {
-        mpWin.setSize(520, 340);
-      } catch {
-        /* ignore */
+      const sizes = [
+        [520, 340],
+        [800, 450],
+        [360, 640],
+        [640, 280],
+        [480, 480],
+      ];
+      for (const [sw, sh] of sizes) {
+        try {
+          mpWin.setSize(sw, sh);
+        } catch {
+          /* ignore */
+        }
+        await sleep(80);
+        const fit = await miniPlayer.contentExec(`(() => {
+          try { if (window.__mhMiniIsolate && window.__mhMiniIsolate.refreshLayout) window.__mhMiniIsolate.refreshLayout(); } catch (e) {}
+          var v = window.__mhMiniIsolate && window.__mhMiniIsolate.video;
+          if (!v) return { ok: false, reason: 'no-video' };
+          var r = v.getBoundingClientRect();
+          var w = window.innerWidth || 0;
+          var h = window.innerHeight || 0;
+          var tol = 2;
+          return {
+            ok: Math.abs(r.width - w) <= tol && Math.abs(r.height - h) <= tol &&
+              Math.abs(r.left) <= tol && Math.abs(r.top) <= tol,
+            r: { w: r.width, h: r.height, l: r.left, t: r.top },
+            viewport: { w: w, h: h },
+            inline: { w: v.style.width, h: v.style.height },
+            inHost: !!(v.parentElement && v.parentElement.id === 'mh-mini-host'),
+          };
+        })()`);
+        assert(fit && fit.ok, 'video rect matches viewport after setSize ' + sw + 'x' + sh, fit);
+        assert(fit.inHost, 'video reparented into mh-mini-host', fit);
       }
-      await sleep(50);
-      const fit = await miniPlayer.contentExec(`(() => {
-        var v = window.__mhMiniIsolate && window.__mhMiniIsolate.video;
-        if (!v) return { ok: false, reason: 'no-video' };
-        var r = v.getBoundingClientRect();
-        var w = window.innerWidth || 0;
-        var h = window.innerHeight || 0;
-        var tol = 4;
-        return {
-          ok: Math.abs(r.width - w) <= tol && Math.abs(r.height - h) <= tol &&
-            Math.abs(r.left) <= tol && Math.abs(r.top) <= tol,
-          r: { w: r.width, h: r.height, l: r.left, t: r.top },
-          viewport: { w: w, h: h },
-        };
-      })()`);
-      assert(fit && fit.ok, 'video rect matches viewport after setSize', fit);
-      console.log('PASS: resize video fits viewport within ~50ms');
+      console.log('PASS: resize video fills viewport (Twitch-like wrappers + inline sizes)');
     } else {
       console.log('PASS: resize skipped (no mini BrowserWindow title match)');
     }

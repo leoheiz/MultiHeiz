@@ -24,10 +24,19 @@ const CHROME_PRELOAD = path.resolve(__dirname, '..', 'preload', 'mini-player-pre
 const CHROME_H = 36;
 const DEFAULT_LOCK_COMBO = 'Ctrl+Alt+L';
 
-/** Injected into content view: hide page chrome, fill viewport with the video. */
+/**
+ * Injected into content view: hide page chrome, fill viewport with the video.
+ * Root cause of Twitch/YouTube letterboxing: ancestors with transform/filter/contain
+ * create a containing block for position:fixed, and wrappers keep fixed pixel sizes.
+ * Fix: reparent the <video> into a full-viewport host under documentElement (escapes
+ * transformed ancestors), force 100vw/100vh + object-fit:contain with !important, and
+ * fight inline width/height set by player JS via a style MutationObserver.
+ */
 const ISOLATE_VIDEO_JS = `(() => {
   const STYLE_ID = 'mh-mini-isolate-style';
+  const HOST_ID = 'mh-mini-host';
   const ATTR = 'data-mh-mini-video';
+  const CTX_ATTR = 'data-mh-ctx-video';
   if (window.__mhMiniIsolateInstalled) {
     try { window.__mhMiniIsolate.apply(); } catch (e) {}
     return !!window.__mhMiniIsolate.lastOk;
@@ -35,6 +44,15 @@ const ISOLATE_VIDEO_JS = `(() => {
   window.__mhMiniIsolateInstalled = true;
 
   function pickVideo() {
+    try {
+      var marked = document.querySelector('video[' + CTX_ATTR + ']');
+      if (marked) return marked;
+    } catch (e) {}
+    var host = document.getElementById(HOST_ID);
+    if (host) {
+      var hv = host.querySelector('video');
+      if (hv) return hv;
+    }
     const list = Array.from(document.querySelectorAll('video'));
     if (!list.length) return null;
     const playing = list.find((v) => !v.paused && v.readyState >= 2);
@@ -56,18 +74,91 @@ const ISOLATE_VIDEO_JS = `(() => {
       style.id = STYLE_ID;
       (document.head || document.documentElement).appendChild(style);
     }
-    // Native viewport units so resize reflows without JS re-inject.
     style.textContent = [
       'html, body { background:#000 !important; margin:0 !important; overflow:hidden !important; height:100% !important; width:100% !important; }',
       'body * { visibility:hidden !important; pointer-events:none !important; }',
+      '#' + HOST_ID + ', #' + HOST_ID + ' * { visibility:visible !important; pointer-events:auto !important; }',
       'video[' + ATTR + '], video[' + ATTR + '] * { visibility:visible !important; pointer-events:auto !important; }',
+      '#' + HOST_ID + ' {',
+      '  position:fixed !important; inset:0 !important; left:0 !important; top:0 !important;',
+      '  width:100vw !important; height:100vh !important; max-width:none !important; max-height:none !important;',
+      '  min-width:0 !important; min-height:0 !important; margin:0 !important; padding:0 !important;',
+      '  overflow:hidden !important; transform:none !important; contain:none !important;',
+      '  z-index:2147483646 !important; background:#000 !important;',
+      '}',
       'video[' + ATTR + '] {',
-      '  position:fixed !important; inset:0 !important; width:100vw !important; height:100vh !important;',
-      '  max-width:none !important; max-height:none !important; object-fit:contain !important;',
-      '  z-index:2147483647 !important; background:#000 !important; margin:0 !important;',
-      '  transform:none !important; left:0 !important; top:0 !important;',
+      '  position:fixed !important; inset:0 !important; left:0 !important; top:0 !important;',
+      '  width:100vw !important; height:100vh !important;',
+      '  max-width:none !important; max-height:none !important;',
+      '  min-width:0 !important; min-height:0 !important;',
+      '  object-fit:contain !important; object-position:center !important;',
+      '  z-index:2147483647 !important; background:#000 !important; margin:0 !important; padding:0 !important;',
+      '  transform:none !important; border:0 !important;',
       '}',
     ].join('\\n');
+  }
+
+  function ensureHost() {
+    var host = document.getElementById(HOST_ID);
+    if (!host) {
+      host = document.createElement('div');
+      host.id = HOST_ID;
+      (document.documentElement || document.body).appendChild(host);
+    } else if (host.parentNode !== document.documentElement && document.documentElement) {
+      document.documentElement.appendChild(host);
+    }
+    return host;
+  }
+
+  function lockVideoInline(v) {
+    if (!v) return;
+    var applying = false;
+    function force() {
+      if (applying) return;
+      applying = true;
+      try {
+        v.removeAttribute('width');
+        v.removeAttribute('height');
+        v.style.setProperty('position', 'fixed', 'important');
+        v.style.setProperty('inset', '0', 'important');
+        v.style.setProperty('left', '0', 'important');
+        v.style.setProperty('top', '0', 'important');
+        v.style.setProperty('width', '100vw', 'important');
+        v.style.setProperty('height', '100vh', 'important');
+        v.style.setProperty('max-width', 'none', 'important');
+        v.style.setProperty('max-height', 'none', 'important');
+        v.style.setProperty('min-width', '0', 'important');
+        v.style.setProperty('min-height', '0', 'important');
+        v.style.setProperty('object-fit', 'contain', 'important');
+        v.style.setProperty('transform', 'none', 'important');
+        v.style.setProperty('margin', '0', 'important');
+        v.style.setProperty('z-index', '2147483647', 'important');
+      } catch (e) {}
+      applying = false;
+    }
+    force();
+    if (!v.__mhStyleMo) {
+      try {
+        v.__mhStyleMo = new MutationObserver(function () { force(); });
+        v.__mhStyleMo.observe(v, { attributes: true, attributeFilter: ['style', 'width', 'height'] });
+      } catch (e2) {}
+    }
+  }
+
+  function refreshLayout() {
+    ensureStyle();
+    var host = document.getElementById(HOST_ID);
+    var v = window.__mhMiniIsolate.video || (host && host.querySelector('video')) || pickVideo();
+    if (!v) return false;
+    if (host) {
+      try {
+        host.style.setProperty('width', '100vw', 'important');
+        host.style.setProperty('height', '100vh', 'important');
+        host.style.setProperty('transform', 'none', 'important');
+      } catch (e) {}
+    }
+    lockVideoInline(v);
+    return true;
   }
 
   function apply() {
@@ -80,8 +171,13 @@ const ISOLATE_VIDEO_JS = `(() => {
       window.__mhMiniIsolate.lastOk = false;
       return false;
     }
+    var host = ensureHost();
+    try {
+      if (v.parentNode !== host) host.appendChild(v);
+    } catch (e) {}
     v.setAttribute(ATTR, '1');
-    try { v.setAttribute('playsinline', ''); } catch (e) {}
+    try { v.setAttribute('playsinline', ''); } catch (e2) {}
+    lockVideoInline(v);
     window.__mhMiniIsolate.lastOk = true;
     window.__mhMiniIsolate.video = v;
     return true;
@@ -131,7 +227,7 @@ const ISOLATE_VIDEO_JS = `(() => {
     return { ok: true, state: mediaState() };
   }
 
-  window.__mhMiniIsolate = { apply, pickVideo, hitAt, mediaState, mediaCmd, lastOk: false };
+  window.__mhMiniIsolate = { apply, refreshLayout, pickVideo, hitAt, mediaState, mediaCmd, lastOk: false };
 
   const _push = history.pushState;
   history.pushState = function () {
@@ -154,6 +250,9 @@ const ISOLATE_VIDEO_JS = `(() => {
   window.addEventListener('yt-navigate-finish', function () {
     setTimeout(apply, 50);
     setTimeout(apply, 300);
+  });
+  window.addEventListener('resize', function () {
+    try { refreshLayout(); } catch (e) {}
   });
   try {
     const mo = new MutationObserver(function () {
@@ -947,8 +1046,14 @@ async function open(accountId) {
   }
 
   layoutChildren();
-  // Bounds only — never re-inject isolation CSS/JS on resize (viewport CSS handles video).
-  miniWin.on('resize', () => layoutChildren());
+  // Bounds + cheap style re-assert (no full re-inject). Players that set inline
+  // width/height on resize lose to !important + MutationObserver inside isolation.
+  miniWin.on('resize', () => {
+    layoutChildren();
+    contentExec(
+      `(() => { try { return !!(window.__mhMiniIsolate && window.__mhMiniIsolate.refreshLayout && window.__mhMiniIsolate.refreshLayout()); } catch (e) { return false; } })()`
+    ).catch(() => {});
+  });
   miniWin.on('move', () => {
     /* persisted on close */
   });
