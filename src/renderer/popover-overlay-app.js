@@ -512,6 +512,29 @@
     }
   }
 
+  /** Prefer real title; never show raw URL/path — domain only when untitled. */
+  function historyRowTitle(e) {
+    const t = String((e && e.title) || '').trim();
+    const url = (e && e.url) || '';
+    if (t && !/^https?:\/\//i.test(t) && t !== url && !t.startsWith('/')) {
+      try {
+        const u = new URL(url);
+        if (
+          t !== u.href &&
+          t !== u.hostname &&
+          t !== u.host &&
+          t !== u.pathname &&
+          t !== u.pathname + u.search
+        ) {
+          return t;
+        }
+      } catch {
+        return t;
+      }
+    }
+    return historyDomain(url) || 'Página';
+  }
+
   function historyTooltipUrl(url) {
     try {
       const u = new URL(String(url || ''));
@@ -547,7 +570,7 @@
       b.textContent = glyph;
       b.addEventListener('click', () => {
         window.mhPopover.action({ type });
-        if (type === 'history-open-page' && !(data && data.pinned)) {
+        if (type === 'history-open-page') {
           window.mhPopover.close('action');
         }
       });
@@ -556,16 +579,7 @@
     const searchToggle = mkIcon('Buscar', 'history-search-toggle', 'history-focus-search', '⌕');
     const trashBtn = mkIcon('Limpar histórico', 'history-trash', 'history-clear', '🗑');
     const openPageBtn = mkIcon('Abrir página completa', 'history-open-page', 'history-open-page', '…');
-    const pinBtn = document.createElement('button');
-    pinBtn.type = 'button';
-    pinBtn.className = 'history-popover-pin' + (data && data.pinned ? ' is-pinned' : '');
-    pinBtn.dataset.role = 'history-pin';
-    pinBtn.title = data && data.pinned ? 'Desafixar' : 'Fixar';
-    pinBtn.textContent = data && data.pinned ? 'Fixado' : 'Fixar';
-    pinBtn.addEventListener('click', () => {
-      window.mhPopover.action({ type: 'history-pin', pinned: !(data && data.pinned) });
-    });
-    headActions.append(searchToggle, trashBtn, openPageBtn, pinBtn);
+    headActions.append(searchToggle, trashBtn, openPageBtn);
     head.append(title, headActions);
     pop.appendChild(head);
 
@@ -631,7 +645,7 @@
         img.src = e.favicon || faviconFor(e.url);
         const lab = document.createElement('span');
         lab.className = 'history-item-title';
-        lab.textContent = e.title || historyDomain(e.url) || 'Página';
+        lab.textContent = historyRowTitle(e);
         const time = document.createElement('span');
         time.className = 'history-item-time';
         time.textContent = new Date(e.time || 0).toLocaleTimeString('pt-BR', {
@@ -646,7 +660,7 @@
             url: e.url,
             windowId: e.windowId,
           });
-          if (!(data && data.pinned)) window.mhPopover.close('action');
+          window.mhPopover.close('action');
         });
         list.appendChild(row);
       }
@@ -684,16 +698,7 @@
     head.className = 'favorites-popover-head';
     const title = document.createElement('strong');
     title.textContent = 'Favoritos';
-    const pinBtn = document.createElement('button');
-    pinBtn.type = 'button';
-    pinBtn.className = 'favorites-popover-pin' + (data && data.pinned ? ' is-pinned' : '');
-    pinBtn.dataset.role = 'favorites-pin';
-    pinBtn.title = data && data.pinned ? 'Desafixar' : 'Fixar';
-    pinBtn.textContent = data && data.pinned ? 'Fixado' : 'Fixar';
-    pinBtn.addEventListener('click', () => {
-      window.mhPopover.action({ type: 'favorites-pin', pinned: !(data && data.pinned) });
-    });
-    head.append(title, pinBtn);
+    head.append(title);
     pop.appendChild(head);
 
     const search = document.createElement('input');
@@ -771,7 +776,7 @@
               bookmarkId: it.id,
               url: it.url,
             });
-            if (!(data && data.pinned)) window.mhPopover.close('action');
+            window.mhPopover.close('action');
           });
           tree.appendChild(itemBtn);
         }
@@ -789,9 +794,6 @@
       b.textContent = label;
       b.addEventListener('click', () => {
         window.mhPopover.action({ type });
-        if (type !== 'favorites-add-folder' && type !== 'favorites-add' && !(data && data.pinned)) {
-          /* keep open for add flows handled by chrome */
-        }
         if (type === 'favorites-open-page') window.mhPopover.close('action');
       });
       return b;

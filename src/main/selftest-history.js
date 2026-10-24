@@ -258,6 +258,80 @@ async function runHistorySelftest(ctx) {
   assert(history.query({ search: 'Gamma', limit: 10 }).length === 0, 'multi-select delete persists');
   console.log('PASS: multi-select delete persists');
 
+  // --- Consecutive same-URL collapse (~10 min) + late title + domain-only ---
+  history.clearAll();
+  const collapseUrl = 'https://dedupe.example/watch?v=1';
+  const r1 = history.record({
+    url: collapseUrl,
+    title: '',
+    windowId: 'acc-hist',
+    windowName: 'Hist',
+  });
+  assert(r1 && r1.id, 'first visit recorded', r1);
+  await sleep(50);
+  const r2 = history.record({
+    url: collapseUrl,
+    title: '',
+    windowId: 'acc-hist',
+    windowName: 'Hist',
+  });
+  await sleep(50);
+  const r3 = history.record({
+    url: collapseUrl,
+    title: '',
+    windowId: 'acc-hist',
+    windowName: 'Hist',
+  });
+  assert(r2 && r2.id === r1.id, '2nd visit collapsed into same row', r2);
+  assert(r3 && r3.id === r1.id, '3rd visit collapsed into same row', r3);
+  assert((r3.visitCount || 0) >= 3, 'visitCount incremented', r3);
+  const collapsed = history.query({ limit: 20 }).filter((e) => e.url && e.url.includes('dedupe.example'));
+  assert(collapsed.length === 1, '3 quick same-URL visits → 1 row', collapsed.length);
+  console.log('PASS: consecutive same-URL collapse');
+
+  const titled = history.updateTitle({
+    windowId: 'acc-hist',
+    url: collapseUrl,
+    title: 'Dedupe Title Later',
+  });
+  assert(titled, 'late title update applied');
+  const afterTitle = history.query({ limit: 5 }).find((e) => e.id === r1.id);
+  assert(afterTitle && afterTitle.title === 'Dedupe Title Later', 'title updates same entry', afterTitle);
+  console.log('PASS: late title updates same entry');
+
+  history.record({
+    url: 'https://untitled.example/path/only',
+    title: '/path/only',
+    windowId: 'acc-hist',
+    windowName: 'Hist',
+  });
+  const untitled = history.query({ search: 'untitled.example', limit: 5 })[0];
+  assert(untitled, 'untitled row exists');
+  assert(!untitled.title || untitled.title === '', 'path-like title not stored', untitled);
+  assert(
+    history.displayTitle(untitled) === 'untitled.example',
+    'untitled → domain only',
+    history.displayTitle(untitled)
+  );
+  console.log('PASS: untitled shows domain only');
+
+  history.record({
+    url: 'https://other.example/a',
+    title: 'Other A',
+    windowId: 'acc-hist',
+    windowName: 'Hist',
+  });
+  await sleep(30);
+  history.record({
+    url: 'https://other.example/b',
+    title: 'Other B',
+    windowId: 'acc-hist',
+    windowName: 'Hist',
+  });
+  const distinct = history.query({ search: 'other.example', limit: 10 });
+  assert(distinct.length === 2, 'distinct URLs stay separate', distinct.length);
+  console.log('PASS: distinct URLs stay separate');
+
   console.log('PASS: selftest:history complete');
   app.exit(0);
 }

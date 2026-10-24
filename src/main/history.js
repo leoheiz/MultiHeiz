@@ -4,7 +4,10 @@ const { createJsonStore } = require('./json-store');
 
 const MAX_ENTRIES = 50000;
 const MAX_CLOSED = 100;
+/** Ignore duplicate navigations within this window (ms). */
 const DEDUPE_MS = 2000;
+/** Collapse consecutive same-URL visits in the same window within this window (ms). */
+const COLLAPSE_MS = 10 * 60 * 1000;
 
 /** Param names (exact or substring) stripped before save — case-insensitive. */
 const SENSITIVE_EXACT = new Set([
@@ -145,33 +148,146 @@ function shouldIgnoreUrl(url) {
   return false;
 }
 
+/**
+ * True when title is a real page title (not empty, not a raw URL/path).
+ * @param {string} title
+ * @param {string} [url]
+ * @returns {boolean}
+ */
+function isUsefulTitle(title, url) {
+  const t = String(title || '').trim();
+  if (!t) return false;
+  if (/^https?:\/\//i.test(t)) return false;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(t) && t.includes('://')) return false;
+  const rawUrl = String(url || '');
+  if (rawUrl && (t === rawUrl || t === stripSensitiveUrl(rawUrl))) return false;
+  try {
+    const u = new URL(rawUrl || t);
+    if (t === u.href || t === u.origin || t === u.host || t === u.hostname) return false;
+    if (t === u.pathname || t === u.pathname + u.search) return false;
+    const host = u.hostname.replace(/^www\./i, '');
+    if (t === host || t === `www.${host}`) return false;
+  } catch {
+    /* title may not be a URL */
+  }
+  // Path-like chrome default before real title arrives
+  if (t.startsWith('/') && t.length > 1) return false;
+  return true;
+}
+
+/**
+ * Title for UI rows: useful title, else domain only (never path/query).
+ * @param {{ title?: string, url?: string }|null|undefined} entry
+ * @returns {string}
+ */
+function displayTitle(entry) {
+  if (!entry) return 'Página';
+  const url = entry.url || '';
+  if (isUsefulTitle(entry.title, url)) return String(entry.title).trim();
+  return domainOf(url) || 'Página';
+}
+
+/**
+ * Normalize title for storage: empty when not useful (updated later via page-title-updated).
+ * @param {string} title
+ * @param {string} [url]
+ * @returns {string}
+ */
+function cleanTitle(title, url) {
+  return isUsefulTitle(title, url) ? String(title).trim() : '';
+}
+
+/**
+ * Update the latest matching history row when the real page title arrives (SPA-friendly).
+ * @param {{ windowId?: string|null, url?: string, title?: string }} opts
+ * @returns {boolean}
+ */
+function updateTitle({ windowId, url, title } = {}) {
+  const wid = windowId || null;
+  const safeUrl = url ? stripSensitiveUrl(url) : '';
+  const nextTitle = cleanTitle(title, safeUrl || url);
+  if (!nextTitle) return false;
+  let updated = false;
+  store.update((d) => {
+    if (!d.entries || !d.entries.length) return;
+    for (let i = d.entries.length - 1; i >= 0; i--) {
+      const e = d.entries[i];
+      if (!e) continue;
+      if (wid != null && e.windowId !== wid) continue;
+      if (safeUrl && e.url !== safeUrl) continue;
+      if (e.title === nextTitle) {
+        updated = true;
+        return;
+      }
+      e.title = nextTitle;
+      updated = true;
+      return;
+    }
+  });
+  return updated;
+}
+
 function record({ url, title, favicon, windowId, windowName }) {
   if (shouldIgnoreUrl(url)) return null;
   const safeUrl = stripSensitiveUrl(url);
   const key = `${windowId || ''}|${safeUrl}`;
   const now = Date.now();
-  const prev = lastRecordAt.get(key) || 0;
-  if (now - prev < DEDUPE_MS) return null;
-  lastRecordAt.set(key, now);
-
-  const entry = {
-    id: `hist-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-    url: safeUrl,
-    title: String(title || ''),
-    favicon: favicon || '',
-    windowId: windowId || null,
-    windowName: windowName || '',
-    time: now,
-  };
+  const storedTitle = cleanTitle(title, safeUrl);
+  /** @type {object|null} */
+  let result = null;
+  /** @type {'collapsed'|'created'|'skipped'} */
+  let outcome = 'skipped';
 
   store.update((d) => {
     if (!d.entries) d.entries = [];
+    // Collapse consecutive same-URL visits (same window) within ~10 min.
+    for (let i = d.entries.length - 1; i >= 0; i--) {
+      const e = d.entries[i];
+      if (!e) continue;
+      const sameWindow = (e.windowId || null) === (windowId || null);
+      if (!sameWindow) continue;
+      if (e.url === safeUrl && now - (e.time || 0) <= COLLAPSE_MS) {
+        e.time = now;
+        e.visitCount = (Number(e.visitCount) || 1) + 1;
+        if (storedTitle) e.title = storedTitle;
+        if (favicon) e.favicon = favicon;
+        if (windowName) e.windowName = windowName;
+        result = e;
+        outcome = 'collapsed';
+        return;
+      }
+      // Different URL in this window → not consecutive
+      break;
+    }
+    const prevAt = lastRecordAt.get(key) || 0;
+    if (now - prevAt < DEDUPE_MS) {
+      outcome = 'skipped';
+      return;
+    }
+    const entry = {
+      id: `hist-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      url: safeUrl,
+      title: storedTitle,
+      favicon: favicon || '',
+      windowId: windowId || null,
+      windowName: windowName || '',
+      time: now,
+      visitCount: 1,
+    };
     d.entries.push(entry);
     if (d.entries.length > MAX_ENTRIES) {
       d.entries = d.entries.slice(d.entries.length - MAX_ENTRIES);
     }
+    result = entry;
+    outcome = 'created';
   });
-  return entry;
+
+  if (outcome === 'collapsed' || outcome === 'created') {
+    lastRecordAt.set(key, now);
+  } else if (storedTitle) {
+    updateTitle({ windowId, url: safeUrl, title });
+  }
+  return result;
 }
 
 /**
@@ -292,6 +408,7 @@ module.exports = {
   record,
   recordClosed,
   query,
+  updateTitle,
   deleteEntry,
   deleteEntries,
   clearAll,
@@ -303,6 +420,11 @@ module.exports = {
   stripSensitiveUrl,
   urlWithoutQuery,
   domainOf,
+  isUsefulTitle,
+  cleanTitle,
+  displayTitle,
   migrateSensitiveOnce,
   MAX_ENTRIES,
+  COLLAPSE_MS,
+  DEDUPE_MS,
 };

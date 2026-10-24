@@ -1452,6 +1452,9 @@ function createPanel(accountId) {
   if (isAccountRemoving(accountId)) return null;
   const account = getAccount(accountId);
   if (!account) return null;
+  // "Nova janela" still on its start page: the renderer shows HTML in the slot,
+  // no WebContentsView until a choice is committed (start-page:open).
+  if (account.pendingStartPage) return null;
 
   clearSuspendTimer(accountId);
   forceSuspended.delete(accountId);
@@ -1779,6 +1782,24 @@ function createPanel(accountId) {
     } catch {
       /* ignore */
     }
+    try {
+      const acc = getAccount(accountId);
+      if (acc && !acc.privateHistory) {
+        let pageUrl = '';
+        try {
+          pageUrl = view.webContents.getURL() || '';
+        } catch {
+          pageUrl = '';
+        }
+        history.updateTitle({
+          windowId: accountId,
+          url: pageUrl,
+          title: title != null ? String(title) : view.webContents.getTitle(),
+        });
+      }
+    } catch {
+      /* ignore */
+    }
   });
   view.webContents.on('page-favicon-updated', (_e, favicons) => {
     const favicon = Array.isArray(favicons) && favicons.length ? favicons[0] : '';
@@ -1976,9 +1997,10 @@ function recordHistory(accountId, url) {
   } catch {
     /* ignore */
   }
+  // Store empty title until page-title-updated (avoid raw URL/path rows).
   history.record({
     url,
-    title: title || acc.name || '',
+    title: history.cleanTitle(title, url),
     favicon,
     windowId: accountId,
     windowName: acc.name || '',
@@ -2592,7 +2614,11 @@ function syncVisiblePanels(slots) {
   const needCreate = lastSlots
     .filter((s) => Number(s.width) > 1 && Number(s.height) > 1)
     .map((s) => s.accountId)
-    .filter((id) => !panels.has(id) && !isAccountRemoving(id) && !forceSuspended.has(id));
+    .filter((id) => {
+      if (panels.has(id) || isAccountRemoving(id) || forceSuspended.has(id)) return false;
+      const acc = getAccount(id);
+      return !(acc && acc.pendingStartPage);
+    });
   if (needCreate.length > 1) {
     // Create first with bounds via applySlotBounds path that uses queue
     for (const id of needCreate) {

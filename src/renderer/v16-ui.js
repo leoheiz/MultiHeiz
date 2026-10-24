@@ -492,6 +492,29 @@
     }
   }
 
+  /** Prefer real title; never show raw URL/path — domain only when untitled. */
+  function historyRowTitleText(e) {
+    const t = String((e && e.title) || '').trim();
+    const url = (e && e.url) || '';
+    if (t && !/^https?:\/\//i.test(t) && t !== url && !t.startsWith('/')) {
+      try {
+        const u = new URL(url);
+        if (
+          t !== u.href &&
+          t !== u.hostname &&
+          t !== u.host &&
+          t !== u.pathname &&
+          t !== u.pathname + u.search
+        ) {
+          return t;
+        }
+      } catch {
+        return t;
+      }
+    }
+    return historyDomainOnly(url) || 'Página';
+  }
+
   function historyTooltipSafe(url) {
     try {
       const u = new URL(String(url || ''));
@@ -689,7 +712,7 @@
               className: 'mgr-row-main',
               onClick: () => openWithTarget(e.url, e.windowId),
             },
-              h('strong', { className: 'history-row-title', text: e.title || domain || 'Página' }),
+              h('strong', { className: 'history-row-title', text: historyRowTitleText(e) }),
               h('span', { className: 'muted-note history-row-domain', text: domain })
             ),
             h('span', { className: 'history-row-time', text: time }),
