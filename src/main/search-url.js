@@ -56,5 +56,6 @@ function resolveNavigateUrl(input, settings = {}) {
 module.exports = {
   looksLikeUrl,
   resolveNavigateUrl,
+  toSearchUrl,
   SEARCH_ENGINES,
 };
