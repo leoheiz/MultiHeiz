@@ -68,6 +68,26 @@ async function runOmniboxSelftest(ctx) {
       time: now - i * 60000,
     });
   }
+  for (let i = 0; i < 8; i++) {
+    entries.push({
+      id: `hist-yt-${i}`,
+      url: 'https://www.youtube.com/watch?v=abc',
+      title: 'YouTube',
+      favicon: '',
+      windowId: 'acc-ob-1',
+      windowName: 'OB',
+      time: now - i * 30000,
+    });
+  }
+  entries.push({
+    id: 'hist-music-1',
+    url: 'https://musica.example/play',
+    title: 'Música ao vivo',
+    favicon: '',
+    windowId: 'acc-ob-1',
+    windowName: 'OB',
+    time: now - 5,
+  });
   entries.push({
     id: 'hist-other-1',
     url: 'https://other.test/x',
@@ -131,34 +151,89 @@ async function runOmniboxSelftest(ctx) {
   await waitForLayoutSettle();
   await waitForUrl('acc-ob-1', (u) => u.includes('127.0.0.1'), 20000).catch(() => {});
 
+  const histAll = history.query({ limit: 500 });
+  const bookmarksList = (bookmarks.list() && bookmarks.list().items) || [];
+  const settings = getState().settings;
+  const accounts = getState().accounts;
+
   // Unit: inline completion from history fixture
-  const inline = omnibox.inlineDomainCompletion('exam', history.query({ limit: 500 }));
+  const inline = omnibox.inlineDomainCompletion('exam', histAll);
   assert(inline && inline.full === 'example.com', 'inline completion example.com', inline);
   assert(inline.completion === 'ple.com', 'selected remainder', inline);
+
+  const youInline = omnibox.inlineDomainCompletion('you', histAll);
+  assert(youInline && youInline.full === 'youtube.com', 'inline you → youtube.com', youInline);
+
+  const wwwInline = omnibox.inlineDomainCompletion('www.y', histAll);
+  assert(
+    wwwInline && wwwInline.full === 'www.youtube.com',
+    'inline www.y → www.youtube.com',
+    wwwInline
+  );
+  // Substring / label matches must NOT drive inline completion
+  const tubeInline = omnibox.inlineDomainCompletion('tube', histAll);
+  assert(!tubeInline, 'no inline for non-domain-prefix tube', tubeInline);
   console.log('PASS: inline domain completion');
 
-  const local = omnibox.suggest({
-    query: 'exam',
-    accounts: getState().accounts,
-    bookmarkItems: (bookmarks.list() && bookmarks.list().items) || [],
-    settings: getState().settings,
-  });
+  function suggestQ(q) {
+    return omnibox.suggest({
+      query: q,
+      accounts,
+      bookmarkItems: bookmarksList,
+      settings,
+    });
+  }
+
+  const local = suggestQ('exam');
   assert(
     local.items.some((i) => i.kind === 'history' && /example\.com/i.test(i.url || '')),
     'history in list',
     local.items
   );
+  assert(local.items.some((i) => i.kind === 'search'), 'search line present', local.items);
+
+  const ytByName = suggestQ('youtube');
   assert(
-    local.items.some((i) => i.kind === 'search'),
-    'search line present',
-    local.items
+    ytByName.items.some((i) => /youtube\.com/i.test(i.url || '')),
+    'youtube matches without www prefix',
+    ytByName.items
   );
-  const favSuggest = omnibox.suggest({
-    query: 'Favorito',
-    accounts: getState().accounts,
-    bookmarkItems: (bookmarks.list() && bookmarks.list().items) || [],
-    settings: getState().settings,
-  });
+  const ytTube = suggestQ('tube');
+  assert(
+    ytTube.items.some((i) => /youtube/i.test(i.title || '') || /youtube\.com/i.test(i.url || '')),
+    'tube matches title/substring',
+    ytTube.items
+  );
+  const ytCase = suggestQ('YouTube');
+  assert(
+    ytCase.items.some((i) => /youtube\.com/i.test(i.url || '')),
+    'case-insensitive YouTube',
+    ytCase.items
+  );
+  const accentQ = suggestQ('musica');
+  assert(
+    accentQ.items.some((i) => /m[uú]sica/i.test(i.title || '') || /musica\.example/i.test(i.url || '')),
+    'musica matches Música',
+    accentQ.items
+  );
+  const accentQ2 = suggestQ('música');
+  assert(
+    accentQ2.items.some((i) => /musica\.example/i.test(i.url || '') || /música/i.test(i.title || '')),
+    'música matches Musica/host',
+    accentQ2.items
+  );
+
+  // Ranking: domain prefix before substring (youtube.com before a title-only hit)
+  const rankPrefix = suggestQ('you');
+  const firstNonSearch = rankPrefix.items.find((i) => i.kind !== 'search');
+  assert(
+    firstNonSearch && /youtube\.com/i.test(firstNonSearch.url || ''),
+    'prefix rank: youtube first for you',
+    rankPrefix.items
+  );
+  console.log('PASS: matching normalize / accents / ranking');
+
+  const favSuggest = suggestQ('Favorito');
   assert(
     favSuggest.items.some((i) => i.kind === 'favorite'),
     'favorite in list',
