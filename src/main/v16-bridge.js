@@ -222,6 +222,33 @@ function initV16(ctx) {
       shell.openExternal(url);
       return { ok: true };
     });
+    ipcMain.handle('app:open-third-party-notices', async () => {
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const candidates = [
+        path.join(process.resourcesPath || '', 'THIRD_PARTY_NOTICES.md'),
+        path.join(app.getAppPath(), 'THIRD_PARTY_NOTICES.md'),
+        path.join(__dirname, '..', '..', 'THIRD_PARTY_NOTICES.md'),
+      ];
+      for (const p of candidates) {
+        if (!p || p.includes(`${path.sep}app.asar${path.sep}`) || p.endsWith(`${path.sep}app.asar`)) {
+          continue;
+        }
+        try {
+          if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+            if (inSelftest) return { ok: true, stubbed: true, path: p };
+            const err = await shell.openPath(p);
+            return { ok: !err, error: err || null, path: p };
+          }
+        } catch {
+          /* try next */
+        }
+      }
+      const url = config.THIRD_PARTY_NOTICES_URL;
+      if (inSelftest) return { ok: true, stubbed: true, url };
+      shell.openExternal(url);
+      return { ok: true, url };
+    });
     ipcMain.handle('app:open-data-folder', () => diagnostics.openDataFolder());
     ipcMain.handle('diagnostics:logs', () => logger.readRecent(300));
     ipcMain.handle('diagnostics:preview', () => {

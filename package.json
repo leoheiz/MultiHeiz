@@ -138,7 +138,14 @@
       "!tools",
       "!tools/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "extraResources": [
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
     ],
     "asarUnpack": [
       "**/src/main/adblock/cosmetic-preload.js",

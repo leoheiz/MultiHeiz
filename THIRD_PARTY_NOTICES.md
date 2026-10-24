@@ -50,4 +50,6 @@ Não há lista portuguesa dedicada em filters.adavoid.org; a EasyList Spanish é
 
 ## Extensões de terceiros
 
-A camada de carregamento em `src/main/extensions/` é MIT (própria). Extensões instaladas pelo usuário mantêm as licenças dos respectivos autores.
+A camada de carregamento em `src/main/extensions/` é MIT (código próprio do MultiHeiz). O MultiHeiz **não** empacota `electron-chrome-extensions` (GPL-3). Se no futuro essa biblioteca for adotada, o app distribuído precisaria ser GPL-3 ou usar licença proprietária do autor.
+
+Extensões instaladas pelo usuário (Chrome Web Store, Edge Add-ons, `.crx` ou pasta) mantêm as licenças dos respectivos autores.

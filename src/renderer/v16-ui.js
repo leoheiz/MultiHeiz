@@ -3550,6 +3550,13 @@
     };
     const kofi = document.getElementById('btn-kofi');
     if (kofi) kofi.addEventListener('click', openKofi);
+
+    const btnNotices = document.getElementById('btn-open-third-party-notices');
+    if (btnNotices && window.multiheiz.openThirdPartyNotices) {
+      btnNotices.addEventListener('click', () => {
+        window.multiheiz.openThirdPartyNotices().catch(() => {});
+      });
+    }
   }
 
   function syncDohFormVisibility() {

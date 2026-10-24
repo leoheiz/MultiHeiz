@@ -139,6 +139,7 @@ contextBridge.exposeInMainWorld('multiheiz', {
   getAbout: () => ipcRenderer.invoke('app:about'),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   openPath: (target) => ipcRenderer.invoke('app:open-path', target),
+  openThirdPartyNotices: () => ipcRenderer.invoke('app:open-third-party-notices'),
   openDataFolder: () => ipcRenderer.invoke('app:open-data-folder'),
 
   adblockStatus: () => ipcRenderer.invoke('adblock:status'),

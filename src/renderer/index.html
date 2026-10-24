@@ -275,7 +275,7 @@
 
     <dialog id="dlg-settings" class="dlg-settings-wide">
       <div class="settings-shell">
-        <aside class="settings-nav" aria-label="Seções">
+        <aside class="settings-nav mh-scroll-dark" aria-label="Seções">
           <button type="button" class="settings-nav-btn active" data-section="geral">Geral</button>
           <button type="button" class="settings-nav-btn" data-section="navegacao">Navegação</button>
           <button type="button" class="settings-nav-btn" data-section="atalhos">Atalhos de teclado</button>
@@ -292,12 +292,13 @@
           <button type="button" class="settings-nav-btn" data-section="diagnosticos">Diagnósticos</button>
           <button type="button" class="settings-nav-btn" data-section="sobre">Sobre</button>
         </aside>
-        <form id="form-settings" class="settings-body">
+        <div class="settings-main">
           <div class="settings-head">
             <h2>Configurações</h2>
             <span id="settings-saved" class="settings-saved hidden" aria-live="polite" role="status">Salvo</span>
             <button type="button" class="btn ghost" id="btn-settings-cancel">Fechar</button>
           </div>
+          <form id="form-settings" class="settings-body mh-scroll-dark">
 
           <section class="settings-pane active" data-pane="geral">
             <label class="check">
@@ -923,8 +924,14 @@
           </section>
 
           <section class="settings-pane" data-pane="sobre">
-            <p><strong id="about-name">MultiHeiz</strong> <span id="about-version"></span></p>
-            <p class="muted-note">Electron <span id="about-electron"></span> · Chromium <span id="about-chrome"></span></p>
+            <p class="about-identity">
+              <strong id="about-name">MultiHeiz</strong>
+              <span id="about-version"></span>
+              <span class="about-sep">·</span>
+              Electron <span id="about-electron"></span>
+              <span class="about-sep">·</span>
+              Chromium <span id="about-chrome"></span>
+            </p>
             <p class="muted-note">Tudo gratuito — sem licenças, ativação ou paywall.</p>
             <div class="about-updates">
               <label class="check">
@@ -936,10 +943,12 @@
                 <span id="updates-status" class="muted-note about-updates-status"></span>
               </p>
             </div>
-            <button type="button" class="btn ghost" id="btn-about-novidades">Novidades / Log de atualizações</button>
-            <button type="button" class="btn ghost" id="btn-about-diag">Diagnóstico com um clique</button>
-            <button type="button" class="btn ghost" id="btn-about-github-issue">Abrir issue no GitHub</button>
-            <button type="button" class="btn ghost" id="btn-open-releases">Abrir página de versões</button>
+            <div class="settings-actions-row about-actions-row">
+              <button type="button" class="btn ghost" id="btn-about-novidades">Novidades / Log de atualizações</button>
+              <button type="button" class="btn ghost" id="btn-about-diag">Diagnóstico com um clique</button>
+              <button type="button" class="btn ghost" id="btn-about-github-issue">Abrir issue no GitHub</button>
+              <button type="button" class="btn ghost" id="btn-open-releases">Abrir página de versões</button>
+            </div>
             <div id="kofi-support-section" class="kofi-support-section hidden">
               <h3>Apoiar o desenvolvedor</h3>
               <p class="muted-note">
@@ -948,26 +957,29 @@
               </p>
               <button type="button" class="btn primary hidden" id="btn-kofi">Apoiar no Ko-fi (opcional)</button>
             </div>
-            <h3>Licenças de terceiros</h3>
-            <ul id="about-licenses" class="license-list">
-              <li>Electron — MIT</li>
-              <li>exceljs — MIT</li>
-              <li>@ghostery/adblocker-electron — MPL-2.0</li>
-              <li>electron-updater — MIT</li>
-              <li>adm-zip — MIT (unpack CRX)</li>
-              <li>Lucide icons — ISC (https://lucide.dev)</li>
-              <li>EasyList / EasyPrivacy / EasyList Portuguese — GPL-3.0+ / CC BY-SA 3.0+</li>
-              <li>uBlock Origin uAssets — GPL-3.0+</li>
-              <li>AdGuard filters — GPL-3.0+</li>
-              <li>Peter Lowe’s list — ver yoyo.org</li>
-              <li>
-                Extensões de terceiros: camada própria MIT em src/main/extensions/
-                (não empacota electron-chrome-extensions GPL-3; se no futuro for adotado,
-                o app distribuído precisaria ser GPL-3 ou licença proprietária do autor)
-              </li>
-            </ul>
+            <details class="about-licenses-details">
+              <summary>Ver licenças</summary>
+              <h3 class="about-licenses-title">Licenças de terceiros</h3>
+              <ul id="about-licenses" class="license-list">
+                <li>Electron — MIT</li>
+                <li>exceljs — MIT</li>
+                <li>@ghostery/adblocker-electron — MPL-2.0</li>
+                <li>electron-updater — MIT</li>
+                <li>adm-zip — MIT (unpack CRX)</li>
+                <li>Lucide icons — ISC (https://lucide.dev)</li>
+                <li>EasyList / EasyPrivacy / EasyList Portuguese — GPL-3.0+ / CC BY-SA 3.0+</li>
+                <li>uBlock Origin uAssets — GPL-3.0+</li>
+                <li>AdGuard filters — GPL-3.0+</li>
+                <li>Peter Lowe’s list — ver yoyo.org</li>
+                <li>
+                  Extensões de terceiros: carregador próprio (MIT); detalhes em
+                  <button type="button" class="btn-link" id="btn-open-third-party-notices">THIRD_PARTY_NOTICES.md</button>.
+                </li>
+              </ul>
+            </details>
           </section>
-        </form>
+          </form>
+        </div>
       </div>
     </dialog>
 

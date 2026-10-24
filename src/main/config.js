@@ -16,6 +16,9 @@ const APP_USER_MODEL_ID_DEV = 'com.leo.multiheiz.dev';
 const APP_DISPLAY_NAME = 'MultiHeiz';
 /** Página de todas as versões no GitHub (Sobre + notas de atualização). */
 const RELEASES_URL = 'https://github.com/leoheiz/MultiHeiz/releases';
+/** Avisos de terceiros (Sobre → Ver licenças). */
+const THIRD_PARTY_NOTICES_URL =
+  'https://github.com/leoheiz/MultiHeiz/blob/main/THIRD_PARTY_NOTICES.md';
 
 /**
  * AUMID for the current process. Unpackaged (npm start / selftests) uses .dev so
@@ -62,6 +65,7 @@ module.exports = {
   APP_USER_MODEL_ID_DEV,
   APP_DISPLAY_NAME,
   RELEASES_URL,
+  THIRD_PARTY_NOTICES_URL,
   SEARCH_ENGINES,
   envGet,
   resolveAppUserModelId,

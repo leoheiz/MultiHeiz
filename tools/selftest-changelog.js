@@ -170,6 +170,71 @@ function main() {
   assert(validated.ok, 'validateChangelog', validated);
   console.log('PASS: validateChangelog');
 
+  /* ---- Configurações modal proportions (FIX-11 item 8) ---- */
+  assert(
+    /id="dlg-settings"[\s\S]*?class="settings-main"/.test(html) ||
+      html.includes('class="settings-main"'),
+    'HTML settings-main wrapper'
+  );
+  assert(
+    /settings-nav[^>]*mh-scroll-dark/.test(html) &&
+      /form-settings[^>]*mh-scroll-dark/.test(html),
+    'HTML settings nav + body use dark scrollbar'
+  );
+  assert(html.includes('about-identity'), 'HTML Sobre version+engine one line');
+  assert(html.includes('about-actions-row'), 'HTML Sobre buttons in a row');
+  assert(html.includes('about-licenses-details'), 'HTML licenses collapsible');
+  assert(html.includes('Ver licenças'), 'HTML Ver licenças summary');
+  assert(html.includes('btn-open-third-party-notices'), 'HTML third-party notices link');
+  assert(
+    !/não empacota electron-chrome-extensions GPL-3/.test(html),
+    'HTML no long GPL-3 extensions legalese'
+  );
+  assert(
+    /\.dlg-settings-wide\s*\{[^}]*width:\s*min\(1000px,\s*92vw\)/s.test(css),
+    'CSS settings width min(1000px, 92vw)'
+  );
+  assert(
+    /\.dlg-settings-wide\s*\{[^}]*height:\s*min\(760px,\s*88vh\)/s.test(css),
+    'CSS settings height min(760px, 88vh)'
+  );
+  assert(
+    /\.dlg-settings-wide\s*\{[^}]*overflow:\s*hidden/s.test(css),
+    'CSS settings dialog no outer scroll'
+  );
+  assert(/\.settings-nav\s*\{[^}]*width:\s*200px/s.test(css), 'CSS nav ~200px');
+  assert(
+    /\.settings-body\s*\{[^}]*overflow-y:\s*auto/s.test(css),
+    'CSS body is the content scroll'
+  );
+  assert(/\.settings-pane\s*\{[^}]*max-width:\s*70ch/s.test(css), 'CSS max text width ~70ch');
+  assert(
+    /\.settings-body\s*\{[^}]*font-size:\s*13\.5px/s.test(css),
+    'CSS body ~13-14px'
+  );
+  const noticesPath = path.join(root, 'THIRD_PARTY_NOTICES.md');
+  assert(fs.existsSync(noticesPath), 'THIRD_PARTY_NOTICES.md exists');
+  const notices = fs.readFileSync(noticesPath, 'utf8');
+  assert(
+    /electron-chrome-extensions/i.test(notices),
+    'THIRD_PARTY_NOTICES has extensions legal details'
+  );
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert(
+    Array.isArray(pkg.build && pkg.build.files) &&
+      pkg.build.files.includes('THIRD_PARTY_NOTICES.md'),
+    'electron-builder files includes THIRD_PARTY_NOTICES.md'
+  );
+  assert(
+    Array.isArray(pkg.build && pkg.build.extraResources) &&
+      pkg.build.extraResources.some(
+        (r) => r && (r.from === 'THIRD_PARTY_NOTICES.md' || r === 'THIRD_PARTY_NOTICES.md')
+      ),
+    'electron-builder extraResources includes THIRD_PARTY_NOTICES.md'
+  );
+  assert(uiSrc.includes('openThirdPartyNotices'), 'UI wires openThirdPartyNotices');
+  console.log('PASS: settings modal size + Sobre licenses + THIRD_PARTY_NOTICES');
+
   console.log('PASS: selftest:changelog complete');
 }
 
