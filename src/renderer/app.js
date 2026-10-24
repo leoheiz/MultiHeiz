@@ -7436,18 +7436,12 @@ Object.assign(window.__multiheizUi, {
     const btn = document.getElementById('btn-kofi');
     return !!(btn && !btn.classList.contains('hidden'));
   },
-  isKofiHeartVisible: () => {
-    const btn = document.getElementById('btn-kofi-status');
-    return !!(btn && !btn.classList.contains('hidden'));
-  },
+  isKofiHeartVisible: () => false,
   clickKofiButton: () => {
     const btn = document.getElementById('btn-kofi');
     if (btn) btn.click();
   },
-  clickKofiHeart: () => {
-    const btn = document.getElementById('btn-kofi-status');
-    if (btn) btn.click();
-  },
+  clickKofiHeart: () => {},
   refreshKofiVisibility: () =>
     window.MultiHeizV16 && window.MultiHeizV16.refreshKofiVisibility(),
   getModulesSidebarLabels: () =>

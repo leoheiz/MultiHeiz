@@ -1107,26 +1107,6 @@ html[data-theme='claro'] .tab:hover {
   background: color-mix(in srgb, var(--text) 12%, transparent);
 }
 
-#topbar .kofi-heart {
-  min-width: 28px;
-  min-height: 28px;
-  padding: 2px;
-  opacity: 0.7;
-  color: var(--muted);
-}
-
-#topbar .kofi-heart:hover {
-  opacity: 1;
-  color: var(--accent);
-}
-
-#topbar .kofi-heart .kofi-heart-ico {
-  width: 14px;
-  height: 14px;
-  fill: currentColor;
-  stroke: none;
-}
-
 .layout-label select,
 input,
 select {
@@ -2171,8 +2151,7 @@ body.is-chrome-hidden .panel-slot.focused {
   box-shadow: none;
 }
 
-#btn-kofi.hidden,
-#btn-kofi-status.hidden {
+#btn-kofi.hidden {
   display: none;
 }
 

@@ -3563,8 +3563,6 @@
     };
     const kofi = document.getElementById('btn-kofi');
     if (kofi) kofi.addEventListener('click', openKofi);
-    const kofiStatus = document.getElementById('btn-kofi-status');
-    if (kofiStatus) kofiStatus.addEventListener('click', openKofi);
   }
 
   function syncDohFormVisibility() {
@@ -4677,10 +4675,8 @@
     const show = !!kofiUrl;
     const section = document.getElementById('kofi-support-section');
     if (section) section.classList.toggle('hidden', !show);
-    for (const id of ['btn-kofi', 'btn-kofi-status']) {
-      const el = document.getElementById(id);
-      if (el) el.classList.toggle('hidden', !show);
-    }
+    const btn = document.getElementById('btn-kofi');
+    if (btn) btn.classList.toggle('hidden', !show);
   }
 
   async function refreshKofiVisibility() {

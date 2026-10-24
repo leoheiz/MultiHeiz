@@ -297,16 +297,21 @@ async function runV16Selftest(ctx) {
   await sleep(200);
   const kofiBtnVisible = await rendererEval('window.__multiheizUi.isKofiVisible()');
   const kofiHeartVisible = await rendererEval('window.__multiheizUi.isKofiHeartVisible()');
-  if (!kofiBtnVisible || !kofiHeartVisible) {
-    console.log('FAIL: KOFI button and heart should be visible when KOFI_URL set', {
+  const kofiHeartEl = await rendererEval('!!document.getElementById("btn-kofi-status")');
+  if (!kofiBtnVisible) {
+    console.log('FAIL: KOFI button should be visible when KOFI_URL set', {
       kofiBtnVisible,
-      kofiHeartVisible,
       expectedKofi,
     });
     app.exit(1);
     return;
   }
-  console.log('PASS: KOFI button and heart visible');
+  if (kofiHeartVisible || kofiHeartEl) {
+    console.log('FAIL: top-bar Ko-fi heart must be removed', { kofiHeartVisible, kofiHeartEl });
+    app.exit(1);
+    return;
+  }
+  console.log('PASS: KOFI button visible; top-bar heart absent');
 
   v16.clearOpenExternalLog();
   await rendererEval('window.__multiheizUi.clickKofiButton()');
@@ -314,15 +319,6 @@ async function runV16Selftest(ctx) {
   let openLog = v16.getOpenExternalLog();
   if (openLog.length !== 1 || openLog[0] !== expectedKofi) {
     console.log('FAIL: KOFI button should call openExternal with KOFI_URL', openLog, expectedKofi);
-    app.exit(1);
-    return;
-  }
-  v16.clearOpenExternalLog();
-  await rendererEval('window.__multiheizUi.clickKofiHeart()');
-  await sleep(150);
-  openLog = v16.getOpenExternalLog();
-  if (openLog.length !== 1 || openLog[0] !== expectedKofi) {
-    console.log('FAIL: KOFI heart should call openExternal with KOFI_URL', openLog, expectedKofi);
     app.exit(1);
     return;
   }
@@ -356,16 +352,12 @@ async function runV16Selftest(ctx) {
   `);
   await sleep(200);
   const kofiHiddenBtn = await rendererEval('window.__multiheizUi.isKofiVisible()');
-  const kofiHiddenHeart = await rendererEval('window.__multiheizUi.isKofiHeartVisible()');
-  if (kofiHiddenBtn || kofiHiddenHeart) {
-    console.log('FAIL: KOFI button/heart should be hidden when KOFI_URL empty', {
-      kofiHiddenBtn,
-      kofiHiddenHeart,
-    });
+  if (kofiHiddenBtn) {
+    console.log('FAIL: KOFI button should be hidden when KOFI_URL empty', { kofiHiddenBtn });
     app.exit(1);
     return;
   }
-  console.log('PASS: KOFI button and heart hidden when empty');
+  console.log('PASS: KOFI button hidden when empty');
   v16.setKofiUrlForTest(expectedKofi);
   await rendererEval('window.__multiheizUi.refreshKofiVisibility()');
   await rendererEval('window.__multiheizUi.closeSettings()');
