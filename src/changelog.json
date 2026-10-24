@@ -31,11 +31,15 @@
         },
         {
           "tag": "Novo",
-          "text": "Experimental (em testes): mini player sempre no topo, com transparência e travamento."
+          "text": "Mini player sempre por cima, com transparência e cadeado. Experimental (em testes)."
         },
         {
           "tag": "Novo",
-          "text": "Mini player: botão de cadeado para travar com o mouse e botão para destravar na janela principal."
+          "text": "Menu do botão direito no fundo da área para criar janelas e outras ações."
+        },
+        {
+          "tag": "Novo",
+          "text": "Ctrl+clique abre o link numa nova janela na mesma área, com as mesmas configurações."
         },
         {
           "tag": "Novo",
@@ -75,7 +79,7 @@
         },
         {
           "tag": "Correção",
-          "text": "Corrigido: o mini player mostrava a página inteira em vez de só o vídeo em alguns sites."
+          "text": "O mini player mostrava a página inteira em vez de só o vídeo em alguns sites."
         }
       ]
     },
