@@ -185,6 +185,13 @@ const SHORTCUT_DEFS = [
     group: 'Janela',
   },
   {
+    id: 'closeWindow',
+    name: 'Fechar janela',
+    defaultCombo: 'Ctrl+W',
+    scope: 'both',
+    group: 'Janela',
+  },
+  {
     id: 'favorite',
     name: 'Favoritar página',
     defaultCombo: 'Ctrl+D',

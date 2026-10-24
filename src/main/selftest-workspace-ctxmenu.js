@@ -70,19 +70,21 @@ async function runWorkspaceCtxmenuSelftest(ctx) {
     assert(!labels.includes('Colar endereço e abrir'), 'no paste without URL', labels);
     console.log('PASS: empty bg menu labels (no clipboard URL)');
 
-    // DOM: empty-hint exists; right-click path is on #grid (not on .panel-slot)
+    // DOM: start page / empty-hint exists; right-click path is on #grid (not on .panel-slot)
     const dom = await mainWindow.webContents.executeJavaScript(
       `(() => {
         const grid = document.getElementById('grid');
-        const hint = grid && grid.querySelector('.empty-hint');
+        const hint =
+          grid &&
+          (grid.querySelector('.mh-start-page') || grid.querySelector('.empty-hint'));
         const slot = grid && grid.querySelector('.panel-slot');
         return { hasGrid: !!grid, hasHint: !!hint, hasSlot: !!slot };
       })()`,
       true
     );
-    assert(dom && dom.hasGrid && dom.hasHint, 'empty hint on background', dom);
+    assert(dom && dom.hasGrid && dom.hasHint, 'empty start page on background', dom);
     assert(!dom.hasSlot, 'no panel slot on empty workspace', dom);
-    console.log('PASS: empty background DOM (hint, no slot)');
+    console.log('PASS: empty background DOM (start page, no slot)');
 
     const pasteUrl = 'https://www.google.com/search?q=multiheiz';
     clipboard.writeText(pasteUrl);

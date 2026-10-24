@@ -507,6 +507,11 @@ function runAction(accountId, actionId) {
     case 'newWindow':
       if (emitToRenderer) emitToRenderer({ type: 'ui:new-account' });
       return true;
+    case 'closeWindow':
+      if (accountId && emitToRenderer) {
+        emitToRenderer({ type: 'ui:confirm-remove-account', accountId });
+      }
+      return true;
     case 'favorite':
       if (emitToRenderer) emitToRenderer({ type: 'ui:favorite' });
       return true;

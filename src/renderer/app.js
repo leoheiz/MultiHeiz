@@ -2218,14 +2218,7 @@ function buildSidebarItem(acc) {
   btnClose.innerHTML = svg(ICO.close);
   btnClose.addEventListener('click', (e) => {
     e.stopPropagation();
-    const doRemove = async () => {
-      applyState(await window.multiheiz.removeAccount(acc.id));
-    };
-    if (state.settings && state.settings.confirmOnRemove === false) {
-      void doRemove();
-    } else {
-      confirmAction(`Remover a janela “${acc.name}”?`, doRemove);
-    }
+    requestCloseAccount(acc);
   });
   actions.append(btnMin, btnClose);
 
@@ -2493,10 +2486,37 @@ function renderGrid() {
   }
 
   if (!all.length) {
-    const hint = document.createElement('div');
-    hint.className = 'empty-hint';
-    hint.textContent = 'Nenhuma janela nesta categoria. Clique em “+ Nova janela”.';
-    el.grid.appendChild(hint);
+    if (window.MultiHeizStartPage && typeof window.MultiHeizStartPage.build === 'function') {
+      const start = window.MultiHeizStartPage.build({
+        getState: () => state,
+        applyState,
+        openNewWindow: () => void openCatalogPicker(),
+        openUrl: async (url, title) => {
+          try {
+            if (!window.multiheiz.startPageOpen) return;
+            const res = await window.multiheiz.startPageOpen({
+              url,
+              title: title || 'Janela',
+              workspaceId: state.activeWorkspaceId,
+            });
+            if (res && res.ok === false) {
+              showToast((res && res.error) || 'Endereço inválido.');
+              return;
+            }
+            if (res && res.state) applyState(res.state);
+            scheduleSync();
+          } catch (err) {
+            console.warn('start-page openUrl', err);
+          }
+        },
+      });
+      el.grid.appendChild(start);
+    } else {
+      const hint = document.createElement('div');
+      hint.className = 'empty-hint';
+      hint.textContent = 'Nenhuma janela nesta categoria. Clique em “+ Nova janela”.';
+      el.grid.appendChild(hint);
+    }
     scheduleSync();
     return;
   }
@@ -2766,6 +2786,12 @@ function buildPanelSlot(acc, tile) {
     'Maximizar',
     () => toggleMaximize(acc.id)
   );
+  const btnClosePanel = iconBtn(ICO.close, 'Fechar', (e) => {
+    e.stopPropagation();
+    requestCloseAccount(acc);
+  });
+  btnClosePanel.dataset.role = 'panel-close';
+  btnClosePanel.classList.add('is-close');
   const btnReloadMarked = btnReload;
   btnReloadMarked.dataset.role = 'panel-reload';
   const btnMore = iconBtn(ICO.more, 'Menu', (e) => {
@@ -2777,9 +2803,19 @@ function buildPanelSlot(acc, tile) {
 
   // Star + shield + puzzle on the left so header-actions stay compact (livre drag hit-tests ~35% into header)
   if (btnPip) {
-    actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnPip, btnMax, btnMore);
+    actions.append(
+      btnBack,
+      btnFwd,
+      btnHome,
+      btnReloadMarked,
+      btnMute,
+      btnPip,
+      btnMax,
+      btnClosePanel,
+      btnMore
+    );
   } else {
-    actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnMax, btnMore);
+    actions.append(btnBack, btnFwd, btnHome, btnReloadMarked, btnMute, btnMax, btnClosePanel, btnMore);
   }
   const headerBits = [stripe, fav, siteInfoBtn, mediaInd];
   if (shareInd) headerBits.push(shareInd);
@@ -4694,6 +4730,19 @@ function confirmAction(message, onOk) {
   el.dlgConfirm.showModal();
 }
 
+/** Close/remove a window (sidebar ×, panel ×, Ctrl+W, menu Fechar). */
+function requestCloseAccount(acc) {
+  if (!acc || !acc.id) return;
+  const doRemove = async () => {
+    applyState(await window.multiheiz.removeAccount(acc.id));
+  };
+  if (state.settings && state.settings.confirmOnRemove === false) {
+    void doRemove();
+  } else {
+    confirmAction(`Fechar a janela “${acc.name}”?`, doRemove);
+  }
+}
+
 function openMemPopover() {
   // Prefer overlay WebContentsView so panels stay live (no snapshot/park).
   const btn = el.btnMemTotal || document.getElementById('btn-mem-total');
@@ -5880,14 +5929,7 @@ window.multiheiz.onEvent((payload) => {
   if (payload.type === 'ui:confirm-remove-account' && payload.accountId) {
     const acc = state.accounts.find((a) => a.id === payload.accountId);
     if (!acc) return;
-    const doRemove = async () => {
-      applyState(await window.multiheiz.removeAccount(acc.id));
-    };
-    if (state.settings && state.settings.confirmOnRemove === false) {
-      doRemove();
-    } else {
-      confirmAction(`Remover a janela “${acc.name}”?`, doRemove);
-    }
+    requestCloseAccount(acc);
     return;
   }
   if (payload.type === 'layout:recompute') {
@@ -6545,6 +6587,14 @@ window.__multiheizUi = {
     btn.click();
     return { ok: true };
   },
+  clickPanelClose: async (accountId) => {
+    const btn = document.querySelector(
+      `.panel-slot[data-account-id="${CSS.escape(accountId)}"] [data-role="panel-close"]`
+    );
+    if (!btn) return { ok: false, reason: 'missing' };
+    btn.click();
+    return { ok: true };
+  },
   confirmDialogOk: () => {
     const ok = document.getElementById('confirm-ok');
     if (ok) {
@@ -6662,6 +6712,7 @@ window.__multiheizUi = {
     else if (role === 's') node = slot.querySelector('.resize-handle.s');
     else if (role === 'reload') node = slot.querySelector('[data-role="panel-reload"]');
     else if (role === 'menu') node = slot.querySelector('[data-role="panel-menu"]');
+    else if (role === 'close') node = slot.querySelector('[data-role="panel-close"]');
     if (!node) return null;
     const r = node.getBoundingClientRect();
     return { x: r.left, y: r.top, width: r.width, height: r.height, accountId, role };
@@ -7152,8 +7203,95 @@ window.__multiheizUi = {
     return {
       addButton: el.btnAddAccount.textContent,
       emptyHint: el.grid.querySelector('.empty-hint')?.textContent || '',
+      hasStartPage: !!el.grid.querySelector('.mh-start-page'),
       accountDialogTitle: el.dlgAccountTitle.textContent,
     };
+  },
+  getStartPageInfo: () => {
+    const root = el.grid.querySelector('.mh-start-page');
+    if (!root) return { present: false };
+    const r = root.getBoundingClientRect();
+    const omnibox = root.querySelector('.mh-start-omnibox');
+    const favBar = root.querySelector('.mh-start-favbar');
+    const tiles = [...root.querySelectorAll('.mh-start-tile:not(.mh-start-tile-add)')].map(
+      (n) => ({
+        url: n.dataset.url || '',
+        kind: n.dataset.kind || '',
+        id: n.dataset.tileId || '',
+        label: n.querySelector('.mh-start-tile-label')?.textContent || '',
+      })
+    );
+    return {
+      present: true,
+      width: r.width,
+      height: r.height,
+      hasOmnibox: !!omnibox,
+      favBarHidden: !!(favBar && favBar.hidden),
+      tiles,
+      data: window.MultiHeizStartPage ? window.MultiHeizStartPage.getLastData() : null,
+    };
+  },
+  startPageOmniboxEnter: async (text) => {
+    const input = el.grid.querySelector('.mh-start-omnibox');
+    if (!input) return { ok: false, reason: 'missing' };
+    input.value = String(text || '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    );
+    return { ok: true };
+  },
+  startPageClickTile: async (urlOrId) => {
+    const key = String(urlOrId || '');
+    const tiles = [...el.grid.querySelectorAll('.mh-start-tile:not(.mh-start-tile-add)')];
+    const tile =
+      tiles.find((n) => n.dataset.url === key || n.dataset.tileId === key) || null;
+    if (!tile) return { ok: false, reason: 'missing' };
+    tile.click();
+    return { ok: true };
+  },
+  startPageClickFavorite: async (url) => {
+    const key = String(url || '');
+    const btns = [...el.grid.querySelectorAll('.mh-start-fav:not(.is-folder)')];
+    const btn =
+      btns.find((n) => (n.dataset.url || '') === key) ||
+      btns.find(
+        (n) =>
+          (n.dataset.url || '').includes(key) ||
+          (n.title || '').includes(key) ||
+          (n.textContent || '').includes(key)
+      );
+    if (!btn) {
+      return {
+        ok: false,
+        reason: 'missing',
+        found: btns.map((n) => n.dataset.url || n.title || ''),
+      };
+    }
+    btn.click();
+    return { ok: true };
+  },
+  startPageSetCustomTiles: async (tiles) => {
+    if (!window.multiheiz.startPageSet) return { ok: false };
+    const res = await window.multiheiz.startPageSet({
+      workspaceId: state.activeWorkspaceId,
+      customTiles: tiles || [],
+    });
+    if (res && res.state) applyState(res.state);
+    await new Promise((r) => setTimeout(r, 80));
+    if (window.MultiHeizStartPage) await window.MultiHeizStartPage.refresh();
+    return { ok: true, data: res && (res.data || window.MultiHeizStartPage.getLastData()) };
+  },
+  startPageSetOpts: async (patch) => {
+    if (!window.multiheiz.startPageSet) return { ok: false };
+    const res = await window.multiheiz.startPageSet({
+      workspaceId: state.activeWorkspaceId,
+      ...(patch || {}),
+    });
+    if (res && res.state) applyState(res.state);
+    await new Promise((r) => setTimeout(r, 80));
+    if (window.MultiHeizStartPage) await window.MultiHeizStartPage.refresh();
+    return { ok: true, data: res && (res.data || window.MultiHeizStartPage.getLastData()) };
   },
   applyThemePreset: async (preset) => {
     const p = THEME_PRESETS[preset] || THEME_PRESETS.escuro;

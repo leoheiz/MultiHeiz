@@ -57,6 +57,7 @@ const { createAppMenu } = require('./app-menu');
 const panelShortcuts = require('./panel-shortcuts');
 const pictureInPicture = require('./picture-in-picture');
 const miniPlayer = require('./mini-player');
+const startPage = require('./start-page');
 // selftest-*.js are required lazily only inside MULTIHEIZ_SELFTEST branches
 // (never at top-level) so a corrupted/UTF-16 selftest file cannot break npm start.
 
@@ -328,6 +329,8 @@ const SELFTEST_OMNIBOX = selftestMode === 'omnibox';
 const SELFTEST_VIDEO_DETECT = selftestMode === 'video-detect';
 const SELFTEST_LINK_NEWWINDOW = selftestMode === 'link-newwindow';
 const SELFTEST_APP_MENU = selftestMode === 'app-menu';
+const SELFTEST_CLOSE_LAST = selftestMode === 'close-last';
+const SELFTEST_START_PAGE = selftestMode === 'start-page';
 const SELFTEST_DIAG_CERTISIGN = selftestMode === 'diag-certisign';
 const ANY_SELFTEST =
   SELFTEST ||
@@ -414,6 +417,8 @@ const ANY_SELFTEST =
   SELFTEST_VIDEO_DETECT ||
   SELFTEST_LINK_NEWWINDOW ||
   SELFTEST_APP_MENU ||
+  SELFTEST_CLOSE_LAST ||
+  SELFTEST_START_PAGE ||
   SELFTEST_DIAG_CERTISIGN;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
@@ -736,7 +741,16 @@ function setupApplicationMenu() {
         },
         { type: 'separator' },
         { role: 'minimize', label: 'Minimizar' },
-        { role: 'close', label: 'Fechar' },
+        {
+          label: 'Fechar',
+          accelerator: menuAccel('closeWindow'),
+          click: () => {
+            const id = focusedPanel();
+            if (id) {
+              emitToRenderer({ type: 'ui:confirm-remove-account', accountId: id });
+            }
+          },
+        },
       ],
     },
   ];
@@ -791,6 +805,8 @@ function createWindow() {
     SELFTEST_VIDEO_DETECT ||
     SELFTEST_LINK_NEWWINDOW ||
     SELFTEST_APP_MENU ||
+    SELFTEST_CLOSE_LAST ||
+    SELFTEST_START_PAGE ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
@@ -849,6 +865,8 @@ function createWindow() {
     SELFTEST_VIDEO_DETECT ||
     SELFTEST_LINK_NEWWINDOW ||
     SELFTEST_APP_MENU ||
+    SELFTEST_CLOSE_LAST ||
+    SELFTEST_START_PAGE ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
     SELFTEST_HISTORY ||
@@ -945,6 +963,8 @@ function createWindow() {
         SELFTEST_VIDEO_DETECT ||
         SELFTEST_LINK_NEWWINDOW ||
         SELFTEST_APP_MENU ||
+        SELFTEST_CLOSE_LAST ||
+        SELFTEST_START_PAGE ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_FAVORITES_POPOVER ||
         SELFTEST_HISTORY ||
@@ -2459,6 +2479,58 @@ function createWindow() {
         }
       }, 800);
     });
+  } else if (SELFTEST_CLOSE_LAST) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runCloseLastSelftest } = require('./selftest-close-last');
+          runCloseLastSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_START_PAGE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runStartPageSelftest } = require('./selftest-start-page');
+          runStartPageSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
   } else if (SELFTEST_MINIMIZE_RESTORE) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(() => {
@@ -3350,6 +3422,7 @@ function publicState() {
     ui: s.ui || { sidebarCollapsed: false, sidebarAutoHide: false, layoutLocked: true },
     appearance: s.appearance,
     freeTiles: s.freeTiles || {},
+    startPageByWorkspace: s.startPageByWorkspace || {},
     autostart: autostart.getStatus(),
   };
 }
@@ -4197,6 +4270,79 @@ function registerIpc() {
       s.freeTiles[workspaceId || s.activeWorkspaceId] = tiles || {};
     });
     return publicState();
+  });
+
+  ipcMain.handle('start-page:get', (_e, workspaceId) => {
+    const s = getState();
+    const wsId = workspaceId || s.activeWorkspaceId;
+    return startPage.getData({ workspaceId: wsId, state: s });
+  });
+
+  ipcMain.handle('start-page:set', (_e, payload) => {
+    const s0 = getState();
+    const wsId = (payload && payload.workspaceId) || s0.activeWorkspaceId;
+    updateState((s) => {
+      startPage.applyPatch(s, wsId, payload || {});
+    });
+    flushSave();
+    return {
+      state: publicState(),
+      data: startPage.getData({ workspaceId: wsId, state: getState() }),
+    };
+  });
+
+  ipcMain.handle('start-page:open', async (_e, payload) => {
+    const { resolveNavigateUrl } = require('./search-url');
+    const s = getState();
+    const raw = String((payload && payload.url) || '').trim();
+    if (!raw) return { ok: false, error: 'Endereço vazio' };
+    const resolved = resolveNavigateUrl(raw, s.settings || {});
+    if (!resolved) return { ok: false, error: 'Endereço inválido' };
+    const title = String((payload && payload.title) || '').trim() || 'Janela';
+    const workspaceId = (payload && payload.workspaceId) || s.activeWorkspaceId;
+    // Reuse account:create path via invoke-style call
+    const created = await (async () => {
+      const id = makeId('acc');
+      const colors = ['#2bb8a6', '#3d8bfd', '#e8a54b', '#e83e8c', '#6f42c1', '#20c997'];
+      const account = {
+        id,
+        name: title.slice(0, 80),
+        color: colors[(s.accounts || []).length % colors.length],
+        startUrl: resolved,
+        workspaceId,
+        muted: false,
+        volume: 100,
+        pauseInBackground: false,
+        keepAliveInBackground: false,
+        minimized: false,
+        privateHistory: false,
+        adblockEnabled: true,
+        showUnread: true,
+        lastUrl: null,
+        zoomFactor: 1,
+        partitionId: id,
+      };
+      const wsForAcc = (s.workspaces || []).find((w) => w && w.id === workspaceId);
+      const wsConventional =
+        wsForAcc &&
+        partition.normalizeWorkspaceSessionType(wsForAcc.sessionType) ===
+          partition.SESSION_TYPE_CONVENTIONAL &&
+        wsForAcc.sharedPartitionId;
+      if (wsConventional) account.partitionId = String(wsForAcc.sharedPartitionId);
+      updateState((st) => {
+        st.accounts.push(account);
+      });
+      try {
+        adblock.attachAllAccountSessions();
+      } catch {
+        /* ignore */
+      }
+      const next = publicState();
+      const publicAccount = (next.accounts || []).find((a) => a.id === id) || account;
+      emitToRenderer({ type: 'state:changed', state: next });
+      return { state: next, account: publicAccount };
+    })();
+    return { ok: true, ...created };
   });
 
   ipcMain.handle('app:info', () => ({
@@ -6384,10 +6530,6 @@ function popupAccountMenu(opts) {
       },
     },
     {
-      label: 'Fechar',
-      click: () => emitToRenderer({ type: 'ui:confirm-remove-account', accountId }),
-    },
-    {
       label: 'Início',
       click: () => panels.panelGoHome(accountId),
     },
@@ -6416,8 +6558,10 @@ function popupAccountMenu(opts) {
       label: 'Abrir DevTools',
       click: () => panels.panelOpenDevTools(accountId),
     },
+    { type: 'separator' },
     {
-      label: 'Remover janela',
+      // Fechar e Remover faziam o mesmo hard-delete após permitir área vazia — um só item.
+      label: 'Fechar',
       click: () => emitToRenderer({ type: 'ui:confirm-remove-account', accountId }),
     },
   ];
@@ -7005,7 +7149,7 @@ async function runInputSelftest() {
     'Pausar em segundo plano',
     'Maximizar',
     'Abrir DevTools',
-    'Remover janela',
+    'Fechar',
   ];
   if (!lastAccountMenuPopup || lastAccountMenuPopup.accountId !== ids[0]) {
     console.log('FAIL: Menu.popup was not recorded', lastAccountMenuPopup);

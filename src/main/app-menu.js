@@ -220,7 +220,12 @@ function createAppMenu(deps) {
           { id: 'janela:login-navegador', label: 'Abrir login no navegador padrão' },
           { type: 'separator' },
           { id: 'janela:minimizar', label: 'Minimizar' },
-          { id: 'janela:fechar', label: 'Fechar' },
+          {
+            id: 'janela:fechar',
+            label: 'Fechar',
+            shortcut: shortcutFor('closeWindow'),
+            shortcutId: 'closeWindow',
+          },
         ],
       },
       {
@@ -449,8 +454,10 @@ function createAppMenu(deps) {
         return { ok: true };
       }
       case 'janela:fechar': {
-        const win = getMainWindow && getMainWindow();
-        if (win && !win.isDestroyed()) win.close();
+        const focused = panels.getFocusedAccountId && panels.getFocusedAccountId();
+        if (focused) {
+          emitToRenderer({ type: 'ui:confirm-remove-account', accountId: focused });
+        }
         return { ok: true };
       }
       case 'ajuda:notas-versao':
