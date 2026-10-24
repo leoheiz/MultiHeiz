@@ -1602,6 +1602,12 @@ function unregisterCosmeticIpc() {
 function attachSession(ses, accountId) {
   knownSessions.add(ses);
   const prev = attachedSessions.get(ses) || { accountId: null, preloadId: undefined };
+  // Same session already fully wired: only refresh accountId (Ctrl+click reuse).
+  if (prev && prev.fullyAttached && blocker && isGloballyEnabled()) {
+    if (accountId) prev.accountId = accountId;
+    attachedSessions.set(ses, prev);
+    return;
+  }
   if (accountId) prev.accountId = accountId;
   attachedSessions.set(ses, prev);
 
@@ -1617,6 +1623,8 @@ function attachSession(ses, accountId) {
       }
       prev.preloadId = undefined;
     }
+    prev.fullyAttached = false;
+    attachedSessions.set(ses, prev);
     // Still register early IPC so panel-preload sendSync always has a listener
     registerCosmeticIpc();
     debugLog('attachSession: blocker inactive', accountId);
@@ -1698,6 +1706,7 @@ function attachSession(ses, accountId) {
     }
     prev.preloadId = undefined;
   }
+  prev.fullyAttached = !!(blocker && isGloballyEnabled());
   attachedSessions.set(ses, prev);
   registerCosmeticIpc();
   debugLog('attachSession active', accountId, 'sessions', knownSessions.size);
@@ -1742,6 +1751,7 @@ function detachSession(ses) {
       /* ignore */
     }
   }
+  if (prev) prev.fullyAttached = false;
   attachedSessions.delete(ses);
   knownSessions.delete(ses);
 }

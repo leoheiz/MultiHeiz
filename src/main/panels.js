@@ -316,6 +316,45 @@ function initPanels(win, emit, opts) {
  * @param {{ focus?: boolean }} [opts]
  * @returns {{ ok: boolean, reason?: string, windowId?: string }}
  */
+/**
+ * Provisional on-screen bounds for a brand-new panel before the renderer
+ * syncs layout slots (avoids 0×0 / throttled first paint on Ctrl+click).
+ * @returns {{ x: number, y: number, width: number, height: number }}
+ */
+function provisionalBoundsForNewPanel() {
+  const fromSlots = lastSlots.filter(
+    (s) => s && Number(s.width) > 1 && Number(s.height) > 1
+  );
+  if (fromSlots.length) {
+    const s = fromSlots[fromSlots.length - 1];
+    return {
+      x: Math.round(Number(s.x) || 0),
+      y: Math.round(Number(s.y) || 0),
+      width: Math.round(Number(s.width)),
+      height: Math.round(Number(s.height)),
+    };
+  }
+  let cw = 1280;
+  let ch = 800;
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const size = mainWindow.getContentSize();
+      cw = size[0] || cw;
+      ch = size[1] || ch;
+    }
+  } catch {
+    /* ignore */
+  }
+  const x = 220;
+  const y = 88;
+  return {
+    x,
+    y,
+    width: Math.max(320, cw - x - 16),
+    height: Math.max(240, ch - y - 16),
+  };
+}
+
 function openUrlInNewPanel(fromAccountId, url, opts = {}) {
   const raw = String(url || '').trim();
   if (!isNavigableUrl(raw) || classifyScheme(raw) !== 'web') {
@@ -337,21 +376,26 @@ function openUrlInNewPanel(fromAccountId, url, opts = {}) {
     from && typeof from.volume === 'number' && Number.isFinite(from.volume)
       ? Math.max(0, Math.min(200, from.volume))
       : 100;
+  // Exact href for start + navigate (no second sanitize path that can diverge).
+  const exactHref = raw;
+  const bounds = provisionalBoundsForNewPanel();
   const account = {
     id,
     name: 'Janela',
     color: (from && from.color) || colors[(st.accounts || []).length % colors.length],
-    startUrl: sanitizeUserStartUrl(raw, 'https://www.google.com'),
+    startUrl: exactHref,
     workspaceId: (from && from.workspaceId) || st.activeWorkspaceId,
     partitionId,
     muted: false,
     volume,
+    // Inherit settings but never start suspended/throttled (see create below).
     pauseInBackground: !!(from && from.pauseInBackground),
     keepAliveInBackground: !!(from && from.keepAliveInBackground),
     privateHistory: !!(from && from.privateHistory),
     adblockEnabled: from && from.adblockEnabled === false ? false : true,
     showUnread: from && from.showUnread === false ? false : true,
     lastUrl: null,
+    lastBounds: bounds,
     zoomFactor,
   };
   if (from && from.catalogId) account.catalogId = from.catalogId;
@@ -362,33 +406,64 @@ function openUrlInNewPanel(fromAccountId, url, opts = {}) {
   updateState((s) => {
     s.accounts.push(account);
   });
-  try {
-    const adblock = require('./adblock');
-    adblock.attachAllAccountSessions();
-  } catch {
-    /* ignore */
-  }
+  // Do NOT attachAllAccountSessions here — createPanel attaches this partition
+  // once; re-wiring every session on each Ctrl+click was a major cost.
   try {
     emitToRenderer({ type: 'state:changed', state: getPublicState() });
   } catch {
     /* ignore */
   }
-  panelNavigate(id, raw);
-  if (account.proxy && account.proxy.type && account.proxy.type !== 'none') {
-    try {
-      const proxy = require('./proxy');
-      void proxy.applyProxyToSession(id);
-    } catch {
-      /* ignore */
-    }
+
+  forceSuspended.delete(id);
+  visibleAccountIds.add(id);
+  const entry = createPanelDeferred(id);
+  if (!entry) {
+    return { ok: false, reason: 'create-failed' };
   }
+  try {
+    entry.view.setBounds({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    });
+    setViewVisible(entry, true);
+    entry.parked = false;
+    if (typeof entry.view.webContents.setBackgroundThrottling === 'function') {
+      entry.view.webContents.setBackgroundThrottling(false);
+    }
+  } catch {
+    /* ignore */
+  }
+  touchAccount(id);
   if (opts && opts.focus) {
     try {
       setFocusedAccount(id);
     } catch {
       /* ignore */
     }
+  } else {
+    try {
+      applyThrottlingTo(id);
+      // Keep new window unthrottled until layout confirms on-screen.
+      if (typeof entry.view.webContents.setBackgroundThrottling === 'function') {
+        entry.view.webContents.setBackgroundThrottling(false);
+      }
+    } catch {
+      /* ignore */
+    }
   }
+
+  const loadExact = () => {
+    if (!panels.has(id)) return;
+    const e = panels.get(id);
+    if (!e || !e.view || e.view.webContents.isDestroyed()) return;
+    e.view.webContents.loadURL(exactHref).catch(() => {});
+  };
+  const ses = entry.view.webContents.session;
+  const proxyReady = (ses && ses._mhProxyReady) || Promise.resolve();
+  Promise.resolve(proxyReady).then(loadExact).catch(loadExact);
+
   return { ok: true, windowId: id };
 }
 

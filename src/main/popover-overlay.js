@@ -249,7 +249,11 @@ function raiseAbovePanels() {
  * @param {number} height
  * @param {'below'|'above'|'auto'} [prefer]
  */
-function placeBounds(anchor, width, height, prefer) {
+/** Top-bar + margin reserved when clamping popover max-height. */
+const POPOVER_TOP_MARGIN = 48;
+const POPOVER_EDGE_MARGIN = 12;
+
+function contentSize() {
   const win = getMainWindow();
   let cw = 1280;
   let ch = 800;
@@ -262,8 +266,20 @@ function placeBounds(anchor, width, height, prefer) {
   } catch {
     /* ignore */
   }
+  return { cw, ch };
+}
+
+/** Max popover height that fits in the window below/above the top bar. */
+function maxPopoverHeight() {
+  const { ch } = contentSize();
+  return Math.max(160, ch - POPOVER_TOP_MARGIN - POPOVER_EDGE_MARGIN);
+}
+
+function placeBounds(anchor, width, height, prefer) {
+  const { cw, ch } = contentSize();
+  const maxH = maxPopoverHeight();
   const w = Math.max(40, Math.round(width));
-  const h = Math.max(24, Math.round(height));
+  const h = Math.max(24, Math.min(Math.round(height), maxH));
   const ax = Number(anchor && anchor.x) || 0;
   const ay = Number(anchor && anchor.y) || 0;
   const aw = Number(anchor && anchor.width) || 0;
@@ -286,12 +302,28 @@ function placeBounds(anchor, width, height, prefer) {
     y = above >= 8 ? above : Math.max(8, ch - h - 8);
   }
   if (y < 8) y = 8;
+  // Final clamp: keep fully inside the viewport
+  if (y + h > ch - 8) y = Math.max(8, ch - h - 8);
+  if (x + w > cw - 8) x = Math.max(8, cw - w - 8);
   // Center horizontally on anchor when possible
   if (aw > 0) {
     const centered = Math.round(ax + aw / 2 - w / 2);
     if (centered >= 8 && centered + w <= cw - 8) x = centered;
   }
   return { x, y, width: w, height: h };
+}
+
+function pushMaxHeightCss() {
+  if (!overlayView) return;
+  try {
+    const maxH = maxPopoverHeight();
+    overlayView.webContents.executeJavaScript(
+      `document.documentElement.style.setProperty('--mh-popover-max-h','${maxH}px')`,
+      true
+    ).catch(() => {});
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -334,6 +366,7 @@ async function show(opts) {
   }
 
   current = { id, kind, bounds, payload: { id, kind, data, theme, prefer, anchor } };
+  pushMaxHeightCss();
 
   try {
     overlayView.webContents.send('popover:render', {
@@ -376,8 +409,9 @@ function applyMeasuredSize(size) {
         current.payload.data.rows &&
         current.payload.data.rows.length) ||
       0;
-    h = Math.max(h, Math.max(120, 64 + rows * 48));
-    h = Math.min(h, 520);
+    const listH = Math.min(rows, 5) * 52;
+    h = Math.max(h, Math.max(200, 160 + listH));
+    h = Math.min(h, maxPopoverHeight());
   }
   if (current.kind === 'favorites') {
     const data =
@@ -670,19 +704,39 @@ function onPanelsLayoutChanged() {
 }
 
 /**
- * Close when window is resized/moved.
+ * Re-clamp popover to the window on resize/zoom/DPI; close on move (anchor stale).
  */
+function reclampCurrentPopover() {
+  if (!current || !overlayView) return;
+  pushMaxHeightCss();
+  const b = current.bounds || { width: 300, height: 200 };
+  const anchor =
+    (current.payload && current.payload.anchor) || { x: b.x, y: b.y, width: 0, height: 0 };
+  const prefer = (current.payload && current.payload.prefer) || 'below';
+  const bounds = placeBounds(anchor, b.width, b.height, prefer);
+  try {
+    overlayView.setBounds(bounds);
+  } catch {
+    /* ignore */
+  }
+  current.bounds = bounds;
+  emitToRenderer({ type: 'popover:bounds', id: current.id, bounds });
+}
+
 function attachWindowListeners(win) {
   if (!win) return;
-  const close = () => {
+  const onMove = () => {
     if (current) requestClose('window-geometry');
   };
-  win.on('resize', close);
-  win.on('move', close);
-  win.on('maximize', close);
-  win.on('unmaximize', close);
-  win.on('enter-full-screen', close);
-  win.on('leave-full-screen', close);
+  const onResize = () => {
+    if (current) reclampCurrentPopover();
+  };
+  win.on('resize', onResize);
+  win.on('move', onMove);
+  win.on('maximize', onResize);
+  win.on('unmaximize', onResize);
+  win.on('enter-full-screen', onResize);
+  win.on('leave-full-screen', onResize);
   try {
     if (win.webContents && !win.webContents.isDestroyed()) {
       attachOutsideCloseTarget(win.webContents, 'chrome');

@@ -35,11 +35,20 @@
       Math.ceil(root.scrollHeight || 0),
       24
     );
-    // Memory monitor: never open as a collapsed title bar.
+    // Memory monitor: report viewport height (capped), not full content
+    // scrollHeight — otherwise the WebContentsView clips the inner scrollbar.
     if (current && current.kind === 'mem') {
       const rows = (current.data && current.data.rows && current.data.rows.length) || 0;
-      const minH = Math.max(120, 64 + rows * 48);
-      h = Math.max(h, minH);
+      const listH = Math.min(rows, 5) * 52;
+      const minH = Math.max(200, 160 + listH);
+      const maxCss = getComputedStyle(document.documentElement).getPropertyValue(
+        '--mh-popover-max-h'
+      );
+      const maxH = Math.max(200, parseInt(maxCss, 10) || 520);
+      // Prefer the shell's client height once laid out; else a sensible floor.
+      const shell = root.querySelector('.mem-popover-box');
+      const shellH = shell ? Math.ceil(shell.getBoundingClientRect().height || 0) : 0;
+      h = Math.min(maxH, Math.max(minH, shellH || minH));
     }
     // Favorites: never open as chrome-only (title/search/actions, empty tree).
     if (current && current.kind === 'favorites') {
@@ -803,12 +812,12 @@
 
   function renderMem(data) {
     const box = document.createElement('div');
-    box.className = 'mem-popover-box';
+    box.className = 'mem-popover-box mh-popover-shell';
     box.dataset.role = 'mem-popover';
     box.setAttribute('role', 'dialog');
     box.setAttribute('aria-label', 'Monitor de memória');
     const head = document.createElement('div');
-    head.className = 'mem-popover-head';
+    head.className = 'mem-popover-head mh-popover-head';
     const t = document.createElement('strong');
     t.textContent = 'Monitor de memória';
     const closeBtn = document.createElement('button');
@@ -824,6 +833,10 @@
     });
     head.append(t, closeBtn);
     box.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'mem-popover-body mh-popover-scroll';
+    body.dataset.role = 'mem-body';
 
     const stats = (data && data.stats) || {};
     const statsRow = document.createElement('div');
@@ -848,14 +861,14 @@
       cell.append(k, v);
       statsRow.appendChild(cell);
     }
-    box.appendChild(statsRow);
+    body.appendChild(statsRow);
 
     const total = document.createElement('div');
     total.className = 'mem-popover-total';
     total.dataset.role = 'mem-total';
     const totalText = (data && data.totalText) || (data && data.totalLabel) || 'Coletando métricas…';
     total.textContent = totalText;
-    box.appendChild(total);
+    body.appendChild(total);
 
     const toolbar = document.createElement('div');
     toolbar.className = 'mem-popover-toolbar';
@@ -879,7 +892,7 @@
       window.mhPopover.action({ type: 'mem-reactivate-all' });
     });
     toolbar.append(freeBtn, reactAll);
-    box.appendChild(toolbar);
+    body.appendChild(toolbar);
 
     const list = document.createElement('div');
     list.className = 'mem-popover-list';
@@ -920,7 +933,7 @@
       el.append(title, actions, meta);
       list.appendChild(el);
     }
-    box.appendChild(list);
+    body.appendChild(list);
 
     const settings = (data && data.settings) || {};
     const opts = document.createElement('div');
@@ -965,22 +978,6 @@
       'Exceções: janela em uso, áudio, vídeo ou chamada — não são suspensas.';
     opts.appendChild(exceptNote);
 
-    const cleanLabel = document.createElement('label');
-    cleanLabel.className = 'mem-opt-check';
-    const cleanCb = document.createElement('input');
-    cleanCb.type = 'checkbox';
-    cleanCb.dataset.role = 'mem-cleanup-enabled';
-    cleanCb.checked = !!settings.memoryCleanupEnabled;
-    cleanCb.addEventListener('change', () => {
-      emitSettings({ memoryCleanupEnabled: !!cleanCb.checked });
-      intervalSel.disabled = !cleanCb.checked;
-    });
-    cleanLabel.append(cleanCb, document.createTextNode(' Limpar memória periodicamente'));
-    opts.appendChild(cleanLabel);
-
-    const intervalRow = document.createElement('label');
-    intervalRow.className = 'mem-opt-row';
-    intervalRow.appendChild(document.createTextNode('A cada '));
     const intervalSel = document.createElement('select');
     intervalSel.dataset.role = 'mem-cleanup-interval';
     for (const n of [5, 10, 15, 30, 60]) {
@@ -996,10 +993,29 @@
     intervalSel.addEventListener('change', () => {
       emitSettings({ memoryCleanupIntervalMin: Number(intervalSel.value) || 30 });
     });
+
+    const cleanLabel = document.createElement('label');
+    cleanLabel.className = 'mem-opt-check';
+    const cleanCb = document.createElement('input');
+    cleanCb.type = 'checkbox';
+    cleanCb.dataset.role = 'mem-cleanup-enabled';
+    cleanCb.checked = !!settings.memoryCleanupEnabled;
+    cleanCb.addEventListener('change', () => {
+      emitSettings({ memoryCleanupEnabled: !!cleanCb.checked });
+      intervalSel.disabled = !cleanCb.checked;
+    });
+    cleanLabel.append(cleanCb, document.createTextNode(' Limpar memória periodicamente'));
+    opts.appendChild(cleanLabel);
+
+    const intervalRow = document.createElement('label');
+    intervalRow.className = 'mem-opt-row';
+    intervalRow.dataset.role = 'mem-cleanup-interval-row';
+    intervalRow.appendChild(document.createTextNode('A cada '));
     intervalRow.append(intervalSel, document.createTextNode(' minutos'));
     opts.appendChild(intervalRow);
 
-    box.appendChild(opts);
+    body.appendChild(opts);
+    box.appendChild(body);
     return box;
   }
 

@@ -105,12 +105,13 @@
     width: 300px;
     /* Fixed px cap (not 70vh): vh of a short WebContentsView collapsed the
        first measure to title+search+actions with an empty-looking tree. */
-    max-height: 420px;
+    max-height: min(420px, var(--mh-popover-max-h, 420px));
     min-height: 160px;
     padding: 10px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    overflow: hidden;
   }
   .favorites-popover-head {
     display: flex;
@@ -139,11 +140,21 @@
     font: inherit;
   }
   .favorites-popover-tree {
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     max-height: 280px;
+    min-height: 0;
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     gap: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: #4a5568 transparent;
+  }
+  .favorites-popover-tree::-webkit-scrollbar { width: 8px; }
+  .favorites-popover-tree::-webkit-scrollbar-thumb {
+    background: #4a5568;
+    border-radius: 8px;
   }
   .favorites-folder-row {
     display: flex;
@@ -205,12 +216,13 @@
 
   .history-popover {
     width: 340px;
-    max-height: 420px;
+    max-height: min(420px, var(--mh-popover-max-h, 420px));
     min-height: 180px;
     padding: 10px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    overflow: hidden;
   }
   .history-popover-head {
     display: flex;
@@ -264,12 +276,21 @@
     background: color-mix(in srgb, var(--accent, #3d6df0) 18%, transparent);
   }
   .history-popover-list {
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     max-height: 280px;
+    min-height: 80px;
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     gap: 2px;
-    min-height: 80px;
+    scrollbar-width: thin;
+    scrollbar-color: #4a5568 transparent;
+  }
+  .history-popover-list::-webkit-scrollbar { width: 8px; }
+  .history-popover-list::-webkit-scrollbar-thumb {
+    background: #4a5568;
+    border-radius: 8px;
   }
   .history-day-header {
     font-size: 11px;
@@ -524,15 +545,54 @@
   }
   .empty { opacity: 0.7; padding: 6px 0; }
 
+  /* Shared popover shell: fixed head + internal dark scroll (no outer white bar). */
+  .mh-popover-shell {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .mh-popover-head {
+    flex-shrink: 0;
+  }
+  .mh-popover-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #4a5568 transparent;
+  }
+  .mh-popover-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+  .mh-popover-scroll::-webkit-scrollbar-track {
+    background: transparent;
+    margin: 4px 0;
+  }
+  .mh-popover-scroll::-webkit-scrollbar-thumb {
+    background: #4a5568;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .mh-popover-scroll::-webkit-scrollbar-thumb:hover {
+    background: #5c6b80;
+    background-clip: padding-box;
+  }
+
   .mem-popover-box {
     min-width: 300px;
     max-width: 380px;
-    /* Fixed px cap (not 70vh): vh of a short WebContentsView collapsed the
-       first measure to title+X. Main sizes the view from scrollHeight. */
-    max-height: 560px;
+    /* Cap height to available space (main sets --mh-popover-max-h). */
+    max-height: var(--mh-popover-max-h, 520px);
     min-height: 120px;
-    overflow: auto;
+    overflow: hidden;
     padding: 10px 12px;
+  }
+  .mem-popover-body {
+    padding-right: 2px;
   }
   .mem-popover-head {
     display: flex;
@@ -615,6 +675,20 @@
     flex-direction: column;
     gap: 6px;
     margin-bottom: 8px;
+    /* ~5 rows; own scroll so the opts below stay reachable. */
+    max-height: calc(5 * 52px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #4a5568 transparent;
+  }
+  .mem-popover-list::-webkit-scrollbar {
+    width: 8px;
+  }
+  .mem-popover-list::-webkit-scrollbar-thumb {
+    background: #4a5568;
+    border-radius: 8px;
   }
   .mem-popover-opts {
     display: flex;

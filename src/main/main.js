@@ -331,6 +331,10 @@ const SELFTEST_LINK_NEWWINDOW = selftestMode === 'link-newwindow';
 const SELFTEST_APP_MENU = selftestMode === 'app-menu';
 const SELFTEST_CLOSE_LAST = selftestMode === 'close-last';
 const SELFTEST_START_PAGE = selftestMode === 'start-page';
+const SELFTEST_WINDOW_MENU = selftestMode === 'window-menu';
+const SELFTEST_POPOVER_SCROLL = selftestMode === 'popover-scroll';
+const SELFTEST_LAYOUT = selftestMode === 'layout';
+const SELFTEST_CTRLCLICK_PERF = selftestMode === 'ctrlclick-perf';
 const SELFTEST_DIAG_CERTISIGN = selftestMode === 'diag-certisign';
 const ANY_SELFTEST =
   SELFTEST ||
@@ -419,6 +423,10 @@ const ANY_SELFTEST =
   SELFTEST_APP_MENU ||
   SELFTEST_CLOSE_LAST ||
   SELFTEST_START_PAGE ||
+  SELFTEST_WINDOW_MENU ||
+  SELFTEST_POPOVER_SCROLL ||
+  SELFTEST_LAYOUT ||
+  SELFTEST_CTRLCLICK_PERF ||
   SELFTEST_DIAG_CERTISIGN;
 
 // Site personalizado: resolve exemplo.test → loopback (servidor local do selftest).
@@ -807,6 +815,10 @@ function createWindow() {
     SELFTEST_APP_MENU ||
     SELFTEST_CLOSE_LAST ||
     SELFTEST_START_PAGE ||
+    SELFTEST_WINDOW_MENU ||
+    SELFTEST_POPOVER_SCROLL ||
+    SELFTEST_LAYOUT ||
+    SELFTEST_CTRLCLICK_PERF ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_SETTINGS_PERF ||
     SELFTEST_WORKSPACE_DELETE ||
@@ -867,6 +879,10 @@ function createWindow() {
     SELFTEST_APP_MENU ||
     SELFTEST_CLOSE_LAST ||
     SELFTEST_START_PAGE ||
+    SELFTEST_WINDOW_MENU ||
+    SELFTEST_POPOVER_SCROLL ||
+    SELFTEST_LAYOUT ||
+    SELFTEST_CTRLCLICK_PERF ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
     SELFTEST_HISTORY ||
@@ -965,6 +981,10 @@ function createWindow() {
         SELFTEST_APP_MENU ||
         SELFTEST_CLOSE_LAST ||
         SELFTEST_START_PAGE ||
+        SELFTEST_WINDOW_MENU ||
+        SELFTEST_POPOVER_SCROLL ||
+        SELFTEST_LAYOUT ||
+        SELFTEST_CTRLCLICK_PERF ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_FAVORITES_POPOVER ||
         SELFTEST_HISTORY ||
@@ -2515,6 +2535,104 @@ function createWindow() {
             panels,
             getState,
             setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_WINDOW_MENU) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runWindowMenuSelftest } = require('./selftest-window-menu');
+          runWindowMenuSelftest({
+            mainWindow,
+            panels,
+            getState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            popupAccountMenu,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_POPOVER_SCROLL) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runPopoverScrollSelftest } = require('./selftest-popover-scroll');
+          runPopoverScrollSelftest({
+            mainWindow,
+            panels,
+            getState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_LAYOUT) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runLayoutSelftest } = require('./selftest-layout');
+          runLayoutSelftest({
+            mainWindow,
+            panels,
+            getState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_CTRLCLICK_PERF) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runCtrlclickPerfSelftest } = require('./selftest-ctrlclick-perf');
+          runCtrlclickPerfSelftest({
+            mainWindow,
+            panels,
+            getState,
             updateState,
             flushSave,
             publicState,
@@ -6371,20 +6489,28 @@ function popupAccountMenu(opts) {
   const maximized = st.maximizedAccountId === accountId;
 
   const zoomPct = Math.round((panels.panelGetZoom(accountId) || 1) * 100);
+  const keepAlive = !!acc.keepAliveInBackground;
+  const pauseBg = !!acc.pauseInBackground;
+  // keepAlive and pauseInBackground clear each other → exclusive radios + Automático.
+  const bgMode = keepAlive ? 'keep' : pauseBg ? 'pause' : 'auto';
 
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const template = [
+    // Top (quick)
     {
-      label: 'Renomear',
-      click: () => emitToRenderer({ type: 'ui:edit-account', accountId }),
+      label: 'Recarregar',
+      click: () => panels.panelReload(accountId),
     },
     {
-      label: 'Cor',
-      click: () => emitToRenderer({ type: 'ui:edit-account', accountId }),
+      label: 'Início',
+      click: () => panels.panelGoHome(accountId),
     },
     {
-      label: 'Editar URL inicial',
-      click: () => emitToRenderer({ type: 'ui:edit-account', accountId, focusUrl: true }),
+      label: muted ? 'Ativar som' : 'Mudo',
+      click: () => {
+        panels.panelSetMuted(accountId, !muted);
+        emitToRenderer({ type: 'state:changed', state: publicState() });
+      },
     },
     {
       label: `Zoom  ${zoomPct}%`,
@@ -6403,180 +6529,249 @@ function popupAccountMenu(opts) {
         },
       ],
     },
+    { type: 'separator' },
     {
-      label: 'Proxy…',
-      click: () => emitToRenderer({ type: 'ui:open-proxy', accountId }),
+      label: 'Aparência',
+      submenu: [
+        {
+          label: 'Renomear',
+          click: () => emitToRenderer({ type: 'ui:edit-account', accountId }),
+        },
+        {
+          label: 'Cor',
+          click: () => emitToRenderer({ type: 'ui:edit-account', accountId }),
+        },
+        {
+          label: 'Editar URL inicial',
+          click: () => emitToRenderer({ type: 'ui:edit-account', accountId, focusUrl: true }),
+        },
+        {
+          type: 'checkbox',
+          label: 'Mostrar contador de não lidas',
+          checked: acc.showUnread !== false,
+          click: (item) => {
+            updateState((s) => {
+              const a = s.accounts.find((x) => x.id === accountId);
+              if (a) a.showUnread = !!item.checked;
+            });
+            try {
+              unread.refreshAfterAccountChange();
+            } catch {
+              /* ignore */
+            }
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+          },
+        },
+      ],
     },
     {
-      type: 'checkbox',
-      label: 'Mostrar contador de não lidas',
-      checked: acc.showUnread !== false,
-      click: (item) => {
-        updateState((s) => {
-          const a = s.accounts.find((x) => x.id === accountId);
-          if (a) a.showUnread = !!item.checked;
-        });
-        try {
-          unread.refreshAfterAccountChange();
-        } catch {
-          /* ignore */
-        }
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-      },
+      label: 'Privacidade e rede',
+      submenu: [
+        {
+          label: 'Proxy…',
+          click: () => emitToRenderer({ type: 'ui:open-proxy', accountId }),
+        },
+        {
+          type: 'checkbox',
+          label: 'Modo privado (não salvar histórico)',
+          checked: !!acc.privateHistory,
+          click: (item) => {
+            updateState((s) => {
+              const a = s.accounts.find((x) => x.id === accountId);
+              if (a) a.privateHistory = !!item.checked;
+            });
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+          },
+        },
+        {
+          type: 'checkbox',
+          label: 'Bloqueio de anúncios nesta janela',
+          checked: acc.adblockEnabled !== false,
+          click: (item) => {
+            adblock.setWindowEnabled(accountId, !!item.checked);
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+          },
+        },
+      ],
     },
     {
-      label: 'Recarregar',
-      click: () => panels.panelReload(accountId),
+      label: 'Segundo plano',
+      submenu: [
+        {
+          label: suspended ? 'Reativar agora' : 'Suspender agora',
+          click: () => {
+            if (suspended) {
+              panels.reactivatePanel(accountId);
+            } else {
+              panels.suspendForMemory(accountId, { force: true });
+            }
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+            emitToRenderer({ type: 'layout:recompute' });
+          },
+        },
+        { type: 'separator' },
+        {
+          type: 'radio',
+          label: 'Automático',
+          checked: bgMode === 'auto',
+          click: () => {
+            updateState((s) => {
+              const a = s.accounts.find((x) => x.id === accountId);
+              if (!a) return;
+              a.keepAliveInBackground = false;
+              a.pauseInBackground = false;
+            });
+            panels.applyThrottling();
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+          },
+        },
+        {
+          type: 'radio',
+          label: 'Manter ativa em segundo plano',
+          checked: bgMode === 'keep',
+          click: () => {
+            updateState((s) => {
+              const a = s.accounts.find((x) => x.id === accountId);
+              if (!a) return;
+              a.keepAliveInBackground = true;
+              a.pauseInBackground = false;
+            });
+            panels.applyThrottling();
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+          },
+        },
+        {
+          type: 'radio',
+          label: 'Pausar em segundo plano',
+          checked: bgMode === 'pause',
+          click: () => {
+            updateState((s) => {
+              const a = s.accounts.find((x) => x.id === accountId);
+              if (!a) return;
+              a.pauseInBackground = true;
+              a.keepAliveInBackground = false;
+            });
+            panels.applyThrottling();
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+          },
+        },
+      ],
     },
     {
-      label: muted ? 'Ativar som' : 'Mudo',
-      click: () => {
-        panels.panelSetMuted(accountId, !muted);
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-      },
-    },
-    {
-      label: suspended ? 'Reativar' : 'Suspender',
-      click: () => {
-        if (suspended) {
-          panels.reactivatePanel(accountId);
-        } else {
-          panels.suspendForMemory(accountId, { force: true });
-        }
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-        emitToRenderer({
-          type: 'layout:recompute',
-        });
-      },
-    },
-    {
-      type: 'checkbox',
-      label: 'Manter ativa em segundo plano',
-      checked: !!acc.keepAliveInBackground,
-      click: (item) => {
-        updateState((s) => {
-          const a = s.accounts.find((x) => x.id === accountId);
-          if (!a) return;
-          a.keepAliveInBackground = !!item.checked;
-          if (a.keepAliveInBackground) a.pauseInBackground = false;
-        });
-        panels.applyThrottling();
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-      },
-    },
-    {
-      type: 'checkbox',
-      label: 'Pausar em segundo plano',
-      checked: !!acc.pauseInBackground,
-      click: (item) => {
-        updateState((s) => {
-          const a = s.accounts.find((x) => x.id === accountId);
-          if (!a) return;
-          a.pauseInBackground = !!item.checked;
-          if (a.pauseInBackground) a.keepAliveInBackground = false;
-        });
-        panels.applyThrottling();
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-      },
-    },
-    {
-      type: 'checkbox',
-      label: 'Modo privado (não salvar histórico)',
-      checked: !!acc.privateHistory,
-      click: (item) => {
-        updateState((s) => {
-          const a = s.accounts.find((x) => x.id === accountId);
-          if (a) a.privateHistory = !!item.checked;
-        });
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-      },
-    },
-    {
-      type: 'checkbox',
-      label: 'Bloqueio de anúncios nesta janela',
-      checked: acc.adblockEnabled !== false,
-      click: (item) => {
-        adblock.setWindowEnabled(accountId, !!item.checked);
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-      },
-    },
-    {
-      label: maximized ? 'Restaurar' : 'Maximizar',
-      click: () => {
-        updateState((s) => {
-          const a = s.accounts.find((x) => x.id === accountId);
-          if (a && a.minimized) a.minimized = false;
-          s.maximizedAccountId = maximized ? null : accountId;
-          if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
-          s.maximizedByWorkspace[s.activeWorkspaceId] = s.maximizedAccountId;
-        });
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-      },
-    },
-    {
-      label: acc.minimized ? 'Restaurar da barra' : 'Minimizar',
-      click: () => {
-        updateState((s) => {
-          const a = s.accounts.find((x) => x.id === accountId);
-          if (!a) return;
-          a.minimized = !a.minimized;
-          if (a.minimized && s.maximizedAccountId === accountId) {
-            s.maximizedAccountId = null;
-            if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
-            s.maximizedByWorkspace[s.activeWorkspaceId] = null;
-          }
-        });
-        emitToRenderer({ type: 'state:changed', state: publicState() });
-      },
-    },
-    {
-      label: 'Início',
-      click: () => panels.panelGoHome(accountId),
-    },
-    {
-      label: 'Abrir login no navegador padrão',
-      click: () => {
-        const r = panels.openLoginInSystemBrowser(accountId);
-        if (r && r.ok) {
-          emitToRenderer({ type: 'toast', message: 'Abrindo no navegador padrão…' });
-        }
-      },
-    },
-    {
-      label: 'Abrir nova janela com a mesma sessão',
-      click: () => {
-        const r = openAccountWithSameSession(accountId);
-        if (r && r.ok === false) {
-          emitToRenderer({
-            type: 'toast',
-            message: r.error || 'Não foi possível abrir a janela',
-          });
-        }
-      },
-    },
-    {
-      label: 'Abrir DevTools',
-      click: () => panels.panelOpenDevTools(accountId),
+      label: 'Abrir',
+      submenu: [
+        {
+          label: 'Nova janela com a mesma sessão',
+          click: () => {
+            const r = openAccountWithSameSession(accountId);
+            if (r && r.ok === false) {
+              emitToRenderer({
+                type: 'toast',
+                message: r.error || 'Não foi possível abrir a janela',
+              });
+            }
+          },
+        },
+        {
+          label: 'Login no navegador padrão',
+          click: () => {
+            const r = panels.openLoginInSystemBrowser(accountId);
+            if (r && r.ok) {
+              emitToRenderer({ type: 'toast', message: 'Abrindo no navegador padrão…' });
+            }
+          },
+        },
+        {
+          label: 'DevTools',
+          click: () => panels.panelOpenDevTools(accountId),
+        },
+      ],
     },
     { type: 'separator' },
     {
-      // Fechar e Remover faziam o mesmo hard-delete após permitir área vazia — um só item.
+      label: 'Janela',
+      submenu: [
+        {
+          label: maximized ? 'Restaurar' : 'Maximizar',
+          click: () => {
+            updateState((s) => {
+              const a = s.accounts.find((x) => x.id === accountId);
+              if (a && a.minimized) a.minimized = false;
+              s.maximizedAccountId = maximized ? null : accountId;
+              if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
+              s.maximizedByWorkspace[s.activeWorkspaceId] = s.maximizedAccountId;
+            });
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+          },
+        },
+        {
+          label: acc.minimized ? 'Restaurar da barra' : 'Minimizar',
+          click: () => {
+            updateState((s) => {
+              const a = s.accounts.find((x) => x.id === accountId);
+              if (!a) return;
+              a.minimized = !a.minimized;
+              if (a.minimized && s.maximizedAccountId === accountId) {
+                s.maximizedAccountId = null;
+                if (!s.maximizedByWorkspace) s.maximizedByWorkspace = {};
+                s.maximizedByWorkspace[s.activeWorkspaceId] = null;
+              }
+            });
+            emitToRenderer({ type: 'state:changed', state: publicState() });
+          },
+        },
+      ],
+    },
+    { type: 'separator' },
+    {
+      // Fechar e Remover faziam o mesmo hard-delete — um só item (FIX-11).
       label: 'Fechar',
       click: () => emitToRenderer({ type: 'ui:confirm-remove-account', accountId }),
     },
   ];
 
-  const labels = template.map((t) => String(t.label || ''));
-  lastAccountMenuPopup = { accountId, x, y, labels, at: Date.now() };
+  /** Flatten labels (incl. submenus) for selftests that assert reachability. */
+  function flattenMenuLabels(items, out = []) {
+    for (const t of items || []) {
+      if (!t || t.type === 'separator') continue;
+      if (t.label) out.push(String(t.label));
+      if (Array.isArray(t.submenu)) flattenMenuLabels(t.submenu, out);
+    }
+    return out;
+  }
+  const topLabels = template.map((t) => String(t.label || '')).filter(Boolean);
+  const labels = flattenMenuLabels(template);
+  const groups = template
+    .filter((t) => t && t.label && Array.isArray(t.submenu))
+    .map((t) => String(t.label));
+  lastAccountMenuPopup = {
+    accountId,
+    x,
+    y,
+    labels,
+    topLabels,
+    groups,
+    at: Date.now(),
+  };
 
   if (
     SELFTEST_INPUT ||
     SELFTEST_V18 ||
     SELFTEST_V19 ||
     SELFTEST_V110 ||
+    SELFTEST_WINDOW_MENU ||
     envGet('MULTIHEIZ_MENU_INTERCEPT') === '1'
   ) {
-    return { ok: true, intercepted: true, labels, x, y, accountId };
+    return {
+      ok: true,
+      intercepted: true,
+      labels,
+      topLabels,
+      groups,
+      x,
+      y,
+      accountId,
+    };
   }
 
   const menu = Menu.buildFromTemplate(template);
@@ -7144,12 +7339,17 @@ async function runInputSelftest() {
     'Editar URL inicial',
     'Recarregar',
     'Mudo',
-    'Suspender',
+    'Suspender agora',
     'Manter ativa em segundo plano',
     'Pausar em segundo plano',
     'Maximizar',
-    'Abrir DevTools',
+    'DevTools',
     'Fechar',
+    'Aparência',
+    'Privacidade e rede',
+    'Segundo plano',
+    'Abrir',
+    'Janela',
   ];
   if (!lastAccountMenuPopup || lastAccountMenuPopup.accountId !== ids[0]) {
     console.log('FAIL: Menu.popup was not recorded', lastAccountMenuPopup);
