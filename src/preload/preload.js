@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld('multiheiz', {
   popoverSelftestDebug: () => ipcRenderer.invoke('popover:selftest-debug'),
   popupAccountMenu: (accountId, x, y) =>
     ipcRenderer.invoke('menu:account', { accountId, x, y }),
+  popupWorkspaceBgMenu: (x, y) =>
+    ipcRenderer.invoke('menu:workspace-bg', { x, y }),
   popupTopMenu: (x, y) => ipcRenderer.invoke('menu:top', { x, y }),
   panelZoom: (accountId, delta) => ipcRenderer.invoke('panel:zoom', { accountId, delta }),
   panelNavigate: (accountId, url) => ipcRenderer.invoke('panel:navigate', { accountId, url }),

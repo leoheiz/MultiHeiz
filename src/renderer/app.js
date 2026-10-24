@@ -4642,6 +4642,18 @@ function proposeTiles(tiles) {
 
 /* Events */
 
+/** Right-click empty workspace background (not on a panel slot / webview). */
+if (el.grid) {
+  el.grid.addEventListener('contextmenu', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.panel-slot')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (window.multiheiz && window.multiheiz.popupWorkspaceBgMenu) {
+      void window.multiheiz.popupWorkspaceBgMenu(Math.round(e.clientX), Math.round(e.clientY));
+    }
+  });
+}
+
 el.btnAddAccount.addEventListener('click', () => void openCatalogPicker());
 if (el.catalogSearch) {
   el.catalogSearch.addEventListener('input', () => {
@@ -5579,6 +5591,57 @@ window.multiheiz.onEvent((payload) => {
   }
   if (payload.type === 'ui:new-account') {
     void openCatalogPicker();
+    return;
+  }
+  if (payload.type === 'ui:create-from-favorite' && payload.url) {
+    void pickCatalogFavorite({
+      url: payload.url,
+      name: payload.name,
+      title: payload.name,
+    });
+    return;
+  }
+  if (payload.type === 'ui:paste-url-open' && payload.url) {
+    (async () => {
+      try {
+        const res = await window.multiheiz.createAccount({
+          name: 'Janela',
+          startUrl: payload.url,
+          workspaceId: state.activeWorkspaceId,
+        });
+        if (res && res.ok === false) {
+          showToast((res && res.error) || 'Endereço inválido.');
+          return;
+        }
+        if (res && res.state) applyState(res.state);
+        scheduleSync();
+      } catch (err) {
+        console.warn('paste-url-open', err);
+        showToast('Não foi possível criar a janela.');
+      }
+    })();
+    return;
+  }
+  if (payload.type === 'ui:edit-workspace' && payload.workspaceId) {
+    const ws = (state.workspaces || []).find((w) => w.id === payload.workspaceId);
+    if (ws) openWorkspaceDialog(ws);
+    return;
+  }
+  if (payload.type === 'ui:open-settings') {
+    openSettings();
+    return;
+  }
+  if (payload.type === 'ui:free-mem-result') {
+    const res = payload.result || {};
+    if (!res.freedMb) {
+      showToast('Memória: nenhum MB liberado (0 MB)');
+    } else {
+      showToast(
+        `Memória: ${res.beforeMb} MB → ${res.afterMb} MB (liberados ${res.freedMb} MB)`
+      );
+    }
+    scheduleSync();
+    render();
     return;
   }
   if (payload.type === 'ui:help-shortcuts') {
