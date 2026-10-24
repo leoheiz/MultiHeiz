@@ -9,6 +9,7 @@
  */
 
 const { classifyScheme, isNavigableUrl } = require('./url-policy');
+const videoDetect = require('./video-detect');
 
 function electronApi() {
   return require('electron');
@@ -336,16 +337,20 @@ function buildContextMenuTemplate(params, nav = {}, extra = {}) {
     });
   }
 
-  if (p.mediaType === 'video' || p.mediaType === 'audio') {
+  const showVideo =
+    p.mediaType === 'video' ||
+    p.mediaType === 'audio' ||
+    !!(extra && extra.videoFound);
+  if (showVideo) {
     items.push({ type: 'separator' });
     items.push({
       id: 'pip-video',
       label: 'Vídeo em janela flutuante (PiP)',
-      enabled: p.mediaType === 'video',
+      enabled: p.mediaType === 'video' || !!(extra && extra.videoFound),
     });
     items.push({
       id: 'mini-player',
-      label: 'Mini player (sempre no topo)',
+      label: 'Abrir no mini player (Experimental)',
       enabled: true,
     });
   }
@@ -657,117 +662,137 @@ function attachContextMenu(webContents, options = {}) {
   }
 
   const onContextMenu = (_event, params) => {
-    const nav = readNavState(webContents);
-    let ltSuggestions = [];
-    try {
-      const languagetool = require('./languagetool');
-      ltSuggestions = languagetool.suggestionsForContextMenu(webContents, params || {}) || [];
-    } catch {
-      ltSuggestions = [];
-    }
-    let aiEnabled = false;
-    try {
-      const aiWrite = require('./ai-write');
-      aiEnabled = !!(aiWrite.currentConfig && aiWrite.currentConfig().enabled);
-    } catch {
-      aiEnabled = false;
-    }
-    const descriptors = buildContextMenuTemplate(params || {}, nav, { ltSuggestions, aiEnabled });
-    if (typeof options.onTemplate === 'function') {
-      try {
-        options.onTemplate(descriptors, params || {});
-      } catch {
-        /* ignore */
-      }
-    }
-    if (selftestHooks.onTemplate) {
-      try {
-        selftestHooks.onTemplate(descriptors, params || {}, webContents);
-      } catch {
-        /* ignore */
-      }
-    }
-
-    let viewBounds = { x: 0, y: 0 };
-    if (typeof options.getViewBounds === 'function') {
-      try {
-        const b = options.getViewBounds();
-        if (b && typeof b === 'object') {
-          viewBounds = {
-            x: Number(b.x) || 0,
-            y: Number(b.y) || 0,
-            width: Number(b.width) || 0,
-            height: Number(b.height) || 0,
-          };
+    // Probe overlays / shadow / iframe for a <video> when Chromium did not set mediaType.
+    // Budget < 50ms; menu opens without video items if the probe times out.
+    const run = async () => {
+      const p = params || {};
+      let videoFound = p.mediaType === 'video';
+      if (!videoFound && p.mediaType !== 'audio') {
+        try {
+          const probe = await videoDetect.probeVideoAtPoint(
+            webContents,
+            Number(p.x) || 0,
+            Number(p.y) || 0,
+            videoDetect.PROBE_BUDGET_MS
+          );
+          videoFound = !!(probe && probe.found);
+        } catch {
+          videoFound = false;
         }
-      } catch {
-        /* ignore */
       }
-    }
 
-    // Electron 44: params já em DIP do view — zoomFactor efetivo = 1 no popup.
-    let zoomFactor = 1;
-    if (typeof options.getZoomFactor === 'function') {
+      const nav = readNavState(webContents);
+      let ltSuggestions = [];
       try {
-        const z = Number(options.getZoomFactor());
-        if (Number.isFinite(z) && z > 0) zoomFactor = z;
+        const languagetool = require('./languagetool');
+        ltSuggestions = languagetool.suggestionsForContextMenu(webContents, p) || [];
       } catch {
-        /* ignore */
+        ltSuggestions = [];
       }
-    }
-    // Coordenadas de popup: offset do view + params (sem * zoom — ver computeContextMenuPopupPoint).
-    const point = computeContextMenuPopupPoint(viewBounds, params || {}, 1);
-    const win = typeof options.getWindow === 'function' ? options.getWindow() : null;
-
-    const popupInfo = {
-      x: point.x,
-      y: point.y,
-      viewBounds,
-      zoomFactor,
-      params: params || {},
-      descriptors,
-      webContents,
-      window: win && !win.isDestroyed() ? win : null,
-    };
-    if (typeof options.onPopup === 'function') {
+      let aiEnabled = false;
       try {
-        options.onPopup(popupInfo);
+        const aiWrite = require('./ai-write');
+        aiEnabled = !!(aiWrite.currentConfig && aiWrite.currentConfig().enabled);
       } catch {
-        /* ignore */
+        aiEnabled = false;
       }
-    }
-    if (selftestHooks.onPopup) {
-      try {
-        selftestHooks.onPopup(popupInfo);
-      } catch {
-        /* ignore */
+      const descriptors = buildContextMenuTemplate(p, nav, {
+        ltSuggestions,
+        aiEnabled,
+        videoFound,
+      });
+      if (typeof options.onTemplate === 'function') {
+        try {
+          options.onTemplate(descriptors, p);
+        } catch {
+          /* ignore */
+        }
       }
-    }
+      if (selftestHooks.onTemplate) {
+        try {
+          selftestHooks.onTemplate(descriptors, p, webContents);
+        } catch {
+          /* ignore */
+        }
+      }
 
-    // Selftest: nunca popup / diálogo visível
-    if (process.env.MULTIHEIZ_SELFTEST) {
-      return;
-    }
+      let viewBounds = { x: 0, y: 0 };
+      if (typeof options.getViewBounds === 'function') {
+        try {
+          const b = options.getViewBounds();
+          if (b && typeof b === 'object') {
+            viewBounds = {
+              x: Number(b.x) || 0,
+              y: Number(b.y) || 0,
+              width: Number(b.width) || 0,
+              height: Number(b.height) || 0,
+            };
+          }
+        } catch {
+          /* ignore */
+        }
+      }
 
-    const electronTemplate = descriptorsToElectronTemplate(
-      descriptors,
-      webContents,
-      params || {},
-      {
+      // Electron 44: params já em DIP do view — zoomFactor efetivo = 1 no popup.
+      let zoomFactor = 1;
+      if (typeof options.getZoomFactor === 'function') {
+        try {
+          const z = Number(options.getZoomFactor());
+          if (Number.isFinite(z) && z > 0) zoomFactor = z;
+        } catch {
+          /* ignore */
+        }
+      }
+      const point = computeContextMenuPopupPoint(viewBounds, p, 1);
+      const win = typeof options.getWindow === 'function' ? options.getWindow() : null;
+
+      const popupInfo = {
+        x: point.x,
+        y: point.y,
+        viewBounds,
+        zoomFactor,
+        params: p,
+        descriptors,
+        videoFound,
+        webContents,
+        window: win && !win.isDestroyed() ? win : null,
+      };
+      if (typeof options.onPopup === 'function') {
+        try {
+          options.onPopup(popupInfo);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (selftestHooks.onPopup) {
+        try {
+          selftestHooks.onPopup(popupInfo);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // Selftest: nunca popup / diálogo visível
+      if (process.env.MULTIHEIZ_SELFTEST) {
+        return;
+      }
+
+      const electronTemplate = descriptorsToElectronTemplate(descriptors, webContents, p, {
         openInNewWindow: options.openInNewWindow,
         getWindow: options.getWindow,
+      });
+      const { Menu } = electronApi();
+      const menu = Menu.buildFromTemplate(electronTemplate);
+      const popupOpts = {
+        x: point.x,
+        y: point.y,
+      };
+      if (win && !win.isDestroyed()) {
+        popupOpts.window = win;
       }
-    );
-    const { Menu } = electronApi();
-    const menu = Menu.buildFromTemplate(electronTemplate);
-    const popupOpts = {
-      x: point.x,
-      y: point.y,
+      menu.popup(popupOpts);
     };
-    if (win && !win.isDestroyed()) {
-      popupOpts.window = win;
-    }
-    menu.popup(popupOpts);
+    void run();
   };
 
   webContents.on('context-menu', onContextMenu);

@@ -31,7 +31,7 @@
         },
         {
           "tag": "Novo",
-          "text": "Mini player sempre por cima, com transparência e cadeado. Experimental (em testes)."
+          "text": "Mini player sempre por cima (o vídeo preenche a janela), com transparência e cadeado. Experimental (em testes)."
         },
         {
           "tag": "Novo",
@@ -51,7 +51,7 @@
         },
         {
           "tag": "Novo",
-          "text": "Autocompletar na barra de endereços, com histórico e favoritos."
+          "text": "Autocompletar na barra de endereços: histórico, favoritos e busca pelo meio do endereço ou título."
         },
         {
           "tag": "Novo",

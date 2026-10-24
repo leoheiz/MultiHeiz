@@ -324,6 +324,7 @@ const SELFTEST_WORKSPACE_CTXMENU = selftestMode === 'workspace-ctxmenu';
 const SELFTEST_MEMORY_SCHEDULE = selftestMode === 'memory-schedule';
 const SELFTEST_MEMORY_MONITOR = selftestMode === 'memory-monitor';
 const SELFTEST_OMNIBOX = selftestMode === 'omnibox';
+const SELFTEST_VIDEO_DETECT = selftestMode === 'video-detect';
 const SELFTEST_LINK_NEWWINDOW = selftestMode === 'link-newwindow';
 const SELFTEST_DIAG_CERTISIGN = selftestMode === 'diag-certisign';
 const ANY_SELFTEST =
@@ -408,6 +409,7 @@ const ANY_SELFTEST =
   SELFTEST_MEMORY_SCHEDULE ||
   SELFTEST_MEMORY_MONITOR ||
   SELFTEST_OMNIBOX ||
+  SELFTEST_VIDEO_DETECT ||
   SELFTEST_LINK_NEWWINDOW ||
   SELFTEST_DIAG_CERTISIGN;
 
@@ -440,6 +442,7 @@ if (
   SELFTEST_SUSPEND ||
   SELFTEST_PIP ||
   SELFTEST_MINIPLAYER ||
+  SELFTEST_VIDEO_DETECT ||
   SELFTEST_FULLSCREEN
 ) {
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -775,6 +778,7 @@ function createWindow() {
     SELFTEST_MEMORY_SCHEDULE ||
     SELFTEST_MEMORY_MONITOR ||
     SELFTEST_OMNIBOX ||
+    SELFTEST_VIDEO_DETECT ||
     SELFTEST_LINK_NEWWINDOW ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_SETTINGS_PERF ||
@@ -831,6 +835,7 @@ function createWindow() {
     SELFTEST_MEMORY_SCHEDULE ||
     SELFTEST_MEMORY_MONITOR ||
     SELFTEST_OMNIBOX ||
+    SELFTEST_VIDEO_DETECT ||
     SELFTEST_LINK_NEWWINDOW ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
@@ -925,6 +930,7 @@ function createWindow() {
         SELFTEST_MEMORY_SCHEDULE ||
         SELFTEST_MEMORY_MONITOR ||
         SELFTEST_OMNIBOX ||
+        SELFTEST_VIDEO_DETECT ||
         SELFTEST_LINK_NEWWINDOW ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_FAVORITES_POPOVER ||
@@ -2324,6 +2330,32 @@ function createWindow() {
         try {
           const { runOmniboxSelftest } = require('./selftest-omnibox');
           runOmniboxSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_VIDEO_DETECT) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runVideoDetectSelftest } = require('./selftest-video-detect');
+          runVideoDetectSelftest({
             mainWindow,
             panels,
             getState,

@@ -6,6 +6,7 @@
  */
 
 const { Menu } = require('electron');
+const videoDetect = require('./video-detect');
 
 /** @type {object | null} */
 let panelsApi = null;
@@ -14,29 +15,10 @@ let getMainWindow = null;
 /** @type {((accountId: string) => void) | null} */
 let openMiniPlayer = null;
 
-/** Script: pick largest playing video (else largest visible); toggle PiP. */
+/** Script: prefer context-menu target video, else largest playing / visible; toggle PiP. */
 const TOGGLE_PIP_JS = `(() => {
-  function list() {
-    var out = [];
-    var nodes = document.querySelectorAll('video');
-    for (var i = 0; i < nodes.length; i++) {
-      var v = nodes[i];
-      var r = v.getBoundingClientRect();
-      var area = Math.max(0, r.width) * Math.max(0, r.height);
-      var playing = !v.paused && !v.ended && v.readyState >= 2;
-      var visible = area > 16 && r.bottom > 0 && r.right > 0 &&
-        r.top < (window.innerHeight || 800) && r.left < (window.innerWidth || 1200);
-      out.push({ el: v, area: area, playing: playing, visible: visible });
-    }
-    return out;
-  }
-  function pick(items) {
-    var playing = items.filter(function (x) { return x.playing; })
-      .sort(function (a, b) { return b.area - a.area; });
-    if (playing.length) return playing[0].el;
-    var vis = items.filter(function (x) { return x.visible; })
-      .sort(function (a, b) { return b.area - a.area; });
-    return vis.length ? vis[0].el : null;
+  function pick() {
+    return ${videoDetect.PICK_TARGET_OR_BEST_JS};
   }
   return (async function () {
     try {
@@ -44,7 +26,7 @@ const TOGGLE_PIP_JS = `(() => {
         await document.exitPictureInPicture();
         return { ok: true, active: false };
       }
-      var el = pick(list());
+      var el = pick();
       if (!el) return { ok: false, reason: 'no-video' };
       if (typeof el.requestPictureInPicture !== 'function') {
         return { ok: false, reason: 'unsupported' };

@@ -60,6 +60,7 @@
     "selftest:memory-schedule": "node tools/selftest-memory-schedule.js",
     "selftest:memory-monitor": "node tools/selftest-memory-monitor.js",
     "selftest:omnibox": "node tools/selftest-omnibox.js",
+    "selftest:video-detect": "node tools/selftest-video-detect.js",
     "selftest:link-newwindow": "node tools/selftest-link-newwindow.js",
     "selftest:minimize-restore": "node tools/selftest-minimize-restore.js",
     "selftest:proxy": "node tools/selftest-proxy.js",
