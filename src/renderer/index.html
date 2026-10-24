@@ -827,6 +827,30 @@
                 <option value="60">60</option>
               </select>
             </label>
+            <hr class="settings-sep" />
+            <label class="check" id="memory-cleanup-enabled-label">
+              <input type="checkbox" name="memoryCleanupEnabled" id="memory-cleanup-enabled" />
+              Limpar memória periodicamente
+            </label>
+            <label id="memory-cleanup-interval-label">
+              A cada
+              <select
+                name="memoryCleanupIntervalMin"
+                id="memory-cleanup-interval"
+                style="margin: 0 0.35em; width: auto; display: inline-block"
+                disabled
+              >
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="15">15</option>
+                <option value="30" selected>30</option>
+                <option value="60">60</option>
+              </select>
+              minutos
+            </label>
+            <p class="muted-note" id="memory-cleanup-hint">
+              Não mexe na janela em uso nem nas que estão tocando áudio, vídeo ou em chamada.
+            </p>
           </section>
 
           <section class="settings-pane" data-pane="desempenho">
@@ -862,22 +886,6 @@
               <input type="checkbox" name="preferHighPerfGpu" id="prefer-gpu" />
               Preferir GPU de alto desempenho (Windows — exige reinício)
             </label>
-            <label class="check">
-              <input type="checkbox" name="memoryCleanupEnabled" id="memory-cleanup-enabled" />
-              Limpar memória a cada
-              <select name="memoryCleanupIntervalMin" id="memory-cleanup-interval" style="margin: 0 0.35em; width: auto; display: inline-block">
-                <option value="15">15</option>
-                <option value="30" selected>30</option>
-                <option value="60">60</option>
-                <option value="120">120</option>
-              </select>
-              minutos
-            </label>
-            <p class="muted-note">
-              Quando ligado: limpa o cache HTTP das sessões (sem apagar cookies/logins) e suspende
-              painéis ociosos — mantém o focado, com áudio/vídeo, em chamada (câmera/microfone) e os
-              marcados para ficar ativos em segundo plano.
-            </p>
             <p class="muted-note">
               Escala por painel via zoom é possível; fator de escala do dispositivo por painel não é
               suportado pelo Electron — documentado em Desempenho.

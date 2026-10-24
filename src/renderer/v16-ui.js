@@ -3278,6 +3278,9 @@
       if (t && (t.name === 'dohMode' || t.name === 'dohProvider')) {
         syncDohFormVisibility();
       }
+      if (t && t.name === 'memoryCleanupEnabled') {
+        syncMemoryCleanupIntervalEnabled(form);
+      }
       if (t && (t.name === 'openAtLogin' || t.name === 'openAsHidden')) {
         syncAutostartForm();
       }
@@ -3573,6 +3576,14 @@
     const customWrap = document.getElementById('doh-custom-wrap');
     if (providerWrap) providerWrap.hidden = mode === 'off';
     if (customWrap) customWrap.hidden = mode === 'off' || provider !== 'custom';
+  }
+
+  /** Interval select only enabled while periodic cleanup toggle is on. */
+  function syncMemoryCleanupIntervalEnabled(formArg) {
+    const form = formArg || document.getElementById('form-settings');
+    if (!form || !form.memoryCleanupIntervalMin) return;
+    const on = !!(form.memoryCleanupEnabled && form.memoryCleanupEnabled.checked);
+    form.memoryCleanupIntervalMin.disabled = !on;
   }
 
   function syncAutostartForm() {
@@ -4098,6 +4109,7 @@
       }
       sel.value = asStr;
     }
+    syncMemoryCleanupIntervalEnabled(form);
     const doh = s.doh || {};
     if (form.dohMode) form.dohMode.value = doh.mode || 'off';
     if (form.dohProvider) form.dohProvider.value = doh.provider || 'cloudflare';
