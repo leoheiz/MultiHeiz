@@ -59,6 +59,10 @@
         },
         {
           "tag": "Novo",
+          "text": "Página inicial nas áreas vazias, com favoritos e sites mais acessados."
+        },
+        {
+          "tag": "Novo",
           "text": "Extensões com página redesenhada — Experimental (em testes)."
         },
         {
@@ -92,6 +96,10 @@
         {
           "tag": "Correção",
           "text": "O mini player mostrava a página inteira em vez de só o vídeo em alguns sites."
+        },
+        {
+          "tag": "Correção",
+          "text": "Agora é possível fechar a última janela de uma área."
         }
       ]
     },

@@ -80,6 +80,12 @@ function defaultState() {
     /** Per-workspace free-tile map: { [wsId]: { [accountId]: { c, r, w, h } } } */
     freeTiles: {},
     /**
+     * Per-workspace empty start page: { [wsId]: {
+     *   showFavoritesBar, showMostVisited, mostVisitedRows, hiddenSuggested[], customTiles[]
+     * } }
+     */
+    startPageByWorkspace: {},
+    /**
      * Mini player (experimental): last position/size/opacity.
      * { x?, y?, width?, height?, opacityPercent? }
      */
@@ -291,6 +297,10 @@ function migrate(parsed) {
     appearance: { ...base.appearance, ...(parsed.appearance || {}) },
     freeTiles:
       parsed.freeTiles && typeof parsed.freeTiles === 'object' ? parsed.freeTiles : {},
+    startPageByWorkspace:
+      parsed.startPageByWorkspace && typeof parsed.startPageByWorkspace === 'object'
+        ? parsed.startPageByWorkspace
+        : {},
     layoutByWorkspace:
       parsed.layoutByWorkspace && typeof parsed.layoutByWorkspace === 'object'
         ? parsed.layoutByWorkspace
@@ -649,6 +659,9 @@ function setState(partial) {
   }
   if (partial && partial.freeTiles) {
     state.freeTiles = partial.freeTiles;
+  }
+  if (partial && partial.startPageByWorkspace) {
+    state.startPageByWorkspace = partial.startPageByWorkspace;
   }
   if (partial && partial.layoutByWorkspace) {
     state.layoutByWorkspace = partial.layoutByWorkspace;

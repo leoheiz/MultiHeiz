@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('multiheiz', {
   windowChromeInfo: () => ipcRenderer.invoke('window:chrome-info'),
   setFreeTiles: (workspaceId, tiles) =>
     ipcRenderer.invoke('free-tiles:set', { workspaceId, tiles }),
+  startPageGet: (workspaceId) => ipcRenderer.invoke('start-page:get', workspaceId),
+  startPageSet: (payload) => ipcRenderer.invoke('start-page:set', payload || {}),
+  startPageOpen: (payload) => ipcRenderer.invoke('start-page:open', payload || {}),
   createWorkspace: (payload) => ipcRenderer.invoke('workspace:create', payload),
   renameWorkspace: (id, name) => ipcRenderer.invoke('workspace:rename', { id, name }),
   updateWorkspace: (payload) => ipcRenderer.invoke('workspace:update', payload || {}),
