@@ -47,6 +47,14 @@
         },
         {
           "tag": "Novo",
+          "text": "Monitor de memória na barra superior, com limpeza e suspensão de janelas no mesmo lugar."
+        },
+        {
+          "tag": "Novo",
+          "text": "Autocompletar na barra de endereços, com histórico e favoritos."
+        },
+        {
+          "tag": "Novo",
           "text": "Extensões com página redesenhada — Experimental (em testes)."
         },
         {
