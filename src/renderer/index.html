@@ -73,9 +73,8 @@
               <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
             </button>
           </div>
-          <button type="button" id="btn-free-mem" class="btn ghost" title="Liberar memória" aria-label="Liberar memória">
-            <span class="free-mem-full">Liberar memória</span>
-            <span class="free-mem-short" aria-hidden="true">Memória</span>
+          <button type="button" id="btn-mem-total" class="btn ghost mem-pill" title="Monitor de memória" aria-label="Monitor de memória">
+            — MB
           </button>
           <button
             type="button"
@@ -99,6 +98,9 @@
           </button>
           <button type="button" id="btn-overflow" class="btn icon ghost" title="Mais opções" aria-label="Mais opções">
             <span class="overflow-glyph" aria-hidden="true">›</span>
+          </button>
+          <button type="button" id="btn-kofi-status" class="btn icon ghost kofi-heart hidden" title="Apoiar o desenvolvedor (Ko-fi)" aria-label="Apoiar o desenvolvedor (Ko-fi)">
+            <svg class="ico kofi-heart-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21C12 21 3.5 15.2 2.2 10.4 1.2 6.8 3.6 4 6.8 4c1.8 0 3.3 1 4.2 2.4C12 5 13.4 4 15.2 4c3.2 0 5.6 2.8 4.6 6.4C18.5 15.2 12 21 12 21z"/></svg>
           </button>
           <button type="button" id="btn-settings" class="btn icon ghost" title="Configurações" aria-label="Configurações">
             <!-- Lucide icons: settings (ISC) — https://lucide.dev -->
@@ -131,21 +133,6 @@
         <main id="grid" aria-label="Painéis"></main>
         <section id="module-host" class="module-host hidden" aria-label="Módulo"></section>
         <section id="manager-host" class="manager-host hidden" aria-label="Gerenciador"></section>
-
-        <footer id="statusbar">
-          <span id="stat-cpu" title="CPU total">CPU —</span>
-          <span id="stat-ram" title="RAM total">RAM —</span>
-          <span id="stat-fps" title="FPS da interface (amostra rAF curta ~1×/s)">FPS —</span>
-          <span id="stat-uptime" title="Tempo ligado">Uptime —</span>
-          <span class="spacer"></span>
-          <button type="button" id="btn-kofi-status" class="btn icon ghost kofi-heart hidden" title="Apoiar o desenvolvedor (Ko-fi)" aria-label="Apoiar o desenvolvedor (Ko-fi)">
-            <svg class="ico kofi-heart-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21C12 21 3.5 15.2 2.2 10.4 1.2 6.8 3.6 4 6.8 4c1.8 0 3.3 1 4.2 2.4C12 5 13.4 4 15.2 4c3.2 0 5.6 2.8 4.6 6.4C18.5 15.2 12 21 12 21z"/></svg>
-          </button>
-          <button type="button" id="btn-mem-total" class="btn ghost mem-total" title="Monitor de memória" aria-label="Monitor de memória">
-            — MB
-          </button>
-          <span id="stat-version">v—</span>
-        </footer>
       </div>
     </div>
 
@@ -396,6 +383,14 @@
               >Modelo personalizado
               <input name="searchTemplate" id="search-template" placeholder="https://...?q=%s" />
             </label>
+            <label class="check">
+              <input type="checkbox" name="searchEngineSuggestions" id="search-engine-suggestions" />
+              Mostrar sugestões do mecanismo de pesquisa
+            </label>
+            <p class="muted-note">
+              Desligado por padrão (privacidade). Quando ligado, o texto digitado na barra de
+              endereços pode ser enviado ao mecanismo de busca para sugestões remotas.
+            </p>
           </section>
 
           <section class="settings-pane" data-pane="atalhos">

@@ -322,6 +322,8 @@ const SELFTEST_PIP = selftestMode === 'pip';
 const SELFTEST_MINIPLAYER = selftestMode === 'miniplayer';
 const SELFTEST_WORKSPACE_CTXMENU = selftestMode === 'workspace-ctxmenu';
 const SELFTEST_MEMORY_SCHEDULE = selftestMode === 'memory-schedule';
+const SELFTEST_MEMORY_MONITOR = selftestMode === 'memory-monitor';
+const SELFTEST_OMNIBOX = selftestMode === 'omnibox';
 const SELFTEST_LINK_NEWWINDOW = selftestMode === 'link-newwindow';
 const SELFTEST_DIAG_CERTISIGN = selftestMode === 'diag-certisign';
 const ANY_SELFTEST =
@@ -404,6 +406,8 @@ const ANY_SELFTEST =
   SELFTEST_MINIPLAYER ||
   SELFTEST_WORKSPACE_CTXMENU ||
   SELFTEST_MEMORY_SCHEDULE ||
+  SELFTEST_MEMORY_MONITOR ||
+  SELFTEST_OMNIBOX ||
   SELFTEST_LINK_NEWWINDOW ||
   SELFTEST_DIAG_CERTISIGN;
 
@@ -769,6 +773,8 @@ function createWindow() {
     SELFTEST_MINIPLAYER ||
     SELFTEST_WORKSPACE_CTXMENU ||
     SELFTEST_MEMORY_SCHEDULE ||
+    SELFTEST_MEMORY_MONITOR ||
+    SELFTEST_OMNIBOX ||
     SELFTEST_LINK_NEWWINDOW ||
     SELFTEST_DIAG_CERTISIGN ||
     SELFTEST_SETTINGS_PERF ||
@@ -823,6 +829,8 @@ function createWindow() {
     SELFTEST_MINIPLAYER ||
     SELFTEST_WORKSPACE_CTXMENU ||
     SELFTEST_MEMORY_SCHEDULE ||
+    SELFTEST_MEMORY_MONITOR ||
+    SELFTEST_OMNIBOX ||
     SELFTEST_LINK_NEWWINDOW ||
     SELFTEST_FAVORITES_E2E ||
     SELFTEST_FAVORITES_POPOVER ||
@@ -915,6 +923,8 @@ function createWindow() {
         SELFTEST_MINIPLAYER ||
         SELFTEST_WORKSPACE_CTXMENU ||
         SELFTEST_MEMORY_SCHEDULE ||
+        SELFTEST_MEMORY_MONITOR ||
+        SELFTEST_OMNIBOX ||
         SELFTEST_LINK_NEWWINDOW ||
         SELFTEST_FAVORITES_E2E ||
         SELFTEST_FAVORITES_POPOVER ||
@@ -2275,6 +2285,59 @@ function createWindow() {
             waitForPanels,
             app,
             memory,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_MEMORY_MONITOR) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runMemoryMonitorSelftest } = require('./selftest-memory-monitor');
+          runMemoryMonitorSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
+            memory,
+          }).catch(failSelftest);
+        } catch (err) {
+          failSelftest(err);
+        }
+      }, 800);
+    });
+  } else if (SELFTEST_OMNIBOX) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        try {
+          const { runOmniboxSelftest } = require('./selftest-omnibox');
+          runOmniboxSelftest({
+            mainWindow,
+            panels,
+            getState,
+            setState,
+            updateState,
+            flushSave,
+            publicState,
+            emitToRenderer,
+            sleep,
+            waitForUrl,
+            rendererEval,
+            waitForLayoutSettle,
+            waitForPanels,
+            app,
           }).catch(failSelftest);
         } catch (err) {
           failSelftest(err);

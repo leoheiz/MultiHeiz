@@ -525,11 +525,11 @@
   .empty { opacity: 0.7; padding: 6px 0; }
 
   .mem-popover-box {
-    min-width: 280px;
-    max-width: 360px;
+    min-width: 300px;
+    max-width: 380px;
     /* Fixed px cap (not 70vh): vh of a short WebContentsView collapsed the
        first measure to title+X. Main sizes the view from scrollHeight. */
-    max-height: 520px;
+    max-height: 560px;
     min-height: 120px;
     overflow: auto;
     padding: 10px 12px;
@@ -558,16 +558,99 @@
   .mem-popover-close:hover {
     background: color-mix(in srgb, var(--text) 12%, transparent);
   }
+  .mem-popover-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .mem-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    border: 1px solid var(--border, #3a4654);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--bg, #121820) 55%, transparent);
+  }
+  .mem-stat-k {
+    font-size: 10px;
+    color: var(--muted, #8a97a8);
+  }
+  .mem-stat-v {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
   .mem-popover-total {
     color: var(--muted, #8a97a8);
     font-size: 11px;
     margin-bottom: 8px;
     white-space: pre-line;
   }
+  .mem-popover-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .mem-action-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 6px;
+    border: 1px solid var(--border, #3a4654);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: inherit;
+    cursor: pointer;
+  }
+  .mem-action-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text) 14%, transparent);
+  }
+  .mem-action-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
   .mem-popover-list {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    margin-bottom: 8px;
+  }
+  .mem-popover-opts {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border, #3a4654);
+    font-size: 11px;
+  }
+  .mem-opt-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .mem-opt-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .mem-opt-row input[type="number"],
+  .mem-opt-row select {
+    width: 72px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    border: 1px solid var(--border, #3a4654);
+    background: color-mix(in srgb, var(--bg, #121820) 70%, transparent);
+    color: inherit;
+    font: inherit;
+  }
+  .mem-opt-note {
+    margin: 0;
+    color: var(--muted, #8a97a8);
+    font-size: 10px;
+    line-height: 1.35;
   }
   .mem-row {
     display: grid;

@@ -120,6 +120,8 @@ function defaultState() {
       homepage: 'https://www.google.com',
       searchEngine: 'google',
       searchTemplate: 'https://www.google.com/search?q=%s',
+      /** Remote search-engine suggestions in address bar (OFF by default — privacy). */
+      searchEngineSuggestions: false,
       // v1.2.0: hidden panels throttle by default; opt-in per window (keepAliveInBackground)
       suspendHidden: false,
       suspendDelayMs: 0,
@@ -402,6 +404,9 @@ function migrate(parsed) {
   if (!next.settings.searchEngine) next.settings.searchEngine = 'google';
   if (!next.settings.searchTemplate) {
     next.settings.searchTemplate = 'https://www.google.com/search?q=%s';
+  }
+  if (typeof next.settings.searchEngineSuggestions !== 'boolean') {
+    next.settings.searchEngineSuggestions = false;
   }
   if (!next.workspaces.some((w) => w.id === next.activeWorkspaceId)) {
     next.activeWorkspaceId = next.workspaces[0].id;

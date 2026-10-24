@@ -207,6 +207,7 @@ contextBridge.exposeInMainWorld('multiheiz', {
   historyDeleteMany: (ids) => ipcRenderer.invoke('history:delete-many', ids),
   historyClear: (opts) => ipcRenderer.invoke('history:clear', opts),
   historyOpen: (opts) => ipcRenderer.invoke('history:open', opts),
+  omniboxSuggest: (opts) => ipcRenderer.invoke('omnibox:suggest', opts),
 
   downloadsList: () => ipcRenderer.invoke('downloads:list'),
   downloadsSettings: (partial) => ipcRenderer.invoke('downloads:settings', partial),

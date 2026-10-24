@@ -6,6 +6,7 @@ const { app, ipcMain, shell, dialog, BrowserWindow } = require('electron');
 const { getState, updateState, flushSave } = require('./state');
 const bookmarks = require('./bookmarks');
 const history = require('./history');
+const omnibox = require('./omnibox');
 const downloads = require('./downloads');
 const logger = require('./logger');
 const diagnostics = require('./diagnostics');
@@ -111,6 +112,43 @@ function initV16(ctx) {
 
     /* ---- History ---- */
     ipcMain.handle('history:query', (_e, opts) => history.query(opts || {}));
+    ipcMain.handle('omnibox:suggest', async (_e, opts) => {
+      const o = opts || {};
+      const st = getState();
+      const settings = (st && st.settings) || {};
+      const bm = bookmarks.list();
+      const local = omnibox.suggest({
+        query: String(o.query || ''),
+        windowId: o.windowId || null,
+        accounts: (st && st.accounts) || [],
+        bookmarkItems: (bm && bm.items) || [],
+        settings,
+      });
+      // Remote suggestions only when explicitly enabled (privacy default OFF).
+      if (settings.searchEngineSuggestions && String(o.query || '').trim().length >= 2) {
+        try {
+          const remote = await omnibox.remoteSuggestions(String(o.query || ''), settings);
+          for (const phrase of remote) {
+            if (local.items.length >= omnibox.MAX_ITEMS) break;
+            if (!phrase || local.items.some((it) => it.kind === 'search' && it.query === phrase)) {
+              continue;
+            }
+            local.items.push({
+              kind: 'remote',
+              id: `remote-${local.items.length}`,
+              title: String(phrase),
+              url: '',
+              subtitle: 'Sugestão',
+              query: String(phrase),
+            });
+          }
+          local.items = local.items.slice(0, omnibox.MAX_ITEMS);
+        } catch {
+          /* ignore */
+        }
+      }
+      return local;
+    });
     ipcMain.handle('history:delete', (_e, id) => {
       history.deleteEntry(id);
       emitToRenderer({ type: 'history:changed' });

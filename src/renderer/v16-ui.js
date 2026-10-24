@@ -3727,6 +3727,9 @@
           blankLinkMode: (form.blankLinkMode && form.blankLinkMode.value) || 'same',
           searchEngine: form.searchEngine.value || 'google',
           searchTemplate: form.searchTemplate.value || '',
+          searchEngineSuggestions: !!(
+            form.searchEngineSuggestions && form.searchEngineSuggestions.checked
+          ),
           memoryLimitMb: Number(form.memoryLimitMb.value) || 0,
           panelMemoryLimitMb: Number(form.panelMemoryLimitMb.value) || 0,
           hardMemoryLimit: !!form.hardMemoryLimit.checked,
@@ -4074,6 +4077,9 @@
     if (form.blankLinkMode) form.blankLinkMode.value = s.blankLinkMode || 'same';
     form.searchEngine.value = s.searchEngine || 'google';
     form.searchTemplate.value = s.searchTemplate || '';
+    if (form.searchEngineSuggestions) {
+      form.searchEngineSuggestions.checked = !!s.searchEngineSuggestions;
+    }
     form.memoryLimitMb.value = Number(s.memoryLimitMb) || 0;
     form.panelMemoryLimitMb.value = Number(s.panelMemoryLimitMb) || 0;
     form.hardMemoryLimit.checked = !!s.hardMemoryLimit;
@@ -4946,6 +4952,7 @@
   api.openNovidades = openNovidades;
   api.closeNovidadesAndMaybeMark = closeNovidadesAndMaybeMark;
   api.openSettingsSection = openSettingsSection;
+  api.refreshAbout = refreshAbout;
   api.refreshExtensionsUi = refreshExtensionsUi;
   api._refreshExtensionsUi = refreshExtensionsUi;
   api.applyUpdatesStatus = applyUpdatesStatus;

@@ -825,12 +825,61 @@
     head.append(t, closeBtn);
     box.appendChild(head);
 
+    const stats = (data && data.stats) || {};
+    const statsRow = document.createElement('div');
+    statsRow.className = 'mem-popover-stats';
+    statsRow.dataset.role = 'mem-stats';
+    const statBits = [
+      ['CPU', stats.cpu || '—'],
+      ['RAM', stats.ram || '—'],
+      ['FPS', stats.fps || '—'],
+      ['Uptime', stats.uptime || '—'],
+    ];
+    for (const [label, value] of statBits) {
+      const cell = document.createElement('div');
+      cell.className = 'mem-stat';
+      const k = document.createElement('span');
+      k.className = 'mem-stat-k';
+      k.textContent = label;
+      const v = document.createElement('span');
+      v.className = 'mem-stat-v';
+      v.dataset.role = 'mem-stat-' + label.toLowerCase();
+      v.textContent = value;
+      cell.append(k, v);
+      statsRow.appendChild(cell);
+    }
+    box.appendChild(statsRow);
+
     const total = document.createElement('div');
     total.className = 'mem-popover-total';
     total.dataset.role = 'mem-total';
     const totalText = (data && data.totalText) || (data && data.totalLabel) || 'Coletando métricas…';
     total.textContent = totalText;
     box.appendChild(total);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'mem-popover-toolbar';
+    const freeBtn = document.createElement('button');
+    freeBtn.type = 'button';
+    freeBtn.className = 'mem-action-btn';
+    freeBtn.dataset.role = 'mem-free';
+    freeBtn.textContent = 'Liberar memória';
+    freeBtn.disabled = !!(data && data.freeMemBusy);
+    freeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.mhPopover.action({ type: 'mem-free' });
+    });
+    const reactAll = document.createElement('button');
+    reactAll.type = 'button';
+    reactAll.className = 'mem-action-btn';
+    reactAll.dataset.role = 'mem-reactivate-all';
+    reactAll.textContent = 'Reativar todas';
+    reactAll.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.mhPopover.action({ type: 'mem-reactivate-all' });
+    });
+    toolbar.append(freeBtn, reactAll);
+    box.appendChild(toolbar);
 
     const list = document.createElement('div');
     list.className = 'mem-popover-list';
@@ -872,6 +921,85 @@
       list.appendChild(el);
     }
     box.appendChild(list);
+
+    const settings = (data && data.settings) || {};
+    const opts = document.createElement('div');
+    opts.className = 'mem-popover-opts';
+    opts.dataset.role = 'mem-opts';
+
+    function emitSettings(partial) {
+      window.mhPopover.action({ type: 'mem-settings', settings: partial });
+    }
+
+    const suspendLabel = document.createElement('label');
+    suspendLabel.className = 'mem-opt-check';
+    const suspendCb = document.createElement('input');
+    suspendCb.type = 'checkbox';
+    suspendCb.dataset.role = 'mem-suspend-hidden';
+    suspendCb.checked = !!settings.suspendHidden;
+    suspendCb.addEventListener('change', () => {
+      emitSettings({ suspendHidden: !!suspendCb.checked });
+    });
+    suspendLabel.append(suspendCb, document.createTextNode(' Suspender painéis ocultos'));
+    opts.appendChild(suspendLabel);
+
+    const delayRow = document.createElement('label');
+    delayRow.className = 'mem-opt-row';
+    delayRow.appendChild(document.createTextNode('Atraso ao suspender (ms) '));
+    const delayInput = document.createElement('input');
+    delayInput.type = 'number';
+    delayInput.min = '0';
+    delayInput.step = '100';
+    delayInput.dataset.role = 'mem-suspend-delay';
+    delayInput.value = String(Number(settings.suspendDelayMs) || 0);
+    delayInput.addEventListener('change', () => {
+      emitSettings({ suspendDelayMs: Number(delayInput.value) || 0 });
+    });
+    delayRow.appendChild(delayInput);
+    opts.appendChild(delayRow);
+
+    const exceptNote = document.createElement('p');
+    exceptNote.className = 'mem-opt-note';
+    exceptNote.dataset.role = 'mem-exceptions-note';
+    exceptNote.textContent =
+      'Exceções: janela em uso, áudio, vídeo ou chamada — não são suspensas.';
+    opts.appendChild(exceptNote);
+
+    const cleanLabel = document.createElement('label');
+    cleanLabel.className = 'mem-opt-check';
+    const cleanCb = document.createElement('input');
+    cleanCb.type = 'checkbox';
+    cleanCb.dataset.role = 'mem-cleanup-enabled';
+    cleanCb.checked = !!settings.memoryCleanupEnabled;
+    cleanCb.addEventListener('change', () => {
+      emitSettings({ memoryCleanupEnabled: !!cleanCb.checked });
+      intervalSel.disabled = !cleanCb.checked;
+    });
+    cleanLabel.append(cleanCb, document.createTextNode(' Limpar memória periodicamente'));
+    opts.appendChild(cleanLabel);
+
+    const intervalRow = document.createElement('label');
+    intervalRow.className = 'mem-opt-row';
+    intervalRow.appendChild(document.createTextNode('A cada '));
+    const intervalSel = document.createElement('select');
+    intervalSel.dataset.role = 'mem-cleanup-interval';
+    for (const n of [5, 10, 15, 30, 60]) {
+      const opt = document.createElement('option');
+      opt.value = String(n);
+      opt.textContent = String(n);
+      intervalSel.appendChild(opt);
+    }
+    let curInterval = Number(settings.memoryCleanupIntervalMin);
+    if (![5, 10, 15, 30, 60].includes(curInterval)) curInterval = 30;
+    intervalSel.value = String(curInterval);
+    intervalSel.disabled = !settings.memoryCleanupEnabled;
+    intervalSel.addEventListener('change', () => {
+      emitSettings({ memoryCleanupIntervalMin: Number(intervalSel.value) || 30 });
+    });
+    intervalRow.append(intervalSel, document.createTextNode(' minutos'));
+    opts.appendChild(intervalRow);
+
+    box.appendChild(opts);
     return box;
   }
 

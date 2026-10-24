@@ -252,7 +252,6 @@ const el = {
   btnWinMax: document.getElementById('btn-win-max'),
   btnWinClose: document.getElementById('btn-win-close'),
   btnMemTotal: document.getElementById('btn-mem-total'),
-  btnFreeMem: document.getElementById('btn-free-mem'),
   btnMiniUnlock: document.getElementById('btn-mini-unlock'),
   memPopover: document.getElementById('mem-popover'),
   memPopoverList: document.getElementById('mem-popover-list'),
@@ -300,14 +299,12 @@ const el = {
   btnProxyTest: document.getElementById('btn-proxy-test'),
   btnProxyRemove: document.getElementById('btn-proxy-remove'),
   btnProxyCancel: document.getElementById('btn-proxy-cancel'),
-  statCpu: document.getElementById('stat-cpu'),
-  statRam: document.getElementById('stat-ram'),
-  statFps: document.getElementById('stat-fps'),
-  statUptime: document.getElementById('stat-uptime'),
-  statVersion: document.getElementById('stat-version'),
   themePreset: document.getElementById('theme-preset'),
   btnThemeReset: document.getElementById('btn-theme-reset'),
 };
+
+/** Tracks Liberar memória busy state (button lives in the memory monitor). */
+let freeMemBusy = false;
 
 function svg(pathD, extra = '') {
   return `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="${pathD}"/>${extra}</svg>`;
@@ -767,6 +764,7 @@ function applyState(next, opts = {}) {
       syncSidebarAutoHideTracking();
       syncPipToolbarButtons();
       scheduleSidebarModulesIdle();
+      refreshMemPopoverUi();
       return;
     }
     applyAppearance(state.appearance);
@@ -1821,6 +1819,82 @@ async function handlePopoverAction(payload) {
     focusedAccountId = payload.accountId;
     await window.multiheiz.panelFocus(payload.accountId);
     scheduleSync();
+    return;
+  }
+  if (type === 'mem-free') {
+    if (freeMemBusy) return;
+    freeMemBusy = true;
+    refreshMemPopoverUi();
+    try {
+      const res = await window.multiheiz.freeMemory();
+      if (!res || !res.freedMb) {
+        showToast('Memória: nenhum MB liberado (0 MB)');
+      } else {
+        showToast(
+          `Memória: ${res.beforeMb} MB → ${res.afterMb} MB (liberados ${res.freedMb} MB)`
+        );
+      }
+      scheduleSync();
+      render();
+      openMemPopover();
+    } catch {
+      showToast('Falha ao liberar memória');
+    } finally {
+      freeMemBusy = false;
+      refreshMemPopoverUi();
+    }
+    return;
+  }
+  if (type === 'mem-reactivate-all') {
+    const rows = (latestMetrics && latestMetrics.panels) || [];
+    for (const p of rows) {
+      if (p && p.accountId && !p.active) {
+        try {
+          await window.multiheiz.panelReactivate(p.accountId);
+          p.active = true;
+          p.suspended = false;
+          p.forced = false;
+          p.state = 'ativo';
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    scheduleSync();
+    render();
+    openMemPopover();
+    return;
+  }
+  if (type === 'mem-settings' && payload.settings && typeof payload.settings === 'object') {
+    const partial = {};
+    if ('suspendHidden' in payload.settings) {
+      partial.suspendHidden = !!payload.settings.suspendHidden;
+    }
+    if ('suspendDelayMs' in payload.settings) {
+      let n = Number(payload.settings.suspendDelayMs);
+      if (!Number.isFinite(n) || n < 0) n = 0;
+      partial.suspendDelayMs = Math.round(n);
+    }
+    if ('memoryCleanupEnabled' in payload.settings) {
+      partial.memoryCleanupEnabled = !!payload.settings.memoryCleanupEnabled;
+    }
+    if ('memoryCleanupIntervalMin' in payload.settings) {
+      let n = Number(payload.settings.memoryCleanupIntervalMin);
+      if (!Number.isFinite(n)) n = 30;
+      partial.memoryCleanupIntervalMin = Math.min(240, Math.max(5, Math.round(n)));
+    }
+    if (Object.keys(partial).length) {
+      const st = await window.multiheiz.updateSettings(partial);
+      if (st) applyState(st, { soft: true });
+      if (window.MultiHeizV16 && window.MultiHeizV16.fillSettingsForm) {
+        try {
+          await window.MultiHeizV16.fillSettingsForm();
+        } catch {
+          /* ignore */
+        }
+      }
+      refreshMemPopoverUi();
+    }
     return;
   }
   if (type === 'ai-action') {
@@ -3223,40 +3297,289 @@ function updateStoreOfferProgress(accountId, status, message) {
   if (slot) ensureStoreOfferBar(slot, accountId, cur);
 }
 
+/**
+ * Address-bar editor with Edge/Chrome-style suggestions (local only by default).
+ * @param {HTMLElement} slot
+ * @param {object} acc
+ */
 function showUrlEditor(slot, acc) {
   editingUrlFor = acc.id;
   const header = slot.querySelector('.panel-header');
-  if (!header || header.querySelector('.panel-url')) return;
+  if (!header || header.querySelector('.panel-url-wrap') || header.querySelector('.panel-url')) {
+    return;
+  }
   const titleBlock = header.querySelector('.panel-title-block');
   const nav = navState.get(acc.id) || {};
+
+  const wrap = document.createElement('div');
+  wrap.className = 'panel-url-wrap';
   const urlInput = document.createElement('input');
   urlInput.className = 'panel-url';
+  urlInput.setAttribute('spellcheck', 'false');
+  urlInput.setAttribute('autocomplete', 'off');
+  urlInput.setAttribute('autocapitalize', 'off');
   urlInput.value = nav.url || acc.startUrl || '';
+
+  const list = document.createElement('ul');
+  list.className = 'omnibox-suggest';
+  list.hidden = true;
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', 'Sugestões');
+
+  /** @type {Array<object>} */
+  let suggestItems = [];
+  let activeIdx = -1;
+  let suggestTimer = 0;
+  let suggestSeq = 0;
+  /** User-typed text (excludes inline completion remainder). */
+  let typedBase = urlInput.value;
+  /** @type {{ full: string, completion: string } | null} */
+  let inlineState = null;
+  let applyingInline = false;
+  let suppressBlurClose = false;
+
+  function closeEditor() {
+    if (suggestTimer) {
+      clearTimeout(suggestTimer);
+      suggestTimer = 0;
+    }
+    editingUrlFor = null;
+    renderGrid();
+    scheduleSync();
+  }
+
+  function navigateTo(raw) {
+    const value = String(raw || '').trim();
+    if (!value) return;
+    window.multiheiz.panelNavigate(acc.id, value);
+    closeEditor();
+  }
+
+  function clearInline() {
+    inlineState = null;
+  }
+
+  function applyInline(full, fromLen) {
+    applyingInline = true;
+    urlInput.value = full;
+    try {
+      urlInput.setSelectionRange(fromLen, full.length);
+    } catch {
+      /* ignore */
+    }
+    applyingInline = false;
+  }
+
+  function kindLabel(kind) {
+    if (kind === 'history') return 'Histórico';
+    if (kind === 'favorite') return 'Favorito';
+    if (kind === 'window') return 'Janela';
+    if (kind === 'search') return 'Pesquisar';
+    if (kind === 'remote') return 'Sugestão';
+    return '';
+  }
+
+  function renderSuggestList() {
+    list.replaceChildren();
+    if (!suggestItems.length) {
+      list.hidden = true;
+      return;
+    }
+    list.hidden = false;
+    suggestItems.forEach((item, idx) => {
+      const li = document.createElement('li');
+      li.className = 'omnibox-suggest-item' + (idx === activeIdx ? ' active' : '');
+      li.setAttribute('role', 'option');
+      li.dataset.index = String(idx);
+      const kind = document.createElement('span');
+      kind.className = 'omnibox-suggest-kind';
+      kind.textContent = kindLabel(item.kind);
+      const title = document.createElement('span');
+      title.className = 'omnibox-suggest-title';
+      title.textContent = item.title || item.url || '';
+      const url = document.createElement('span');
+      url.className = 'omnibox-suggest-url';
+      url.textContent =
+        item.kind === 'window'
+          ? item.subtitle || ''
+          : item.kind === 'search'
+            ? ''
+            : item.subtitle || item.url || '';
+      li.append(kind, title, url);
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        suppressBlurClose = true;
+        activeIdx = idx;
+        void activateSuggestion(item);
+      });
+      list.appendChild(li);
+    });
+  }
+
+  async function activateSuggestion(item) {
+    if (!item) return;
+    if (item.kind === 'window' && item.accountId) {
+      focusedAccountId = item.accountId;
+      await window.multiheiz.panelFocus(item.accountId);
+      closeEditor();
+      return;
+    }
+    if (item.kind === 'search' || item.kind === 'remote') {
+      navigateTo(item.query || item.title || typedBase);
+      return;
+    }
+    if (item.url) navigateTo(item.url);
+  }
+
+  async function refreshSuggestions() {
+    const seq = ++suggestSeq;
+    const q = typedBase;
+    if (!window.multiheiz.omniboxSuggest) {
+      suggestItems = [];
+      renderSuggestList();
+      return;
+    }
+    try {
+      const res = await window.multiheiz.omniboxSuggest({
+        query: q,
+        windowId: acc.id,
+      });
+      if (seq !== suggestSeq || editingUrlFor !== acc.id) return;
+      suggestItems = (res && res.items) || [];
+      if (activeIdx >= suggestItems.length) activeIdx = suggestItems.length - 1;
+      renderSuggestList();
+      const inline = res && res.inline;
+      if (
+        inline &&
+        inline.full &&
+        inline.completion &&
+        document.activeElement === urlInput &&
+        urlInput.selectionStart === typedBase.length &&
+        urlInput.selectionEnd === typedBase.length
+      ) {
+        inlineState = inline;
+        applyInline(inline.full, typedBase.length);
+      } else {
+        clearInline();
+      }
+    } catch {
+      if (seq !== suggestSeq) return;
+      suggestItems = [];
+      renderSuggestList();
+    }
+  }
+
+  function scheduleSuggest() {
+    if (suggestTimer) clearTimeout(suggestTimer);
+    suggestTimer = window.setTimeout(() => {
+      suggestTimer = 0;
+      void refreshSuggestions();
+    }, 60);
+  }
+
+  urlInput.addEventListener('input', () => {
+    if (applyingInline) return;
+    const v = urlInput.value;
+    const start = urlInput.selectionStart;
+    const end = urlInput.selectionEnd;
+    // If user typed over or shortened past an inline completion, drop it.
+    if (inlineState && start === end && start < v.length && end < inlineState.full.length) {
+      /* keep */
+    }
+    typedBase = v;
+    clearInline();
+    activeIdx = -1;
+    scheduleSuggest();
+  });
+
   urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (!list.hidden) {
+        list.hidden = true;
+        suggestItems = [];
+        activeIdx = -1;
+        if (inlineState) {
+          urlInput.value = typedBase;
+          clearInline();
+        }
+        return;
+      }
+      closeEditor();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      if (!suggestItems.length) return;
+      e.preventDefault();
+      activeIdx = (activeIdx + 1) % suggestItems.length;
+      renderSuggestList();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      if (!suggestItems.length) return;
+      e.preventDefault();
+      activeIdx = activeIdx <= 0 ? suggestItems.length - 1 : activeIdx - 1;
+      renderSuggestList();
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
-      window.multiheiz.panelNavigate(acc.id, urlInput.value);
-      editingUrlFor = null;
-      renderGrid();
-      scheduleSync();
-    } else if (e.key === 'Escape') {
-      editingUrlFor = null;
-      renderGrid();
-      scheduleSync();
+      if (activeIdx >= 0 && suggestItems[activeIdx]) {
+        void activateSuggestion(suggestItems[activeIdx]);
+        return;
+      }
+      // Accept inline completion if selected remainder is present.
+      navigateTo(urlInput.value);
+      return;
+    }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (
+        inlineState &&
+        urlInput.selectionStart === typedBase.length &&
+        urlInput.selectionEnd === urlInput.value.length &&
+        urlInput.value === inlineState.full
+      ) {
+        e.preventDefault();
+        urlInput.value = typedBase;
+        clearInline();
+        try {
+          urlInput.setSelectionRange(typedBase.length, typedBase.length);
+        } catch {
+          /* ignore */
+        }
+        scheduleSuggest();
+        return;
+      }
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && e.shiftKey) {
+      const item = activeIdx >= 0 ? suggestItems[activeIdx] : null;
+      if (item && item.kind === 'history' && item.id && window.multiheiz.historyDelete) {
+        e.preventDefault();
+        void (async () => {
+          await window.multiheiz.historyDelete(item.id);
+          scheduleSuggest();
+        })();
+      }
     }
   });
+
   urlInput.addEventListener('blur', () => {
     setTimeout(() => {
-      if (editingUrlFor === acc.id) {
-        editingUrlFor = null;
-        renderGrid();
-        scheduleSync();
+      if (suppressBlurClose) {
+        suppressBlurClose = false;
+        urlInput.focus();
+        return;
       }
+      if (editingUrlFor === acc.id) closeEditor();
     }, 120);
   });
-  if (titleBlock) titleBlock.replaceWith(urlInput);
+
+  wrap.append(urlInput, list);
+  if (titleBlock) titleBlock.replaceWith(wrap);
   urlInput.focus();
   urlInput.select();
+  typedBase = urlInput.value;
+  scheduleSuggest();
 }
 
 function iconBtn(pathD, title, onClick) {
@@ -3328,7 +3651,11 @@ function syncViews() {
 }
 
 function updateMemBadges() {
-  if (!latestMetrics) return;
+  if (!el.btnMemTotal) return;
+  if (!latestMetrics) {
+    el.btnMemTotal.textContent = '— MB';
+    return;
+  }
   const total = latestMetrics.totalRamMb;
   el.btnMemTotal.textContent = typeof total === 'number' ? `${total} MB` : '— MB';
   const metric = metricName(latestMetrics);
@@ -3360,17 +3687,8 @@ function updateSidebarMetricsIncremental() {
 
 function paintStatusBarNow() {
   statusBarLastPaint = Date.now();
-  if (latestMetrics) {
-    el.statCpu.textContent = `CPU ${latestMetrics.totalCpu ?? 0}%`;
-    el.statRam.textContent = `RAM ${latestMetrics.totalRamMb ?? 0} MB`;
-    el.statRam.title = breakdownText(latestMetrics);
-  }
-  const fpsLabel = focusedFps > 0 ? `FPS ${focusedFps}` : 'FPS —';
-  if (el.statFps.textContent !== fpsLabel) {
-    el.statFps.textContent = fpsLabel;
-  }
-  el.statUptime.textContent = `Uptime ${formatUptime(Date.now() - appStartedAt)}`;
-  el.statVersion.textContent = `v${appVersion}`;
+  // Metrics live in the top-bar pill + memory monitor (bottom status bar removed).
+  if (activePopoverId === 'mem-popover') refreshMemPopoverUi();
 }
 
 /**
@@ -3428,9 +3746,7 @@ function clearUiFpsTimeout() {
 function writeUiFpsLabel(fps) {
   if (!(fps > 0)) return;
   focusedFps = fps;
-  if (!el.statFps) return;
-  const next = `FPS ${focusedFps}`;
-  if (el.statFps.textContent !== next) el.statFps.textContent = next;
+  if (activePopoverId === 'mem-popover') refreshMemPopoverUi();
 }
 
 function scheduleNextUiFpsBurst() {
@@ -3577,11 +3893,34 @@ async function refreshPanelSiteInfoIcon(accountId, btn) {
 
 /**
  * Payload for the memory monitor overlay (same fields as the legacy DOM popover).
- * @returns {{ totalText: string, rows: Array<object> }}
+ * @returns {object}
  */
 function buildMemPopoverData() {
+  const settings = (state && state.settings) || {};
+  const stats = {
+    cpu: latestMetrics ? `${latestMetrics.totalCpu ?? 0}%` : '—',
+    ram: latestMetrics ? `${latestMetrics.totalRamMb ?? 0} MB` : '—',
+    fps: focusedFps > 0 ? String(focusedFps) : '—',
+    uptime: formatUptime(Date.now() - appStartedAt),
+  };
+  const suspendHidden = !!settings.suspendHidden;
+  const suspendDelayMs = Number(settings.suspendDelayMs) || 0;
+  const memoryCleanupEnabled = !!settings.memoryCleanupEnabled;
+  let memoryCleanupIntervalMin = Number(settings.memoryCleanupIntervalMin);
+  if (!Number.isFinite(memoryCleanupIntervalMin)) memoryCleanupIntervalMin = 30;
   if (!latestMetrics) {
-    return { totalText: 'Coletando métricas…', rows: [] };
+    return {
+      totalText: 'Coletando métricas…',
+      rows: [],
+      stats,
+      settings: {
+        suspendHidden,
+        suspendDelayMs,
+        memoryCleanupEnabled,
+        memoryCleanupIntervalMin,
+      },
+      freeMemBusy,
+    };
   }
   const metric = metricName(latestMetrics);
   const totalText = `Total: ${latestMetrics.totalRamMb} MB (${metric}) · CPU ${latestMetrics.totalCpu}% · ${latestMetrics.processCount} processos\n${breakdownText(latestMetrics)}\n${latestMetrics.panels.length} janela(s)`;
@@ -3599,7 +3938,18 @@ function buildMemPopoverData() {
       title: memTooltip(p),
     });
   }
-  return { totalText, rows };
+  return {
+    totalText,
+    rows,
+    stats,
+    settings: {
+      suspendHidden,
+      suspendDelayMs,
+      memoryCleanupEnabled,
+      memoryCleanupIntervalMin,
+    },
+    freeMemBusy,
+  };
 }
 
 function refreshMemPopoverUi() {
@@ -4352,7 +4702,7 @@ function openMemPopover() {
   showLightPopover({
     id: 'mem-popover',
     kind: 'mem',
-    prefer: 'above',
+    prefer: 'below',
     anchor: {
       x: Math.round(r.left),
       y: Math.round(r.top),
@@ -4902,11 +5252,13 @@ if (el.btnBannerLock) {
   });
 }
 
-el.btnMemTotal.addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (activePopoverId === 'mem-popover') closeMemPopover();
-  else openMemPopover();
-});
+if (el.btnMemTotal) {
+  el.btnMemTotal.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (activePopoverId === 'mem-popover') closeMemPopover();
+    else openMemPopover();
+  });
+}
 if (el.btnMemClose) {
   el.btnMemClose.addEventListener('click', () => closeMemPopover());
 }
@@ -5046,26 +5398,6 @@ el.layoutSelect.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
     e.preventDefault();
     openLayoutSelectPopover();
-  }
-});
-
-el.btnFreeMem.addEventListener('click', async () => {
-  el.btnFreeMem.disabled = true;
-  try {
-    const res = await window.multiheiz.freeMemory();
-    if (!res.freedMb) {
-      showToast('Memória: nenhum MB liberado (0 MB)');
-    } else {
-      showToast(
-        `Memória: ${res.beforeMb} MB → ${res.afterMb} MB (liberados ${res.freedMb} MB)`
-      );
-    }
-    scheduleSync();
-    render();
-  } catch {
-    showToast('Falha ao liberar memória');
-  } finally {
-    el.btnFreeMem.disabled = false;
   }
 });
 
@@ -5718,7 +6050,7 @@ window.multiheiz.onEvent((payload) => {
     return;
   }
   if (payload.type === 'memory:freed') {
-    if (!el.btnFreeMem.disabled) {
+    if (!freeMemBusy) {
       if (!payload.freedMb) {
         showToast('Memória: nenhum MB liberado (0 MB)');
       } else {
@@ -6246,28 +6578,26 @@ window.__multiheizUi = {
   closeMenus,
   isLivreEditMode,
   HANDLE_INSET,
-  /** Selftest: UI FPS probe (status bar), not panel preload IPC. */
+  /** Selftest: UI FPS probe (memory monitor / virtual label), not panel preload IPC. */
   getFpsProbe: () => ({
     fps: focusedFps | 0,
     running: !!uiFpsRunning,
-    text: el.statFps ? String(el.statFps.textContent || '') : '',
+    text: focusedFps > 0 ? `FPS ${focusedFps}` : 'FPS —',
     visible: uiFpsShouldRun(),
   }),
   startUiFpsProbe,
   stopUiFpsProbe,
   getChromeInsets: () => {
     const topbarEl = el.topbar;
-    const statusEl = document.getElementById('statusbar');
     return {
       topbar: topbarEl ? topbarEl.getBoundingClientRect().height : 0,
-      statusbar: statusEl ? statusEl.getBoundingClientRect().height : 0,
+      statusbar: 0,
       sidebar: el.sidebar.getBoundingClientRect().width,
     };
   },
   isChromeHidden: () => document.body.classList.contains('is-chrome-hidden'),
   getChromeVisibility: () => {
     const topbarEl = el.topbar;
-    const statusEl = document.getElementById('statusbar');
     const measure = (node) => {
       if (!node) return { display: 'none', offsetHeight: 0, offsetWidth: 0 };
       const cs = getComputedStyle(node);
@@ -6295,7 +6625,7 @@ window.__multiheizUi = {
         visuallyOpen: !!(el.sidebar && el.sidebar.classList.contains('auto-hide-open')),
         rectLeft: sbRect ? sbRect.left : null,
       },
-      statusbar: measure(statusEl),
+      statusbar: { display: 'none', offsetHeight: 0, offsetWidth: 0 },
     };
   },
   getTopbarRevealMode: () => ({
