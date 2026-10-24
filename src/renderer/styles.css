@@ -1379,10 +1379,38 @@ select {
   top: calc(var(--topbar-h) + 64px);
 }
 
+/* Dark thin scrollbar for modal/popover scroll areas (inside rounded edges). */
+.mh-scroll-dark {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 38%, transparent) transparent;
+}
+.mh-scroll-dark::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.mh-scroll-dark::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 6px 0;
+}
+.mh-scroll-dark::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 38%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.mh-scroll-dark::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 55%, transparent);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
 .dlg-novidades {
-  width: min(560px, 92vw);
-  max-height: min(80vh, 720px);
+  width: min(720px, 90vw);
+  max-width: min(720px, 90vw);
+  max-height: calc(100vh - 48px);
+  height: auto;
   padding: 0;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
@@ -1392,16 +1420,19 @@ select {
 .novidades-shell {
   display: flex;
   flex-direction: column;
-  max-height: min(80vh, 720px);
-  padding: 16px 18px 18px;
+  max-height: calc(100vh - 48px);
+  padding: 0;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .novidades-head {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 4px;
+  flex-shrink: 0;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border);
 }
 
 .novidades-head h2 {
@@ -1412,57 +1443,60 @@ select {
 
 .novidades-list {
   flex: 1;
-  overflow: auto;
-  margin-top: 10px;
-  padding-right: 4px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  margin: 0;
+  padding: 14px 18px 18px;
+  box-sizing: border-box;
 }
 
 .novidades-version {
-  margin: 0 0 14px;
+  margin: 0 0 22px;
+}
+
+.novidades-version:last-of-type {
+  margin-bottom: 12px;
 }
 
 .novidades-version h3 {
-  margin: 0 0 8px;
-  font-size: 0.95rem;
+  margin: 0 0 10px;
+  font-size: 1rem;
   font-weight: 600;
 }
 
 .novidades-group {
-  margin: 10px 0 6px;
-  font-size: 0.8rem;
+  margin: 14px 0 8px;
+  font-size: 0.95rem;
   font-weight: 600;
-  color: var(--muted, #8a8f98);
+  color: var(--text);
   text-transform: none;
 }
 
 .novidades-version ul {
-  list-style: none;
+  list-style: disc;
   margin: 0;
-  padding: 0;
+  padding: 0 0 0 1.25em;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .novidades-version li {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  font-size: 13px;
-  line-height: 1.4;
+  display: list-item;
+  font-size: 13.5px;
+  line-height: 1.5;
   min-width: 0;
 }
 
 .novidades-entry-text {
-  flex: 1;
-  min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
 .novidades-all-wrap {
-  margin: 12px 0 4px;
-  font-size: 13px;
+  margin: 8px 0 4px;
+  font-size: 13.5px;
 }
 
 .novidades-all-releases {
@@ -1470,35 +1504,6 @@ select {
   text-decoration: underline;
   cursor: pointer;
   overflow-wrap: anywhere;
-}
-
-.tag-novo,
-.tag-melhoria,
-.tag-correcao {
-  flex: 0 0 auto;
-  display: inline-block;
-  min-width: 4.6em;
-  padding: 1px 7px;
-  border-radius: 3px;
-  font-size: 11px;
-  font-weight: 600;
-  text-align: center;
-  line-height: 1.5;
-}
-
-.tag-novo {
-  background: color-mix(in srgb, var(--accent) 28%, transparent);
-  color: var(--text);
-}
-
-.tag-melhoria {
-  background: color-mix(in srgb, #3d8bfd 28%, transparent);
-  color: var(--text);
-}
-
-.tag-correcao {
-  background: color-mix(in srgb, #e8a54b 28%, transparent);
-  color: var(--text);
 }
 
 #main-col.editing-layout #grid {

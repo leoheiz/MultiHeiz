@@ -1092,7 +1092,9 @@ window.__iframeEarly = window.__mhEarlyOk === true;
       const dlg = document.getElementById('dlg-novidades');
       const list = document.getElementById('novidades-list');
       const tags = list
-        ? [...list.querySelectorAll('[class^="tag-"]')].map((n) => n.textContent)
+        ? [...list.querySelectorAll('[class^="tag-"], .tag-novo, .tag-melhoria, .tag-correcao')].map(
+            (n) => n.textContent
+          )
         : [];
       const versions = list
         ? [...list.querySelectorAll('.novidades-version')].map((n) => n.dataset.version)
@@ -1100,8 +1102,23 @@ window.__iframeEarly = window.__mhEarlyOk === true;
       const groups = list
         ? [...list.querySelectorAll('.novidades-group')].map((n) => n.textContent)
         : [];
+      const headers = list
+        ? [...list.querySelectorAll('.novidades-version > h3')].map((n) => n.textContent || '')
+        : [];
       const allLink = list ? list.querySelector('#novidades-all-releases') : null;
       const open = !!(dlg && dlg.open);
+      const dlgStyle = dlg ? getComputedStyle(dlg) : null;
+      const listStyle = list ? getComputedStyle(list) : null;
+      const singleScroll =
+        !!(
+          list &&
+          list.classList.contains('mh-scroll-dark') &&
+          dlgStyle &&
+          dlgStyle.overflow !== 'auto' &&
+          dlgStyle.overflowY !== 'auto' &&
+          listStyle &&
+          (listStyle.overflowY === 'auto' || listStyle.overflowY === 'scroll')
+        );
       if (ui.closeNovidadesAndMaybeMark) ui.closeNovidadesAndMaybeMark();
       await new Promise((res) => setTimeout(res, 200));
       return {
@@ -1110,6 +1127,7 @@ window.__iframeEarly = window.__mhEarlyOk === true;
         tags: [...new Set(tags)],
         versions,
         groups: [...new Set(groups)],
+        headers,
         has131: versions.includes('1.3.1'),
         has130: versions.includes('1.3.0'),
         onlyTwo: versions.length === 2,
@@ -1119,11 +1137,11 @@ window.__iframeEarly = window.__mhEarlyOk === true;
           /github\\.com\\/leoheiz\\/MultiHeiz\\/releases/.test(allLink.getAttribute('href') || '')
         ),
         linkHref: allLink ? allLink.getAttribute('href') : null,
-        tagNovo: tags.includes('Novo'),
-        tagMelhoria: tags.includes('Melhoria'),
-        tagCorrecao: tags.includes('Correção'),
         hasNovidadesGroup: groups.includes('Novidades'),
         hasCorrecoesGroup: groups.includes('Correções'),
+        noBadges: tags.length === 0,
+        dateFmtOk: headers.some((t) => /1\\.3\\.1 · 23\\/10\\/2026/.test(t)),
+        singleScroll,
       };
     })()
   `);
@@ -1135,14 +1153,12 @@ window.__iframeEarly = window.__mhEarlyOk === true;
     !uiNov.has130 ||
     !uiNov.hasAllLink ||
     !uiNov.hasNovidadesGroup ||
-    !uiNov.hasCorrecoesGroup
+    !uiNov.hasCorrecoesGroup ||
+    !uiNov.noBadges ||
+    !uiNov.dateFmtOk ||
+    !uiNov.singleScroll
   ) {
     console.log('FAIL: novidades UI', uiNov);
-    app.exit(1);
-    return;
-  }
-  if (!uiNov.tagNovo || !uiNov.tagMelhoria || !uiNov.tagCorrecao) {
-    console.log('FAIL: missing tags in UI', uiNov.tags);
     app.exit(1);
     return;
   }
@@ -1153,7 +1169,7 @@ window.__iframeEarly = window.__mhEarlyOk === true;
     app.exit(1);
     return;
   }
-  console.log('PASS: Novidades UI tags + mark seen on close');
+  console.log('PASS: Novidades UI groups + no badges + single scroll + mark seen');
 
   // Banner text/API
   const banner = await rendererEval(`

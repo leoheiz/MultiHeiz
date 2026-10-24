@@ -2752,12 +2752,13 @@
 
   let novidadesPendingMark = false;
 
-  function tagClass(tag) {
-    const t = String(tag || '');
-    if (t === 'Novo') return 'tag-novo';
-    if (t === 'Melhoria') return 'tag-melhoria';
-    if (t === 'Correção') return 'tag-correcao';
-    return 'tag-melhoria';
+  /** ISO date (YYYY-MM-DD) → DD/MM/YYYY for version headers. */
+  function formatNovidadesDate(iso) {
+    const m = String(iso || '')
+      .trim()
+      .match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return String(iso || '').trim();
+    return `${m[3]}/${m[2]}/${m[1]}`;
   }
 
   /**
@@ -2768,7 +2769,6 @@
     novidadesPendingMark = markSeen;
     const dlg = document.getElementById('dlg-novidades');
     const list = document.getElementById('novidades-list');
-    const intro = document.getElementById('novidades-intro');
     if (!dlg || !list) return { ok: false, reason: 'missing-ui' };
 
     let view = null;
@@ -2782,11 +2782,6 @@
     } catch {
       /* ignore */
     }
-    if (intro) {
-      intro.textContent = version
-        ? `Log de atualizações · versão atual ${version}`
-        : 'Log de atualizações do MultiHeiz';
-    }
     list.replaceChildren();
     const versions = (view && view.versions) || [];
     for (const ver of versions) {
@@ -2794,10 +2789,10 @@
       block.className = 'novidades-version';
       block.dataset.version = String(ver.version || '');
       const h = document.createElement('h3');
-      const titleBit = ver.title ? ` — ${ver.title}` : '';
-      h.textContent = ver.date
-        ? `${ver.version}${titleBit} · ${ver.date}`
-        : `${ver.version || ''}${titleBit}`;
+      const dateBit = formatNovidadesDate(ver.date);
+      h.textContent = dateBit
+        ? `${ver.version || ''} · ${dateBit}`
+        : String(ver.version || '');
       block.appendChild(h);
       for (const group of ver.groups || []) {
         const gh = document.createElement('h4');
@@ -2807,17 +2802,9 @@
         const ul = document.createElement('ul');
         for (const entry of group.entries || []) {
           const li = document.createElement('li');
-          const tag = document.createElement('span');
-          const entryTag =
-            group.name === 'Correções'
-              ? 'Correção'
-              : String(entry.tag || 'Novo');
-          tag.className = tagClass(entryTag);
-          tag.textContent = entryTag;
           const text = document.createElement('span');
           text.className = 'novidades-entry-text';
           text.textContent = String(entry.text || '');
-          li.appendChild(tag);
           li.appendChild(text);
           ul.appendChild(li);
         }

@@ -3,59 +3,63 @@
     {
       "version": "1.3.1",
       "date": "2026-10-23",
-      "title": "Volume, atualização automática e favoritos",
+      "title": "",
       "entries": [
         {
           "tag": "Novo",
-          "text": "Atualização automática em segundo plano: baixa em silêncio e avisa quando estiver pronta (Reiniciar agora / Depois). Controles em Sobre."
+          "text": "Atualização automática em segundo plano, com aviso quando estiver pronta."
         },
         {
           "tag": "Novo",
-          "text": "Atalhos no painel focado e personalização em Configurações → Atalhos de teclado."
+          "text": "Atalhos no painel e personalização em Configurações."
         },
         {
           "tag": "Novo",
-          "text": "Favoritos com menu rápido e página completa (pastas, busca); nova janela a partir dos favoritos."
+          "text": "Favoritos com menu rápido e página completa; nova janela a partir dos favoritos."
         },
         {
           "tag": "Novo",
-          "text": "Certificados de cliente, cadeado com info do site e página clara em erro de certificado."
+          "text": "Certificados de cliente e informações do site no cadeado."
         },
         {
           "tag": "Novo",
-          "text": "Minimizar e Fechar na barra lateral; várias janelas suspensas na mesma área."
+          "text": "Minimizar e fechar na barra lateral."
         },
         {
           "tag": "Novo",
-          "text": "Vídeo em janela flutuante (Picture-in-Picture) pela barra, atalho ou menu do botão direito."
+          "text": "Várias janelas suspensas na mesma área ao mesmo tempo."
         },
         {
           "tag": "Novo",
-          "text": "Mini player sempre por cima (o vídeo preenche a janela), com transparência e cadeado. Experimental (em testes)."
+          "text": "Vídeo em janela flutuante (Picture-in-Picture)."
         },
         {
           "tag": "Novo",
-          "text": "Menu do botão direito no fundo da área para criar janelas e outras ações."
+          "text": "Mini player sempre por cima, com transparência e cadeado. Experimental (em testes)."
         },
         {
           "tag": "Novo",
-          "text": "Ctrl+clique abre o link numa nova janela na mesma área, com as mesmas configurações."
+          "text": "Menu do botão direito no fundo da área."
         },
         {
           "tag": "Novo",
-          "text": "Histórico redesenhado: agrupado por dia, com busca e exclusão; parâmetros sensíveis de links não são guardados."
+          "text": "Ctrl+clique abre o link numa nova janela na mesma área."
         },
         {
           "tag": "Novo",
-          "text": "Monitor de memória na barra superior, com limpeza e suspensão de janelas no mesmo lugar."
+          "text": "Histórico redesenhado, com busca e exclusão."
         },
         {
           "tag": "Novo",
-          "text": "Autocompletar na barra de endereços: histórico, favoritos e busca pelo meio do endereço ou título."
+          "text": "Monitor de memória na barra superior."
         },
         {
           "tag": "Novo",
-          "text": "Menu do app na logo, com todas as opções organizadas."
+          "text": "Autocompletar na barra de endereços."
+        },
+        {
+          "tag": "Novo",
+          "text": "Menu do app na logo."
         },
         {
           "tag": "Novo",
@@ -63,19 +67,27 @@
         },
         {
           "tag": "Novo",
-          "text": "Extensões com página redesenhada — Experimental (em testes)."
+          "text": "Menu de cada janela reorganizado em grupos."
+        },
+        {
+          "tag": "Novo",
+          "text": "Extensões com página redesenhada. Experimental (em testes)."
         },
         {
           "tag": "Melhoria",
-          "text": "Corretor nativo ligado por padrão; LanguageTool desligado por padrão (com aviso se ligar)."
+          "text": "Corretor nativo ligado por padrão; LanguageTool opcional."
         },
         {
           "tag": "Melhoria",
-          "text": "Opção de limpar memória periodicamente; barra superior ao levar o mouse ao topo em tela cheia (ligada por padrão)."
+          "text": "Opção de limpar memória periodicamente."
+        },
+        {
+          "tag": "Melhoria",
+          "text": "Barra superior ao levar o mouse ao topo em tela cheia."
         },
         {
           "tag": "Correção",
-          "text": "Volume 0–200% volta a funcionar mesmo com áudio criado fora da página; se o site não permitir passar de 100%, o app avisa."
+          "text": "Volume acima de 100% volta a funcionar; se o site limitar a 100%, o app avisa."
         },
         {
           "tag": "Correção",
@@ -83,11 +95,7 @@
         },
         {
           "tag": "Correção",
-          "text": "Monitor de memória abre com altura certa; minimizar/restaurar preserva posição (modo livre) e ordem (grid)."
-        },
-        {
-          "tag": "Correção",
-          "text": "Favoritos de versões anteriores voltam a aparecer no menu rápido e nas páginas de favoritos."
+          "text": "Favoritos de versões anteriores e menu rápido voltam a aparecer."
         },
         {
           "tag": "Correção",
@@ -95,11 +103,19 @@
         },
         {
           "tag": "Correção",
-          "text": "O mini player mostrava a página inteira em vez de só o vídeo em alguns sites."
+          "text": "Minimizar e restaurar preservam posição no modo livre."
+        },
+        {
+          "tag": "Correção",
+          "text": "O mini player mostra só o vídeo, não a página inteira."
         },
         {
           "tag": "Correção",
           "text": "Agora é possível fechar a última janela de uma área."
+        },
+        {
+          "tag": "Correção",
+          "text": "Rolagem do monitor de memória corrigida."
         }
       ]
     },
